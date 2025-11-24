@@ -1,0 +1,106 @@
+name: DEV Deploy
+
+on:
+  push:
+    branches:
+      - develop
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_STAGING }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_STAGING }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registries: "${{ vars.AWS_ACCOUNT_INFRA_ID }}"
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ vars.AWS_ECR_PREFIX }}/infinite-games:${{github.sha}}
+            ${{ vars.AWS_ECR_PREFIX }}/infinite-games:neuron-dev-latest
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+  deploy_validator:
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y python3-pip
+
+      - name: Create .ssh directory
+        run: mkdir -p ~/.ssh
+
+      - name: Deploy to server
+        env:
+          SSH_AUTH_SOCK: /tmp/ssh_agent.sock
+        run: |
+          set -euo pipefail
+          ssh-keyscan -p ${{ secrets.SERVER_PORT }} ${{ secrets.SERVER_DEV_VALIDATOR_IP }} >> ~/.ssh/known_hosts
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          ssh-agent -a $SSH_AUTH_SOCK > /dev/null
+          ssh-add - <<< "${{ secrets.SSH_STAGE_PRIVATE_KEY }}"
+          ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_DEV_VALIDATOR_IP }} -p ${{ secrets.SERVER_PORT }} << 'EOF'
+          set -euo pipefail
+          cd /root/infinite_games_dev
+          git checkout develop
+          git pull --rebase
+          aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin "${{ vars.AWS_ECR_PREFIX }}"
+          docker pull ${{ vars.AWS_ECR_PREFIX }}/infinite-games:neuron-dev-latest
+          cp -r /root/validator-db-develop /root/validator-db-develop-backup
+          export AWS_DEFAULT_REGION=${{ secrets.AWS_ECR_REGION }}
+          export AWS_ECR_REGISTRY="${{ vars.AWS_ECR_PREFIX }}"
+          export API_ACCESS_KEYS=${{ secrets.API_ACCESS_KEYS_STAGE }}
+          docker compose -f docker-compose.dev.yaml down if_validator_develop
+          docker compose -f docker-compose.dev.yaml up -d if_validator_develop
+          EOF
+  discord_alerts:
+    runs-on: ubuntu-latest
+    needs: [build, deploy_validator]
+    if: always()
+    steps:
+      - name: Alert build image failure
+        if: needs.build.result == 'failure' 
+        run: |
+          WEBHOOK_URL="${{ secrets.DISCORD_DEPLOY }}"
+          MESSAGE="Build image DEVELOP failed"
+          curl -H "Content-Type: application/json" \
+          -d "{\"content\": \"$MESSAGE\"}" \
+          $WEBHOOK_URL
+
+      - name: Alert deployments failure
+        if: needs.deploy_validator.result == 'failure'
+        run: |
+          WEBHOOK_URL="${{ secrets.DISCORD_DEPLOY }}"
+          MESSAGE="Deploy validator or miner DEVELOP failed"
+          curl -H "Content-Type: application/json" \
+          -d "{\"content\": \"$MESSAGE\"}" \
+          $WEBHOOK_URL
+
+
+      - name: Alert deployments completed
+        if: needs.deploy_validator.result == 'success'
+        run: |
+          WEBHOOK_URL="${{ secrets.DISCORD_DEPLOY }}"
+          MESSAGE="Deploy miners and validator ${IMAGE_TAG} DEVELOP complete"
+          curl -H "Content-Type: application/json" \
+          -d "{\"content\": \"$MESSAGE\"}" \
+          $WEBHOOK_URL

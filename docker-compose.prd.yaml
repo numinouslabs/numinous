@@ -1,0 +1,49 @@
+networks:
+  validator_prod_network:
+    name: validator_prod_network
+
+services:
+  if_validator_prod:
+    container_name: if_validator_prod
+
+    # Pull pre-built image from ECR
+    image: ${AWS_ECR_REGISTRY}/infinite-games:neuron-prd-latest
+    pull_policy: always
+
+    platform: linux/amd64
+
+    networks:
+      - validator_prod_network
+
+    ports:
+      - "8000:8000"
+
+    volumes:
+      - /root/validator-db-prod:/root/infinite_games/database
+      - ./.bittensor:/root/.bittensor
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp/ig_validator_sandboxes:/tmp/ig_validator_sandboxes
+
+    restart: unless-stopped
+
+    environment:
+      - INLINE_LOGS=1
+
+    # Production configuration
+    command: >
+      bash -c "python neurons/validator.py
+      --netuid 6
+      --subtensor.network finney
+      --wallet.name ifkey
+      --wallet.hotkey ifhkey
+      --db.directory /root/infinite_games/database
+      --ifgames.env prod
+      --sandbox.max_concurrent 50
+      --sandbox.timeout_seconds 150
+      --logging.info"
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"

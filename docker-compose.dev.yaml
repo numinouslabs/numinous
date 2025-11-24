@@ -1,0 +1,73 @@
+networks:
+  validator_develop_network:
+    name: validator_develop_network
+
+  miner_develop_network:
+    name: miner_develop_network
+
+services:
+  if_validator_develop:
+    container_name: if_validator_develop
+
+    image: $AWS_ECR_REGISTRY/infinite-games:neuron-dev-latest
+
+    pull_policy: always
+
+    networks:
+      - validator_develop_network
+
+    ports:
+      - "8001:8000"
+
+    volumes:
+      - /root/validator-db-develop:/root/infinite_games/database
+      - ./.bittensor:/root/.bittensor
+      # Docker socket for launching sand-boxed miners
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Temp directory for sandboxes
+      - /tmp/ig_validator_sandboxes:/tmp/ig_validator_sandboxes
+
+    restart: unless-stopped
+
+    environment:
+      - INLINE_LOGS=1
+      - API_ACCESS_KEYS=$API_ACCESS_KEYS
+
+    command: >
+      bash -c "python neurons/validator.py --netuid 155 --subtensor.network test --wallet.name testkey --wallet.hotkey hkey4 --db.directory /root/infinite_games/database --backend.gateway_url https://stg.ifgames.win --logging.debug"
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  if_miner_develop:
+    container_name: if_miner_develop
+
+    image: $AWS_ECR_REGISTRY/infinite-games:neuron-dev-latest
+
+    pull_policy: always
+
+    networks:
+      - miner_develop_network
+
+    ports:
+      - "10021:10021"
+
+    volumes:
+      - ./.bittensor:/root/.bittensor
+
+    restart: unless-stopped
+
+    environment:
+      - INLINE_LOGS=1
+
+    command: >
+      bash -c "python neurons/miner.py --netuid 155 --subtensor.network test --wallet.name tckey --wallet.hotkey thkey21 --logging.debug --axon.port 10021"
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"

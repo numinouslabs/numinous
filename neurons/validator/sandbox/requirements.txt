@@ -1,0 +1,48 @@
+# Numinous Forecasting Agent Sandbox Requirements
+#
+# Optimized for forecasting agents that use external APIs (gateway)
+# for LLM inference and web search. No heavy ML libraries needed.
+#
+# Last updated: 2025-01-30
+# Tested with uv pip install
+
+# ============================================================================
+# HTTP Clients
+# ============================================================================
+requests==2.32.5          # Standard HTTP library
+httpx==0.28.1             # Modern HTTP client with async support
+
+
+# ============================================================================
+# Data Manipulation & Analysis
+# ============================================================================
+numpy==2.3.3              # Numerical computing
+pandas==2.3.3             # Data structures and analysis
+scipy==1.16.2             # Scientific computing
+
+# ============================================================================
+# Data Validation & Serialization
+# ============================================================================
+pydantic==2.12.0          # Data validation using type hints
+python-dateutil==2.9.0.post0  # Date/time parsing
+
+# ============================================================================
+# Utilities
+# ============================================================================
+
+# ============================================================================
+# JSON & Data Formats
+# ============================================================================
+orjson==3.11.3            # Fast JSON parsing (optional but recommended)
+
+# ============================================================================
+# Statistics & Probability (useful for forecasting)
+# ============================================================================
+statsmodels==0.14.5       # Statistical modeling
+
+# ============================================================================
+# AI Agent Frameworks (popular for orchestrating LLM calls)
+# ============================================================================
+langchain-core==0.3.78    # Core LangChain abstractions
+langchain-openai==0.3.28  # OpenAI integration for LangChain
+langgraph==0.6.8          # Graph-based agent workflows

@@ -1,0 +1,124 @@
+import asyncio
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
+
+import pytest
+
+from neurons.validator.main import main
+
+
+@patch("neurons.validator.main.RunAgents", spec=True)
+@patch("neurons.validator.main.PullAgents", spec=True)
+@patch("neurons.validator.main.SetWeights", spec=True)
+@patch("neurons.validator.main.ExportScores", spec=True)
+@patch("neurons.validator.main.MetagraphScoring", spec=True)
+@patch("neurons.validator.main.Scoring", spec=True)
+@patch("neurons.validator.main.ExportPredictions", spec=True)
+class TestValidatorMain:
+    @pytest.mark.parametrize(
+        "config_env,db_path",
+        [
+            ("prod", "validator.db"),
+            ("test", "validator_test.db"),
+        ],
+    )
+    def test_main(
+        self,
+        mock_export_predictions,
+        mock_peer_scoring,
+        mock_metagraph_scoring,
+        mock_export_scores,
+        mock_set_weights,
+        mock_pull_agents,
+        mock_run_agents,
+        config_env,
+        db_path,
+    ):
+        # Patch key dependencies inside the method
+        with (
+            patch("neurons.validator.main.assert_requirements") as mock_assert_requirements,
+            patch("neurons.validator.main.override_loggers_level") as mock_override_loggers_level,
+            patch("neurons.validator.main.set_bittensor_logger") as mock_set_bittensor_logger,
+            patch("neurons.validator.main.get_config", spec=True) as get_config,
+            patch("neurons.validator.main.Wallet", spec=True),
+            patch("neurons.validator.main.SandboxManager", spec=True),
+            patch("neurons.validator.main.AsyncSubtensor", spec=True),
+            patch("neurons.validator.main.IfMetagraph", spec=True) as MockIfMetagraph,
+            patch("neurons.validator.main.NuminousClient", spec=True) as MockNuminousClient,
+            patch("neurons.validator.main.DatabaseClient", spec=True) as MockDatabaseClient,
+            patch("neurons.validator.main.TasksScheduler") as MockTasksScheduler,
+            patch("neurons.validator.main.measure_event_loop_lag") as mock_measure_event_loop_lag,
+            patch("neurons.validator.main.logger", spec=True) as mock_logger,
+        ):
+            # Mock get_config
+            logger_level = 99
+            gateway_url = "https://test.ifgames.win"
+            get_config.return_value = MagicMock(), config_env, db_path, logger_level, gateway_url
+
+            # Mock IfMetagraph
+            mock_if_metagraph = MockIfMetagraph.return_value
+            mock_if_metagraph.sync = AsyncMock()
+
+            # Mock Database Client
+            mock_db_client = MockDatabaseClient.return_value
+            mock_db_client.migrate = AsyncMock()
+
+            # Mock TasksScheduler
+            mock_scheduler = MockTasksScheduler.return_value
+            mock_scheduler.start = AsyncMock(return_value=None)
+
+            # Mock Logger
+            mock_logger.start_session = MagicMock()
+
+            # Run the validator
+            asyncio.run(main())
+
+            # Verify assert_requirements() was called
+            mock_assert_requirements.assert_called_once()
+
+            # Verify loggers set
+            mock_override_loggers_level.assert_called_once_with(logger_level)
+            mock_set_bittensor_logger.assert_called_once()
+
+            # Verify start session called
+            mock_logger.start_session.assert_called_once()
+
+            # Verify get_config() was called
+            get_config.assert_called_once()
+
+            # Verify metagraph is synced
+            mock_if_metagraph.sync.assert_awaited_once()
+
+            # Verify DatabaseClient args
+            MockDatabaseClient.assert_called_once_with(db_path=db_path, logger=mock_logger)
+
+            # Verify NuminousClient args
+            MockNuminousClient.assert_called_once_with(
+                env=config_env, logger=mock_logger, bt_wallet=ANY
+            )
+
+            # Verify migrate() was called
+            mock_db_client.migrate.assert_awaited_once()
+
+            # Verify scheduler was started
+            mock_scheduler.start.assert_awaited_once()
+
+            # Verify event loop lag is measured
+            mock_measure_event_loop_lag.assert_awaited_once()
+
+            # Verify tasks added count
+            assert mock_scheduler.add.call_count == 13
+
+            # Verify logging
+            mock_logger.info.assert_called_with(
+                "Validator started",
+                extra={
+                    "validator_uid": ANY,
+                    "validator_hotkey": ANY,
+                    "bt_network": ANY,
+                    "bt_netuid": ANY,
+                    "numinous_env": config_env,
+                    "db_path": db_path,
+                    "python": ANY,
+                    "sqlite": ANY,
+                },
+            )
