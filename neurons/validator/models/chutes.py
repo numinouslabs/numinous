@@ -117,3 +117,148 @@ class ChuteStatus(BaseModel):
     avg_busy_ratio: float
     total_invocations: float
     total_rate_limit_errors: float
+
+
+class Chute(BaseModel):
+    name: str
+    input_cost: float
+    output_cost: float
+
+    def calculate_cost(self, completion: ChutesCompletion) -> float:
+        return (self.input_cost / 1_000_000) * completion.usage.prompt_tokens + (
+            self.output_cost / 1_000_000
+        ) * completion.usage.completion_tokens
+
+
+CHUTES_REGISTRY: dict[ChuteModel, Chute] = {
+    ChuteModel.DEEPSEEK_R1_SGTEST: Chute(
+        name=ChuteModel.DEEPSEEK_R1_SGTEST,
+        input_cost=0.3,
+        output_cost=1.2,
+    ),
+    ChuteModel.DEEPSEEK_R1_0528: Chute(
+        name=ChuteModel.DEEPSEEK_R1_0528,
+        input_cost=0.4,
+        output_cost=1.75,
+    ),
+    ChuteModel.DEEPSEEK_R1: Chute(
+        name=ChuteModel.DEEPSEEK_R1,
+        input_cost=0.3,
+        output_cost=1.2,
+    ),
+    ChuteModel.DEEPSEEK_V3_0324: Chute(
+        name=ChuteModel.DEEPSEEK_V3_0324,
+        input_cost=0.24,
+        output_cost=0.84,
+    ),
+    ChuteModel.DEEPSEEK_V3_1_TERMINUS: Chute(
+        name=ChuteModel.DEEPSEEK_V3_1_TERMINUS,
+        input_cost=0.23,
+        output_cost=0.9,
+    ),
+    ChuteModel.DEEPSEEK_V3_1: Chute(
+        name=ChuteModel.DEEPSEEK_V3_1,
+        input_cost=0.20,
+        output_cost=0.8,
+    ),
+    ChuteModel.DEEPSEEK_TNG_R1T2_CHIMERA: Chute(
+        name=ChuteModel.DEEPSEEK_TNG_R1T2_CHIMERA,
+        input_cost=0.3,
+        output_cost=1.2,
+    ),
+    ChuteModel.DEEPSEEK_V3_2_EXP: Chute(
+        name=ChuteModel.DEEPSEEK_V3_2_EXP,
+        input_cost=0.25,
+        output_cost=0.35,
+    ),
+    ChuteModel.GLM_4_6: Chute(
+        name=ChuteModel.GLM_4_6,
+        input_cost=0.4,
+        output_cost=1.75,
+    ),
+    ChuteModel.GLM_4_5: Chute(
+        name=ChuteModel.GLM_4_5,
+        input_cost=0.35,
+        output_cost=1.55,
+    ),
+    ChuteModel.GLM_4_5_AIR: Chute(
+        name=ChuteModel.GLM_4_5_AIR,
+        input_cost=0,
+        output_cost=0,
+    ),
+    ChuteModel.GEMMA_3_4B_IT: Chute(
+        name=ChuteModel.GEMMA_3_4B_IT,
+        input_cost=0,
+        output_cost=0,
+    ),
+    ChuteModel.GEMMA_3_27B_IT: Chute(
+        name=ChuteModel.GEMMA_3_27B_IT,
+        input_cost=0.13,
+        output_cost=0.52,
+    ),
+    ChuteModel.GEMMA_3_12B_IT: Chute(
+        name=ChuteModel.GEMMA_3_12B_IT,
+        input_cost=0.03,
+        output_cost=0.1,
+    ),
+    ChuteModel.QWEN3_32B: Chute(
+        name=ChuteModel.QWEN3_32B,
+        input_cost=0.05,
+        output_cost=0.2,
+    ),
+    ChuteModel.QWEN3_235B_A22B: Chute(
+        name=ChuteModel.QWEN3_235B_A22B,
+        input_cost=0.3,
+        output_cost=1.2,
+    ),
+    ChuteModel.QWEN2_5_VL_32B_INSTRUCT: Chute(
+        name=ChuteModel.QWEN2_5_VL_32B_INSTRUCT,
+        input_cost=0.05,
+        output_cost=0.22,
+    ),
+    ChuteModel.QWEN3_235B_A22B_INSTRUCT_2507: Chute(
+        name=ChuteModel.QWEN3_235B_A22B_INSTRUCT_2507,
+        input_cost=0.08,
+        output_cost=0.55,
+    ),
+    ChuteModel.QWEN3_VL_235B_A22B_THINKING: Chute(
+        name=ChuteModel.QWEN3_VL_235B_A22B_THINKING,
+        input_cost=0.3,
+        output_cost=1.2,
+    ),
+    ChuteModel.MISTRAL_SMALL_24B_INSTRUCT_2501: Chute(
+        name=ChuteModel.MISTRAL_SMALL_24B_INSTRUCT_2501,
+        input_cost=0.05,
+        output_cost=0.22,
+    ),
+    ChuteModel.GPT_OSS_20B: Chute(
+        name=ChuteModel.GPT_OSS_20B,
+        input_cost=0,
+        output_cost=0,
+    ),
+    ChuteModel.GPT_OSS_120B: Chute(
+        name=ChuteModel.GPT_OSS_120B,
+        input_cost=0.04,
+        output_cost=0.4,
+    ),
+}
+
+
+def get_chute(model: typing.Union[ChuteModel, str]) -> Chute:
+    if isinstance(model, str):
+        try:
+            model = ChuteModel(model)
+        except ValueError:
+            available = ", ".join(m.value for m in ChuteModel)
+            raise ValueError(f"Model '{model}' is not available. Available models: {available}")
+
+    return CHUTES_REGISTRY[model]
+
+
+def list_available_models() -> list[str]:
+    return [model.value for model in ChuteModel]
+
+
+def calculate_cost(model: typing.Union[ChuteModel, str], completion: ChutesCompletion) -> float:
+    chute = get_chute(model)
+    return chute.calculate_cost(completion)

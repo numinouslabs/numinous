@@ -4,7 +4,7 @@ set -o nounset  # Treat unset variables as an error and exit immediately
 set -o pipefail
 
 # Settings
-PUBLIC_REPO="https://github.com/amedeo-gigaver/infinite_games.git"
+PUBLIC_REPO="https://github.com/numinouslabs/numinous.git"
 PRIVATE_REPO="https://github.com/infinite-mech/infinite_games.git"
 RELEASE_DATE=$(date +"%Y-%m-%d-%H-%M")
 NEW_BRANCH="sync-main-$RELEASE_DATE"

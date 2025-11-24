@@ -89,3 +89,50 @@ class WebCrawlResponse(BaseModel):
     content: str
 
     model_config = ConfigDict(extra="allow")
+
+
+class DesearchEndpoint(StrEnum):
+    AI_SEARCH = "ai_search"
+    AI_WEB_SEARCH = "ai_web_search"
+    WEB_SEARCH = "web_search"
+    WEB_CRAWL = "web_crawl"
+
+
+# Cost per 100 searches
+DESEARCH_PRICING: typing.Dict[DesearchEndpoint, typing.Any] = {
+    DesearchEndpoint.AI_SEARCH: {
+        ModelEnum.NOVA: 0.6,
+        ModelEnum.ORBIT: 2.2,
+        ModelEnum.HORIZON: 2.6,
+    },
+    DesearchEndpoint.AI_WEB_SEARCH: {
+        ModelEnum.NOVA: 0.6,
+        ModelEnum.ORBIT: 1.7,
+        ModelEnum.HORIZON: 2.1,
+    },
+    DesearchEndpoint.WEB_SEARCH: 0.25,
+    DesearchEndpoint.WEB_CRAWL: 0.05,
+}
+
+
+def calculate_cost(
+    endpoint: DesearchEndpoint,
+    model: typing.Optional[ModelEnum] = None,
+) -> float:
+    pricing = DESEARCH_PRICING.get(endpoint)
+    if pricing is None:
+        raise ValueError(f"No pricing found for endpoint: {endpoint}")
+
+    if isinstance(pricing, dict):
+        if model is None:
+            raise ValueError(f"Model is required for {endpoint}")
+        cost_per_100 = pricing.get(model)
+        if cost_per_100 is None:
+            available = ", ".join(m.value for m in pricing.keys())
+            raise ValueError(
+                f"Model '{model}' not available for {endpoint}. " f"Available models: {available}"
+            )
+    else:
+        cost_per_100 = pricing
+
+    return cost_per_100 / 100

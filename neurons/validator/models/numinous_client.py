@@ -4,12 +4,16 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from neurons.validator.models.chutes import ChuteModel, Message
+from neurons.validator.models.chutes import ChuteModel, ChutesCompletion, Message
 from neurons.validator.models.desearch import (
+    AISearchResponse,
     DateFilterEnum,
     ModelEnum,
     ResultTypeEnum,
     ToolEnum,
+    WebCrawlResponse,
+    WebLinksResponse,
+    WebSearchResponse,
     WebToolEnum,
 )
 
@@ -195,3 +199,27 @@ class DesearchWebSearchRequest(GatewayCall):
 
 class DesearchWebCrawlRequest(GatewayCall):
     url: str = Field(..., description="The URL to crawl")
+
+
+class GatewayCallResponse(BaseModel):
+    cost: float
+
+
+class GatewayChutesCompletion(ChutesCompletion, GatewayCallResponse):
+    pass
+
+
+class GatewayDesearchAISearchResponse(AISearchResponse, GatewayCallResponse):
+    pass
+
+
+class GatewayDesearchWebLinksResponse(WebLinksResponse, GatewayCallResponse):
+    pass
+
+
+class GatewayDesearchWebSearchResponse(WebSearchResponse, GatewayCallResponse):
+    pass
+
+
+class GatewayDesearchWebCrawlResponse(WebCrawlResponse, GatewayCallResponse):
+    pass

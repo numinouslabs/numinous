@@ -9,20 +9,11 @@ from neurons.miner.gateway.cache import cached_gateway_call
 from neurons.miner.gateway.error_handler import handle_provider_errors
 from neurons.miner.gateway.providers.chutes import ChutesClient
 from neurons.miner.gateway.providers.desearch import DesearchClient
-from neurons.validator.models.chutes import ChutesCompletion, ChuteStatus
-from neurons.validator.models.desearch import (
-    AISearchResponse,
-    WebCrawlResponse,
-    WebLinksResponse,
-    WebSearchResponse,
-)
-from neurons.validator.models.numinous_client import (
-    ChutesInferenceRequest,
-    DesearchAISearchRequest,
-    DesearchWebCrawlRequest,
-    DesearchWebLinksRequest,
-    DesearchWebSearchRequest,
-)
+from neurons.validator.models import numinous_client as models
+from neurons.validator.models.chutes import ChuteStatus
+from neurons.validator.models.chutes import calculate_cost as calculate_chutes_cost
+from neurons.validator.models.desearch import DesearchEndpoint
+from neurons.validator.models.desearch import calculate_cost as calculate_desearch_cost
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +36,10 @@ async def health_check():
     return {"status": "healthy", "service": "API Gateway"}
 
 
-@gateway_router.post("/chutes/chat/completions", response_model=ChutesCompletion)
+@gateway_router.post("/chutes/chat/completions", response_model=models.GatewayChutesCompletion)
 @cached_gateway_call
 @handle_provider_errors("Chutes")
-async def chutes_chat_completion(request: ChutesInferenceRequest) -> ChutesCompletion:
+async def chutes_chat_completion(request: models.ChutesInferenceRequest) -> models.ChutesCompletion:
     api_key = os.getenv("CHUTES_API_KEY")
     if not api_key:
         raise HTTPException(
@@ -58,7 +49,7 @@ async def chutes_chat_completion(request: ChutesInferenceRequest) -> ChutesCompl
 
     client = ChutesClient(api_key=api_key)
     messages = [msg.model_dump() for msg in request.messages]
-    return await client.chat_completion(
+    result = await client.chat_completion(
         model=request.model,
         messages=messages,
         temperature=request.temperature,
@@ -66,6 +57,10 @@ async def chutes_chat_completion(request: ChutesInferenceRequest) -> ChutesCompl
         tools=request.tools,
         tool_choice=request.tool_choice,
         **(request.model_extra or {}),
+    )
+
+    return models.GatewayChutesCompletion(
+        **result.model_dump(), cost=calculate_chutes_cost(request.model, result)
     )
 
 
@@ -83,10 +78,12 @@ async def get_chutes_status() -> list[ChuteStatus]:
     return await client.get_chutes_status()
 
 
-@gateway_router.post("/desearch/ai/search", response_model=AISearchResponse)
+@gateway_router.post("/desearch/ai/search", response_model=models.GatewayDesearchAISearchResponse)
 @cached_gateway_call
 @handle_provider_errors("Desearch")
-async def desearch_ai_search(request: DesearchAISearchRequest) -> AISearchResponse:
+async def desearch_ai_search(
+    request: models.DesearchAISearchRequest,
+) -> models.GatewayDesearchAISearchResponse:
     api_key = os.getenv("DESEARCH_API_KEY")
     if not api_key:
         raise HTTPException(
@@ -95,7 +92,7 @@ async def desearch_ai_search(request: DesearchAISearchRequest) -> AISearchRespon
         )
 
     client = DesearchClient(api_key=api_key)
-    return await client.ai_search(
+    result = await client.ai_search(
         prompt=request.prompt,
         model=request.model,
         tools=request.tools,
@@ -105,13 +102,18 @@ async def desearch_ai_search(request: DesearchAISearchRequest) -> AISearchRespon
         count=request.count,
     )
 
+    return models.GatewayDesearchAISearchResponse(
+        **result.model_dump(),
+        cost=calculate_desearch_cost(DesearchEndpoint.AI_SEARCH, request.model),
+    )
 
-@gateway_router.post("/desearch/ai/links", response_model=WebLinksResponse)
+
+@gateway_router.post("/desearch/ai/links", response_model=models.GatewayDesearchWebLinksResponse)
 @cached_gateway_call
 @handle_provider_errors("Desearch")
 async def desearch_web_links_search(
-    request: DesearchWebLinksRequest,
-) -> WebLinksResponse:
+    request: models.DesearchWebLinksRequest,
+) -> models.GatewayDesearchWebLinksResponse:
     api_key = os.getenv("DESEARCH_API_KEY")
     if not api_key:
         raise HTTPException(
@@ -120,32 +122,21 @@ async def desearch_web_links_search(
         )
 
     client = DesearchClient(api_key=api_key)
-    return await client.web_links_search(
+    result = await client.web_links_search(
         prompt=request.prompt, model=request.model, tools=request.tools, count=request.count
     )
-
-
-@gateway_router.post("/desearch/web/search", response_model=WebSearchResponse)
-@cached_gateway_call
-@handle_provider_errors("Desearch")
-async def desearch_web_search(request: DesearchWebSearchRequest) -> WebSearchResponse:
-    api_key = os.getenv("DESEARCH_API_KEY")
-    if not api_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="DESEARCH_API_KEY not configured",
-        )
-
-    client = DesearchClient(api_key=api_key)
-    return await client.web_search(
-        query=request.query, num_results=request.num, start=request.start
+    return models.GatewayDesearchWebLinksResponse(
+        **result.model_dump(),
+        cost=calculate_desearch_cost(DesearchEndpoint.AI_WEB_SEARCH, request.model),
     )
 
 
-@gateway_router.post("/desearch/web/crawl", response_model=WebCrawlResponse)
+@gateway_router.post("/desearch/web/search", response_model=models.GatewayDesearchWebSearchResponse)
 @cached_gateway_call
 @handle_provider_errors("Desearch")
-async def desearch_web_crawl(request: DesearchWebCrawlRequest) -> WebCrawlResponse:
+async def desearch_web_search(
+    request: models.DesearchWebSearchRequest,
+) -> models.GatewayDesearchWebSearchResponse:
     api_key = os.getenv("DESEARCH_API_KEY")
     if not api_key:
         raise HTTPException(
@@ -154,7 +145,35 @@ async def desearch_web_crawl(request: DesearchWebCrawlRequest) -> WebCrawlRespon
         )
 
     client = DesearchClient(api_key=api_key)
-    return await client.web_crawl(url=request.url)
+    result = await client.web_search(
+        query=request.query, num_results=request.num, start=request.start
+    )
+    return models.GatewayDesearchWebSearchResponse(
+        **result.model_dump(),
+        cost=calculate_desearch_cost(DesearchEndpoint.WEB_SEARCH),
+    )
+
+
+@gateway_router.post("/desearch/web/crawl", response_model=models.GatewayDesearchWebCrawlResponse)
+@cached_gateway_call
+@handle_provider_errors("Desearch")
+async def desearch_web_crawl(
+    request: models.DesearchWebCrawlRequest,
+) -> models.GatewayDesearchWebCrawlResponse:
+    api_key = os.getenv("DESEARCH_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="DESEARCH_API_KEY not configured",
+        )
+
+    client = DesearchClient(api_key=api_key)
+    result = await client.web_crawl(url=request.url)
+
+    return models.GatewayDesearchWebCrawlResponse(
+        **result.model_dump(),
+        cost=calculate_desearch_cost(DesearchEndpoint.WEB_CRAWL),
+    )
 
 
 app.include_router(gateway_router)
