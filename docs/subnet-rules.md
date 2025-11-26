@@ -43,7 +43,7 @@ For system architecture, see [architecture.md](./architecture.md).
 - Each submission creates a new version
 - Only the latest submission before midnight UTC is activated
 - Previous versions are deactivated automatically
-- You can submit multiple times per day, but only latest activates
+- You can submit once every three days so be mindful when you do it
 
 ## One Prediction Per Event Rule
 
@@ -280,7 +280,7 @@ A: Execution is killed after 150 seconds. No prediction is recorded. You get imp
 A: You requested a cold model. Use hot models (check https://chutes.ai/app) and implement exponential backoff retry logic with a fallback.
 
 **Q: Can I submit multiple times per day?**
-A: Yes, but only the latest submission before midnight UTC is activated.
+A: No, you can submit once every three days, so please ensure you really test it before uploading you code.
 
 ---
 
