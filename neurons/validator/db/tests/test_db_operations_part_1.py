@@ -1082,20 +1082,15 @@ class TestDbOperationsPart1(TestDbOperationsBase):
             [PredictionExportedStatus.EXPORTED, "unique_event_id_2"],
         )
 
-        current_interval_minutes = 11
-
-        result = await db_operations.get_predictions_to_export(
-            current_interval_minutes=current_interval_minutes, batch_size=1
-        )
+        result = await db_operations.get_predictions_to_export(batch_size=1)
 
         assert len(result) == 1
         assert result[0][1] == "unique_event_id_1"
 
-        result = await db_operations.get_predictions_to_export(
-            current_interval_minutes=current_interval_minutes, batch_size=20
-        )
+        result = await db_operations.get_predictions_to_export(batch_size=20)
 
-        assert len(result) == 2
+        # (unique_event_id_2 is already exported)
+        assert len(result) == 3
 
     async def test_mark_predictions_as_exported(
         self, db_client: DatabaseClient, db_operations: DatabaseOperations

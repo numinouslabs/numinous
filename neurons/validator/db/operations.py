@@ -361,7 +361,7 @@ class DatabaseOperations:
 
         return row[0]
 
-    async def get_predictions_to_export(self, current_interval_minutes: int, batch_size: int):
+    async def get_predictions_to_export(self, batch_size: int):
         return await self.__db_client.many(
             """
                 SELECT
@@ -383,13 +383,12 @@ class DatabaseOperations:
                     events e ON e.unique_event_id = p.unique_event_id
                 WHERE
                     p.exported = ?
-                    AND p.interval_start_minutes < ?
                 ORDER BY
                     p.ROWID ASC
                 LIMIT
                     ?
             """,
-            [PredictionExportedStatus.NOT_EXPORTED, current_interval_minutes, batch_size],
+            [PredictionExportedStatus.NOT_EXPORTED, batch_size],
         )
 
     async def mark_predictions_as_exported(self, ids: list[str]):

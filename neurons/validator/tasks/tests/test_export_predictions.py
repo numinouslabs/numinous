@@ -229,11 +229,12 @@ class TestExportPredictions:
         await export_predictions_task.run()
 
         # Assert
-        assert export_predictions_task.api_client.post_predictions.call_count == 2
+        assert export_predictions_task.api_client.post_predictions.call_count == 3
 
         mock_calls = export_predictions_task.api_client.post_predictions.mock_calls
         first_call = mock_calls[0]
         second_call = mock_calls[1]
+        third_call = mock_calls[2]
 
         # fetching it early to get submitted = CURRENT_TIMESTAMP from the database
         result = await db_client.many(
@@ -300,11 +301,40 @@ class TestExportPredictions:
                 )
             },
         )
+        assert third_call == (
+            "__call__",
+            {
+                "body": PostPredictionsRequestBody(
+                    submissions=[
+                        {
+                            "unique_event_id": "unique_event_id_3",
+                            "provider_type": "market_3",
+                            "prediction": 1.0,
+                            "interval_start_minutes": current_interval_minutes,
+                            "interval_agg_prediction": 1.0,
+                            "interval_agg_count": 1,
+                            "interval_datetime": get_interval_iso_datetime(
+                                current_interval_minutes
+                            ),
+                            "miner_hotkey": "neuronHotkey_3",
+                            "miner_uid": 3,
+                            "validator_hotkey": "validator_hotkey_test",
+                            "validator_uid": 0,
+                            "title": None,
+                            "outcome": None,
+                            "submitted_at": result[2][1],
+                            "run_id": "b23e4567-e89b-12d3-a456-42661417400a",
+                            "version_id": "c23e4567-e89b-12d3-a456-42661417400b",
+                        }
+                    ]
+                )
+            },
+        )
 
         assert len(result) == 3
         assert result[0][0] == PredictionExportedStatus.EXPORTED
         assert result[1][0] == PredictionExportedStatus.EXPORTED
-        assert result[2][0] == PredictionExportedStatus.NOT_EXPORTED
+        assert result[2][0] == PredictionExportedStatus.EXPORTED
 
     async def test_run_no_predictions(self, export_predictions_task: ExportPredictions):
         # Mock API client

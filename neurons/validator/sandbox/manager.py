@@ -415,6 +415,20 @@ class SandboxManager:
                     sandbox.container.wait(timeout=sandbox.timeout)
             except (TimeoutError, requests.exceptions.ReadTimeout):
                 sandbox.container.kill()
+
+                try:
+                    result.logs = sandbox.container.logs(stderr=False).decode("utf-8")
+                    self.logger.debug(
+                        "Captured partial logs on timeout",
+                        extra={"sandbox_id": sandbox_id, "lines": len(result.logs.splitlines())},
+                    )
+                except Exception as e:
+                    self.logger.warning(
+                        "Failed to capture logs on timeout",
+                        extra={"sandbox_id": sandbox_id, "error": str(e)},
+                    )
+                    result.logs = f"Failed to capture partial logs on timeout: {e}"
+
                 finish_with_error("Timeout exceeded", result)
                 return
 

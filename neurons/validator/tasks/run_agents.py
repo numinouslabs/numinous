@@ -263,6 +263,17 @@ class RunAgents(AbstractTask):
                 extra={"event_id": event_id, "agent_version_id": agent.version_id, "error": str(e)},
             )
 
+    def _build_error_logs(self, logs: str, error_msg: str, traceback: Optional[str] = None) -> str:
+        if "Timeout" in error_msg:
+            logs += f"\n\n{'='*50}\nTIMEOUT\n{'='*50}\n"
+            logs += "Execution exceeded timeout limit\n"
+        else:
+            logs += f"\n\n{'='*50}\nERROR DETAILS\n{'='*50}\n"
+            logs += f"Error: {error_msg}\n"
+            if traceback:
+                logs += f"\nTraceback:\n{traceback}"
+        return logs
+
     async def post_agent_logs(self, run_id: str, logs: str) -> None:
         try:
             original_length = len(logs)
@@ -400,6 +411,17 @@ class RunAgents(AbstractTask):
         result = await self.run_sandbox(agent_code, event_data, run_id)
 
         if result is None:
+            logs = "Sandbox timeout - no logs"
+        else:
+            logs = result.get("logs", "No logs available")
+            if result.get("status") == "error":
+                logs = self._build_error_logs(
+                    logs, result.get("error", "Unknown error"), result.get("traceback")
+                )
+
+        await self.post_agent_logs(run_id, logs)
+
+        if result is None:
             self.logger.error(
                 "Sandbox execution failed or timed out",
                 extra={
@@ -414,7 +436,6 @@ class RunAgents(AbstractTask):
         if prediction_value is None:
             return
 
-        await self.post_agent_logs(run_id, result.get("logs", "No logs available"))
         await self.store_prediction(
             event_id, agent, prediction_value, run_id, interval_start_minutes
         )

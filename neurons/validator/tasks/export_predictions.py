@@ -2,10 +2,7 @@ from neurons.validator.db.operations import DatabaseOperations
 from neurons.validator.models.numinous_client import MinerPrediction, PostPredictionsRequestBody
 from neurons.validator.numinous_client.client import NuminousClient
 from neurons.validator.scheduler.task import AbstractTask
-from neurons.validator.utils.common.interval import (
-    get_interval_iso_datetime,
-    get_interval_start_minutes,
-)
+from neurons.validator.utils.common.interval import get_interval_iso_datetime
 from neurons.validator.utils.logger.logger import NuminousLogger
 
 
@@ -73,11 +70,9 @@ class ExportPredictions(AbstractTask):
 
     async def run(self):
         while True:
-            current_interval_minutes = get_interval_start_minutes()
-
             # Get predictions to export
             predictions = await self.db_operations.get_predictions_to_export(
-                current_interval_minutes=current_interval_minutes, batch_size=self.batch_size
+                batch_size=self.batch_size
             )
 
             if len(predictions) == 0:
