@@ -101,12 +101,12 @@ class DesearchEndpoint(StrEnum):
 # Cost per 100 searches
 DESEARCH_PRICING: typing.Dict[DesearchEndpoint, typing.Any] = {
     DesearchEndpoint.AI_SEARCH: {
-        ModelEnum.NOVA: 0.6,
+        ModelEnum.NOVA: 0.4,
         ModelEnum.ORBIT: 2.2,
         ModelEnum.HORIZON: 2.6,
     },
     DesearchEndpoint.AI_WEB_SEARCH: {
-        ModelEnum.NOVA: 0.6,
+        ModelEnum.NOVA: 0.4,
         ModelEnum.ORBIT: 1.7,
         ModelEnum.HORIZON: 2.1,
     },

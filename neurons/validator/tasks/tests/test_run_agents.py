@@ -997,3 +997,172 @@ class TestRunAgentsPostLogs:
         assert str(call_args.run_id) == run_id
         assert "LOG TRUNCATED" in call_args.log_content
         assert len(call_args.log_content) < 30000
+
+
+@pytest.mark.asyncio
+class TestRunAgentsErrorLogging:
+    async def test_logs_exported_on_agent_execution_error(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_metagraph,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
+        sample_event_tuple,
+    ):
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+            timeout_seconds=120,
+        )
+
+        task.load_agent_code = AsyncMock(return_value="def agent_main(): pass")
+        error_result = {
+            "status": "error",
+            "error": "agent_main() must return a dict, got NoneType.",
+            "traceback": "Traceback (most recent call last):\n  File ...\nException: ...",
+            "logs": "[AGENT_RUNNER] Starting\n[AGENT_RUNNER] Error occurred",
+        }
+        task.run_sandbox = AsyncMock(return_value=error_result)
+
+        await task.execute_agent_for_event(
+            event_id="event_123",
+            agent=sample_agent,
+            event_tuple=sample_event_tuple,
+            interval_start_minutes=1000,
+        )
+
+        mock_api_client.post_agent_logs.assert_called_once()
+        body = mock_api_client.post_agent_logs.call_args[0][0]
+        logs = body.log_content
+
+        assert "[AGENT_RUNNER] Starting" in logs
+        assert "ERROR DETAILS" in logs
+        assert "agent_main() must return a dict" in logs
+        assert "Traceback" in logs
+
+    async def test_logs_exported_on_timeout(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_metagraph,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
+        sample_event_tuple,
+    ):
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+            timeout_seconds=120,
+        )
+
+        task.load_agent_code = AsyncMock(return_value="def agent_main(): pass")
+        timeout_result = {
+            "status": "error",
+            "error": "Timeout exceeded",
+            "logs": "[AGENT_RUNNER] Starting\n[AGENT_RUNNER] Processing...\n<execution stopped>",
+        }
+        task.run_sandbox = AsyncMock(return_value=timeout_result)
+
+        await task.execute_agent_for_event(
+            event_id="event_123",
+            agent=sample_agent,
+            event_tuple=sample_event_tuple,
+            interval_start_minutes=1000,
+        )
+
+        mock_api_client.post_agent_logs.assert_called_once()
+        body = mock_api_client.post_agent_logs.call_args[0][0]
+        logs = body.log_content
+
+        assert "[AGENT_RUNNER] Starting" in logs
+        assert "TIMEOUT" in logs
+        assert "Execution exceeded timeout limit" in logs
+
+    async def test_logs_exported_on_validation_error(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_metagraph,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
+        sample_event_tuple,
+    ):
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+            timeout_seconds=120,
+        )
+
+        task.load_agent_code = AsyncMock(return_value="def agent_main(): pass")
+        invalid_result = {
+            "status": "success",
+            "output": {"event_id": "event_123"},
+            "logs": "[AGENT_RUNNER] Starting\n[AGENT_RUNNER] Completed",
+        }
+        task.run_sandbox = AsyncMock(return_value=invalid_result)
+
+        await task.execute_agent_for_event(
+            event_id="event_123",
+            agent=sample_agent,
+            event_tuple=sample_event_tuple,
+            interval_start_minutes=1000,
+        )
+
+        mock_api_client.post_agent_logs.assert_called_once()
+        body = mock_api_client.post_agent_logs.call_args[0][0]
+        logs = body.log_content
+
+        assert "[AGENT_RUNNER] Starting" in logs
+        assert "[AGENT_RUNNER] Completed" in logs
+
+    async def test_logs_exported_on_result_none(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_metagraph,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
+        sample_event_tuple,
+    ):
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+            timeout_seconds=120,
+        )
+
+        task.load_agent_code = AsyncMock(return_value="def agent_main(): pass")
+        task.run_sandbox = AsyncMock(return_value=None)
+
+        await task.execute_agent_for_event(
+            event_id="event_123",
+            agent=sample_agent,
+            event_tuple=sample_event_tuple,
+            interval_start_minutes=1000,
+        )
+
+        mock_api_client.post_agent_logs.assert_called_once()
+        body = mock_api_client.post_agent_logs.call_args[0][0]
+        logs = body.log_content
+
+        assert "Sandbox timeout - no logs" in logs

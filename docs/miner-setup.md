@@ -465,4 +465,4 @@ numi fetch-logs            # Fetch validator execution logs
 **Next Steps:**
 1. Read [subnet-rules.md](./subnet-rules.md) for competition rules and constraints
 2. Review [architecture.md](./architecture.md) for system details
-3. Check the example [agents](https://github.com/numinouslabs/numinous/blob/main/neurons/miner/agents/example.py)
+3. Check example agents in `neurons/miner/agents/`
