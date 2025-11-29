@@ -1,6 +1,7 @@
 import asyncio
 import json
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -32,6 +33,7 @@ class RunAgents(AbstractTask):
     logger: NuminousLogger
     max_concurrent_sandboxes: int
     timeout_seconds: int
+    sync_hour: int
 
     def __init__(
         self,
@@ -43,6 +45,7 @@ class RunAgents(AbstractTask):
         logger: NuminousLogger,
         max_concurrent_sandboxes: int = 5,
         timeout_seconds: int = 600,
+        sync_hour: int = 4,
     ):
         if not isinstance(interval_seconds, float) or interval_seconds <= 0:
             raise ValueError("interval_seconds must be a positive number (float).")
@@ -76,6 +79,7 @@ class RunAgents(AbstractTask):
         self.logger = logger
         self.max_concurrent_sandboxes = max_concurrent_sandboxes
         self.timeout_seconds = timeout_seconds
+        self.sync_hour = sync_hour
 
         self.logger.info(
             "RunAgents task initialized",
@@ -94,6 +98,15 @@ class RunAgents(AbstractTask):
         return self.interval
 
     async def run(self) -> None:
+        current_hour_utc = datetime.utcnow().hour
+
+        if current_hour_utc < self.sync_hour:
+            self.logger.debug(
+                "Before execution window",
+                extra={"current_hour": current_hour_utc, "sync_hour": self.sync_hour},
+            )
+            return
+
         await self.metagraph.sync()
 
         block = torch_or_numpy_to_int(self.metagraph.block)

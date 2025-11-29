@@ -46,6 +46,7 @@ class TestConfig:
         logging_trace=None,
         logging_debug=None,
         logging_info=None,
+        validator_sync_hour=4,
     ):
         """Helper method to create a mock args object with the required attributes"""
         mock_args = MagicMock()
@@ -59,6 +60,7 @@ class TestConfig:
             "logging.trace": logging_trace,
             "logging.debug": logging_debug,
             "logging.info": logging_info,
+            "validator.sync_hour": validator_sync_hour,
         }.get(x)
 
         return mock_args
@@ -68,7 +70,7 @@ class TestConfig:
         with patch("argparse.ArgumentParser.parse_args") as mock_parse_args:
             mock_parse_args.return_value = self.create_mock_args(netuid=6, network="finney")
 
-            config, env, db_path, logger_level, gateway_url = get_config()
+            config, env, db_path, logger_level, gateway_url, validator_sync_hour = get_config()
 
             mock_subtensor.add_args.assert_called_once()
             mock_logging_machine.add_args.assert_called_once()
@@ -78,6 +80,7 @@ class TestConfig:
             assert env == "prod"
             assert db_path == str(Path(DEFAULT_DB_DIRECTORY) / "validator.db")
             assert logger_level == logging.WARNING
+            assert validator_sync_hour == 4
 
     def test_required_args_missing(self):
         """Test behavior when required arguments are missing"""
@@ -96,7 +99,7 @@ class TestConfig:
             mock_parse_args.return_value = self.create_mock_args(
                 netuid=6, network="finney", numinous_env=None, db_directory=valid_dir
             )
-            _, env, db_path, _, _ = get_config()
+            _, env, db_path, _, _, _ = get_config()
 
             assert env == "prod"
             assert db_path == str(Path(valid_dir) / "validator.db")
@@ -144,7 +147,7 @@ class TestConfig:
                 logging_info=logging_info,
             )
 
-            _, _, _, logger_level, _ = get_config()
+            _, _, _, logger_level, _, _ = get_config()
 
             assert logger_level == expected_logger_level
 
@@ -210,7 +213,7 @@ class TestConfig:
             )
 
             if expected_valid:
-                _, env, db_path, _, _ = get_config()
+                _, env, db_path, _, _, _ = get_config()
 
                 mock_config.assert_called_once()
 

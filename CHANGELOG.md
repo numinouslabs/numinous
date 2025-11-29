@@ -1,5 +1,8 @@
 # Release Notes
 
+## [2.0.1] - 2025-11-28
+- **Validator**: Added validator synchronization hour configuration
+
 ## [2.0.0] - 2025-11-25
 - **Architecture**: Validator architecture re-implemented as code-submission system. Validators execute miner Python agents in Docker sandboxes. Miners no longer run nodes.
 - **Scoring**: Replaced peer scoring with Brier scoring and winner-take-all weight distribution.

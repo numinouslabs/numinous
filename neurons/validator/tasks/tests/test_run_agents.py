@@ -1166,3 +1166,86 @@ class TestRunAgentsErrorLogging:
         logs = body.log_content
 
         assert "Sandbox timeout - no logs" in logs
+
+    async def test_run_skips_when_before_sync_hour(
+        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+    ):
+        from unittest.mock import patch
+
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+            sync_hour=10,
+        )
+
+        with patch("neurons.validator.tasks.run_agents.datetime") as mock_datetime:
+            mock_now = MagicMock()
+            mock_now.hour = 5
+            mock_datetime.utcnow.return_value = mock_now
+
+            await task.run()
+
+        mock_logger.debug.assert_called_with(
+            "Before execution window",
+            extra={"current_hour": 5, "sync_hour": 10},
+        )
+        mock_metagraph.sync.assert_not_called()
+        mock_db_operations.get_events_to_predict.assert_not_called()
+
+    async def test_run_executes_when_at_sync_hour(
+        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+    ):
+        from unittest.mock import patch
+
+        mock_db_operations.get_events_to_predict.return_value = []
+
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+            sync_hour=10,
+        )
+
+        with patch("neurons.validator.tasks.run_agents.datetime") as mock_datetime:
+            mock_now = MagicMock()
+            mock_now.hour = 10
+            mock_datetime.utcnow.return_value = mock_now
+
+            await task.run()
+
+        mock_metagraph.sync.assert_called_once()
+        mock_db_operations.get_events_to_predict.assert_called_once()
+
+    async def test_run_executes_when_after_sync_hour(
+        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+    ):
+        from unittest.mock import patch
+
+        mock_db_operations.get_events_to_predict.return_value = []
+
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+            sync_hour=10,
+        )
+
+        with patch("neurons.validator.tasks.run_agents.datetime") as mock_datetime:
+            mock_now = MagicMock()
+            mock_now.hour = 15
+            mock_datetime.utcnow.return_value = mock_now
+
+            await task.run()
+
+        mock_metagraph.sync.assert_called_once()
+        mock_db_operations.get_events_to_predict.assert_called_once()

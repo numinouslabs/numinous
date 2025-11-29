@@ -37,9 +37,9 @@ services:
       --wallet.hotkey ${WALLET_HOTKEY}
       --db.directory /root/infinite_games/database
       --numinous.env prod
-      --sandbox.max_concurrent 50
+      --sandbox.max_concurrent 25
       --sandbox.timeout_seconds 150
-      --logging.info"
+      --logging.debug"
 
     logging:
       driver: "json-file"

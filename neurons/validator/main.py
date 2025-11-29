@@ -42,7 +42,7 @@ async def main():
     # Start session id
     logger.start_session()
 
-    config, numinous_env, db_path, logging_level, gateway_url = get_config()
+    config, numinous_env, db_path, logging_level, gateway_url, validator_sync_hour = get_config()
 
     # Loggers
     override_loggers_level(logging_level)
@@ -129,6 +129,7 @@ async def main():
         logger=logger,
         max_concurrent_sandboxes=config.get("sandbox", {}).get("max_concurrent", 50),
         timeout_seconds=config.get("sandbox", {}).get("timeout_seconds", 180),
+        sync_hour=validator_sync_hour,
     )
 
     export_predictions_task = ExportPredictions(

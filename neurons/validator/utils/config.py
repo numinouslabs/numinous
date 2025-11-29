@@ -55,6 +55,12 @@ def get_config():
         default=180,
         help="Timeout for agent execution in seconds (default: 180)",
     )
+    parser.add_argument(
+        "--validator.sync_hour",
+        type=int,
+        default=4,
+        help="Hour for validator synchronization (default: 4)",
+    )
 
     AsyncSubtensor.add_args(parser=parser)
     LoggingMachine.add_args(parser=parser)
@@ -68,6 +74,7 @@ def get_config():
     logging_trace = args.__getattribute__("logging.trace")
     logging_debug = args.__getattribute__("logging.debug")
     logging_info = args.__getattribute__("logging.info")
+    validator_sync_hour = args.__getattribute__("validator.sync_hour")
 
     # Set default, __getattribute__ doesn't return arguments defaults
     db_directory = args.__getattribute__("db.directory") or str(Path.cwd())
@@ -110,4 +117,4 @@ def get_config():
     elif logging_info:
         logging_level = logging.INFO
 
-    return config, env, db_path, logging_level, gateway_url
+    return config, env, db_path, logging_level, gateway_url, validator_sync_hour

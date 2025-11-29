@@ -52,7 +52,15 @@ class TestValidatorMain:
             # Mock get_config
             logger_level = 99
             gateway_url = "https://test.numinous.earth"
-            get_config.return_value = MagicMock(), config_env, db_path, logger_level, gateway_url
+            validator_sync_hour = 4
+            get_config.return_value = (
+                MagicMock(),
+                config_env,
+                db_path,
+                logger_level,
+                gateway_url,
+                validator_sync_hour,
+            )
 
             # Mock IfMetagraph
             mock_if_metagraph = MockIfMetagraph.return_value

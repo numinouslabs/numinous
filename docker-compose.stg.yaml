@@ -33,7 +33,7 @@ services:
       - INLINE_LOGS=1
 
     command: >
-      bash -c "python neurons/validator.py --netuid 155 --subtensor.network test --wallet.name testkey --wallet.hotkey hkey2 --db.directory /root/infinite_games/database --backend.gateway_url https://stg.numinous.earth --logging.debug"
+      bash -c "python neurons/validator.py --netuid 155 --subtensor.network test --wallet.name testkey --wallet.hotkey hkey2 --db.directory /root/infinite_games/database --backend.gateway_url https://stg.numinous.earth --validator.sync_hour 0 --logging.debug"
 
     logging:
       driver: "json-file"
