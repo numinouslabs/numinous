@@ -52,17 +52,18 @@ power_rank_sum AS (
     -- Calculate sum of power-adjusted ranks for non-winners (for normalization)
     SELECT SUM(POWER(rank, -:decay_power)) as total_power_rank
     FROM ranked_miners
-    WHERE rank > 1
+    WHERE miner_uid != :burn_uid AND rank > 1
 ),
 payload AS (
-    -- Assign metagraph score: winner_weight to rank 1, remainder distributed by power rank
+    -- Assign metagraph score: burn_weight to burn UID, winner_weight to rank 1, remainder distributed by power rank
     SELECT
         rm.miner_uid,
         rm.miner_hotkey,
         CASE
-            WHEN rm.rank = 1 THEN :winner_weight
+            WHEN rm.miner_uid = :burn_uid THEN :burn_weight
+            WHEN rm.rank = 1 THEN (1.0 - :burn_weight) * :winner_weight
             ELSE (
-                (1.0 - :winner_weight)
+                (1.0 - :burn_weight) * (1.0 - :winner_weight)
                 * POWER(rm.rank, -:decay_power)
                 / (SELECT total_power_rank FROM power_rank_sum)
             )

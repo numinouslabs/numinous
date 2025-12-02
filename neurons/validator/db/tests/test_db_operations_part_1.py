@@ -13,6 +13,12 @@ from neurons.validator.models.event import EventsModel, EventStatus
 from neurons.validator.models.miner import MinersModel
 from neurons.validator.models.prediction import PredictionExportedStatus, PredictionsModel
 from neurons.validator.models.score import ScoresModel
+from neurons.validator.tasks.metagraph_scoring import (
+    BURN_WEIGHT,
+    DECAY_POWER,
+    MOVING_AVERAGE_EVENTS,
+    WINNER_WEIGHT,
+)
 from neurons.validator.utils.common.interval import SCORING_WINDOW_INTERVALS
 from neurons.validator.utils.logger.logger import NuminousLogger
 
@@ -2435,10 +2441,11 @@ class TestDbOperationsPart1(TestDbOperationsBase):
         ]
         await db_operations.upsert_events(events)
 
-        # Create scores for 3 miners across 3 events
-        # Miner 10: Brier scores [0.04, 0.09, 0.16] → avg = 0.0967 (best)
+        # Create scores for 4 miners across 3 events (including burn UID 239)
+        # Miner 10: Brier scores [0.04, 0.09, 0.16] → avg = 0.0967 (best non-burn)
         # Miner 20: Brier scores [0.25, 0.36, 0.49] → avg = 0.3667 (worst)
         # Miner 30: Brier scores [0.09, 0.16, 0.25] → avg = 0.1667
+        # Miner 239: Brier scores [1.00, 1.00, 1.00] → avg = 1.0 (burn miner, gets 80% regardless)
         scores = [
             # Event 1 (outcome=1)
             ScoresModel(
@@ -2463,6 +2470,14 @@ class TestDbOperationsPart1(TestDbOperationsBase):
                 miner_hotkey="hk30",
                 prediction=0.7,
                 event_score=0.09,  # (0.7 - 1)^2 = 0.09
+                spec_version=1,
+            ),
+            ScoresModel(
+                event_id="event1",
+                miner_uid=239,
+                miner_hotkey="hk239",
+                prediction=0.0,
+                event_score=1.00,  # (0.0 - 1)^2 = 1.00 (worst possible)
                 spec_version=1,
             ),
             # Event 2 (outcome=0)
@@ -2490,6 +2505,14 @@ class TestDbOperationsPart1(TestDbOperationsBase):
                 event_score=0.16,  # (0.4 - 0)^2 = 0.16
                 spec_version=1,
             ),
+            ScoresModel(
+                event_id="event2",
+                miner_uid=239,
+                miner_hotkey="hk239",
+                prediction=1.0,
+                event_score=1.00,  # (1.0 - 0)^2 = 1.00 (worst possible)
+                spec_version=1,
+            ),
             # Event 3 (outcome=1)
             ScoresModel(
                 event_id="event3",
@@ -2515,16 +2538,29 @@ class TestDbOperationsPart1(TestDbOperationsBase):
                 event_score=0.25,  # (0.5 - 1)^2 = 0.25
                 spec_version=1,
             ),
+            ScoresModel(
+                event_id="event3",
+                miner_uid=239,
+                miner_hotkey="hk239",
+                prediction=0.0,
+                event_score=1.00,  # (0.0 - 1)^2 = 1.00 (worst possible)
+                spec_version=1,
+            ),
         ]
         await db_operations.insert_scores(scores)
 
         raw_scores = await db_client.many(
             "SELECT event_id, miner_uid FROM scores ORDER BY event_id, miner_uid"
         )
-        assert len(raw_scores) == 9
+        assert len(raw_scores) == 12
 
         updated = await db_operations.set_metagraph_scores(
-            event_id="event3", n_events=5, winner_weight=0.99, decay_power=1.0
+            event_id="event3",
+            n_events=MOVING_AVERAGE_EVENTS,
+            burn_weight=BURN_WEIGHT,
+            winner_weight=WINNER_WEIGHT,
+            decay_power=DECAY_POWER,
+            burn_uid=239,
         )
         assert updated == []
 
@@ -2532,42 +2568,55 @@ class TestDbOperationsPart1(TestDbOperationsBase):
             "SELECT event_id, miner_uid, processed, metagraph_score, other_data FROM scores ORDER BY event_id, miner_uid",
             use_row_factory=True,
         )
-        assert len(actual_rows) == 9
+        assert len(actual_rows) == 12
 
-        for i in range(6):
+        for i in range(8):
             assert actual_rows[i]["processed"] == 0
             assert actual_rows[i]["metagraph_score"] is None
             assert actual_rows[i]["other_data"] is None
 
-        # Event 3 should be updated with power decay distribution
-        # Miner 10 should win (lowest avg Brier = 0.0967) → gets 99%
-        miner10_row = actual_rows[6]  # event3, miner_uid=10
+        # Event 3 should be updated with burn mechanism:
+        # UID 239 gets BURN_WEIGHT (80%), remaining 20% uses winner-take-all (99%/1% split)
+
+        # Miner 10: best non-burn (avg = 0.0967, rank 1)
+        # → gets (1 - BURN_WEIGHT) * WINNER_WEIGHT = 0.20 * 0.99 = 0.198
+        miner10_row = actual_rows[8]  # event3, miner_uid=10
         assert miner10_row["event_id"] == "event3"
         assert miner10_row["miner_uid"] == 10
         assert miner10_row["processed"] == 1
-        assert miner10_row["metagraph_score"] == pytest.approx(0.99, abs=1e-3)
+        assert miner10_row["metagraph_score"] == pytest.approx(0.198, abs=1e-3)
         miner10_data = json.loads(miner10_row["other_data"])
         assert miner10_data["average_brier_score"] == pytest.approx(0.0967, abs=1e-3)
         assert miner10_data["rank"] == 1
 
-        # Miner 20 should be last (highest avg Brier = 0.3667) → rank 3
-        # Gets: 0.01 * (1/3) / (1/2 + 1/3) = 0.004
-        miner20_row = actual_rows[7]  # event3, miner_uid=20
+        # Miner 20: worst non-burn (avg = 0.3667, rank 3)
+        # → gets (1 - BURN_WEIGHT) * (1 - WINNER_WEIGHT) * (1/3) / (1/2 + 1/3) = 0.20 * 0.01 * 0.4 = 0.0008
+        miner20_row = actual_rows[9]  # event3, miner_uid=20
         assert miner20_row["event_id"] == "event3"
         assert miner20_row["miner_uid"] == 20
         assert miner20_row["processed"] == 1
-        assert miner20_row["metagraph_score"] == pytest.approx(0.004, abs=1e-3)
+        assert miner20_row["metagraph_score"] == pytest.approx(0.0008, abs=1e-4)
         miner20_data = json.loads(miner20_row["other_data"])
         assert miner20_data["average_brier_score"] == pytest.approx(0.3667, abs=1e-3)
         assert miner20_data["rank"] == 3
 
-        # Miner 30 should be middle (avg Brier = 0.1667) → rank 2
-        # Gets: 0.01 * (1/2) / (1/2 + 1/3) = 0.006
-        miner30_row = actual_rows[8]  # event3, miner_uid=30
+        # Miner 30: middle (avg = 0.1667, rank 2)
+        # → gets (1 - BURN_WEIGHT) * (1 - WINNER_WEIGHT) * (1/2) / (1/2 + 1/3) = 0.20 * 0.01 * 0.6 = 0.0012
+        miner30_row = actual_rows[10]  # event3, miner_uid=30
         assert miner30_row["event_id"] == "event3"
         assert miner30_row["miner_uid"] == 30
         assert miner30_row["processed"] == 1
-        assert miner30_row["metagraph_score"] == pytest.approx(0.006, abs=1e-3)
+        assert miner30_row["metagraph_score"] == pytest.approx(0.0012, abs=1e-4)
         miner30_data = json.loads(miner30_row["other_data"])
         assert miner30_data["average_brier_score"] == pytest.approx(0.1667, abs=1e-3)
         assert miner30_data["rank"] == 2
+
+        # Miner 239: burn miner (avg = 1.0, rank 4 worst) → gets fixed BURN_WEIGHT
+        miner239_row = actual_rows[11]  # event3, miner_uid=239
+        assert miner239_row["event_id"] == "event3"
+        assert miner239_row["miner_uid"] == 239
+        assert miner239_row["processed"] == 1
+        assert miner239_row["metagraph_score"] == pytest.approx(BURN_WEIGHT, abs=1e-3)
+        miner239_data = json.loads(miner239_row["other_data"])
+        assert miner239_data["average_brier_score"] == pytest.approx(1.0, abs=1e-3)
+        assert miner239_data["rank"] == 4

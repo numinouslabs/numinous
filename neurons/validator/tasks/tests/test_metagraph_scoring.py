@@ -1,6 +1,7 @@
 import json
 from unittest.mock import AsyncMock, MagicMock
 
+import numpy as np
 import pytest
 from freezegun import freeze_time
 
@@ -25,6 +26,10 @@ class TestMetagraphScoring:
         db_operations: DatabaseOperations,
     ):
         logger = MagicMock(spec=NuminousLogger)
+        metagraph = MagicMock()
+        metagraph.owner_hotkey = "test_owner_hotkey"
+        metagraph.uids = np.array([239, 10, 20, 30])
+        metagraph.hotkeys = ["test_owner_hotkey", "hk10", "hk20", "hk30"]
 
         with freeze_time("2025-01-02 03:00:00"):
             return MetagraphScoring(
@@ -32,6 +37,7 @@ class TestMetagraphScoring:
                 page_size=100,
                 db_operations=db_operations,
                 logger=logger,
+                metagraph=metagraph,
             )
 
     def test_init(self, metagraph_scoring_task: MetagraphScoring):
@@ -99,15 +105,34 @@ class TestMetagraphScoring:
                         spec_version=1,
                         processed=False,
                     ),
+                    ScoresModel(
+                        event_id="expected_event_id",
+                        miner_uid=239,
+                        miner_hotkey="hk239",
+                        prediction=0.0,
+                        event_score=1.00,
+                        created_at="2025-01-02 03:00:00",
+                        spec_version=1,
+                        processed=False,
+                    ),
                 ],
                 [
                     {
                         "event_id": "expected_event_id",
                         "processed": 1,
-                        "metagraph_score": 0.99,  # Only miner, rank=1, wins (99%)
+                        "metagraph_score": 0.198,  # Rank 1, gets (1-0.80)*0.99 = 0.198
                         "other_data": {
                             "average_brier_score": 0.80,
                             "rank": 1,
+                        },
+                    },
+                    {
+                        "event_id": "expected_event_id",
+                        "processed": 1,
+                        "metagraph_score": 0.8,  # UID 239 gets 80%
+                        "other_data": {
+                            "average_brier_score": 1.00,
+                            "rank": 2,
                         },
                     },
                 ],
@@ -115,7 +140,7 @@ class TestMetagraphScoring:
                     "debug": [
                         (
                             "Found events to calculate metagraph scores.",
-                            {"n_events": 1},
+                            {"n_events": 1, "burn_uid": 239},
                         ),
                         (
                             "Processing event for metagraph scoring.",
@@ -152,12 +177,22 @@ class TestMetagraphScoring:
                         spec_version=1,
                         processed=False,
                     ),
+                    ScoresModel(
+                        event_id="expected_event_id",
+                        miner_uid=239,
+                        miner_hotkey="hk239",
+                        prediction=0.0,
+                        event_score=1.00,
+                        created_at="2025-01-02 03:00:00",
+                        spec_version=1,
+                        processed=False,
+                    ),
                 ],
                 [
                     {
                         "event_id": "expected_event_id",
                         "processed": 1,
-                        "metagraph_score": 0.01,  # Rank 2, gets 1%
+                        "metagraph_score": 0.002,  # Rank 2, only non-winner, gets all (1-0.80)*(1-0.99) = 0.002
                         "other_data": {
                             "average_brier_score": 0.80,
                             "rank": 2,
@@ -166,10 +201,19 @@ class TestMetagraphScoring:
                     {
                         "event_id": "expected_event_id",
                         "processed": 1,
-                        "metagraph_score": 0.99,  # Rank 1, wins (99%)
+                        "metagraph_score": 0.198,  # Rank 1, gets (1-0.80)*0.99 = 0.198
                         "other_data": {
                             "average_brier_score": 0.40,
                             "rank": 1,
+                        },
+                    },
+                    {
+                        "event_id": "expected_event_id",
+                        "processed": 1,
+                        "metagraph_score": 0.8,  # UID 239 gets 80%
+                        "other_data": {
+                            "average_brier_score": 1.00,
+                            "rank": 3,
                         },
                     },
                 ],
@@ -177,7 +221,7 @@ class TestMetagraphScoring:
                     "debug": [
                         (
                             "Found events to calculate metagraph scores.",
-                            {"n_events": 1},
+                            {"n_events": 1, "burn_uid": 239},
                         ),
                         (
                             "Processing event for metagraph scoring.",
@@ -210,7 +254,7 @@ class TestMetagraphScoring:
                     "debug": [
                         (
                             "Found events to calculate metagraph scores.",
-                            {"n_events": 1},
+                            {"n_events": 1, "burn_uid": 239},
                         ),
                         (
                             "Processing event for metagraph scoring.",
@@ -233,7 +277,7 @@ class TestMetagraphScoring:
                         miner_uid=3,
                         miner_hotkey="hk3",
                         prediction=0.75,
-                        event_score=0.80,  # Rank 3 (worst)
+                        event_score=0.80,  # Rank 3 (worst non-burn)
                         created_at="2025-01-02 03:00:00",
                         spec_version=1,
                         processed=False,
@@ -253,7 +297,17 @@ class TestMetagraphScoring:
                         miner_uid=5,
                         miner_hotkey="hk5",
                         prediction=0.75,
-                        event_score=0.10,  # Rank 1 (best, lowest Brier) → Winner
+                        event_score=0.10,  # Rank 1 (best)
+                        created_at="2025-01-02 03:00:00",
+                        spec_version=1,
+                        processed=False,
+                    ),
+                    ScoresModel(
+                        event_id="expected_event_id",
+                        miner_uid=239,
+                        miner_hotkey="hk239",
+                        prediction=0.0,
+                        event_score=1.00,
                         created_at="2025-01-02 03:00:00",
                         spec_version=1,
                         processed=False,
@@ -263,7 +317,7 @@ class TestMetagraphScoring:
                     {
                         "event_id": "expected_event_id",
                         "processed": 1,
-                        "metagraph_score": 0.004,  # Rank 3: 1% * (1/3) / (1/2 + 1/3)
+                        "metagraph_score": 0.0004,  # Rank 3: (1-0.80)*(1-0.99)*(1/3)/(1/2+1/3) ≈ 0.0004
                         "other_data": {
                             "average_brier_score": 0.80,
                             "rank": 3,
@@ -272,7 +326,7 @@ class TestMetagraphScoring:
                     {
                         "event_id": "expected_event_id",
                         "processed": 1,
-                        "metagraph_score": 0.006,  # Rank 2: 1% * (1/2) / (1/2 + 1/3)
+                        "metagraph_score": 0.0006,  # Rank 2: (1-0.80)*(1-0.99)*(1/2)/(1/2+1/3) ≈ 0.0006
                         "other_data": {
                             "average_brier_score": 0.40,
                             "rank": 2,
@@ -281,10 +335,19 @@ class TestMetagraphScoring:
                     {
                         "event_id": "expected_event_id",
                         "processed": 1,
-                        "metagraph_score": 0.99,  # Rank 1, wins (99%)
+                        "metagraph_score": 0.198,  # Rank 1: (1-0.80)*0.99 = 0.198
                         "other_data": {
                             "average_brier_score": 0.10,
                             "rank": 1,
+                        },
+                    },
+                    {
+                        "event_id": "expected_event_id",
+                        "processed": 1,
+                        "metagraph_score": 0.8,  # UID 239 gets 80%
+                        "other_data": {
+                            "average_brier_score": 1.00,
+                            "rank": 4,
                         },
                     },
                 ],
@@ -292,7 +355,7 @@ class TestMetagraphScoring:
                     "debug": [
                         (
                             "Found events to calculate metagraph scores.",
-                            {"n_events": 1},
+                            {"n_events": 1, "burn_uid": 239},
                         ),
                         (
                             "Processing event for metagraph scoring.",
@@ -320,6 +383,16 @@ class TestMetagraphScoring:
                         processed=False,
                     ),
                     ScoresModel(
+                        event_id="expected_event_id_1",
+                        miner_uid=239,
+                        miner_hotkey="hk239",
+                        prediction=0.0,
+                        event_score=1.00,
+                        created_at="2025-01-02 03:00:00",
+                        spec_version=1,
+                        processed=False,
+                    ),
+                    ScoresModel(
                         event_id="expected_event_id_2",
                         miner_uid=3,
                         miner_hotkey="hk3",
@@ -339,21 +412,40 @@ class TestMetagraphScoring:
                         spec_version=1,
                         processed=False,
                     ),
+                    ScoresModel(
+                        event_id="expected_event_id_2",
+                        miner_uid=239,
+                        miner_hotkey="hk239",
+                        prediction=0.0,
+                        event_score=1.00,
+                        created_at="2025-01-02 03:00:00",
+                        spec_version=1,
+                        processed=False,
+                    ),
                 ],
                 [
                     {
                         "event_id": "expected_event_id_1",
                         "processed": 1,
-                        "metagraph_score": 0.99,  # Only miner, wins (99%)
+                        "metagraph_score": 0.198,  # Miner 3: rank 1, gets (1-0.80)*0.99 = 0.198
                         "other_data": {
                             "average_brier_score": 0.80,
                             "rank": 1,
                         },
                     },
                     {
+                        "event_id": "expected_event_id_1",
+                        "processed": 1,
+                        "metagraph_score": 0.8,  # UID 239 gets 80%
+                        "other_data": {
+                            "average_brier_score": 1.00,
+                            "rank": 2,
+                        },
+                    },
+                    {
                         "event_id": "expected_event_id_2",
                         "processed": 1,
-                        "metagraph_score": 0.01,  # Miner 3: avg=(0.80+0.40)/2=0.60, rank 2, gets 1%
+                        "metagraph_score": 0.002,  # Miner 3: avg=(0.80+0.40)/2=0.60, rank 2, only non-winner, gets all (1-0.80)*(1-0.99) = 0.002
                         "other_data": {
                             "average_brier_score": 0.60,
                             "rank": 2,
@@ -362,10 +454,19 @@ class TestMetagraphScoring:
                     {
                         "event_id": "expected_event_id_2",
                         "processed": 1,
-                        "metagraph_score": 0.99,  # Miner 4: avg=0.40, rank 1, wins (99%)
+                        "metagraph_score": 0.198,  # Miner 4: avg=0.40, rank 1, gets (1-0.80)*0.99 = 0.198
                         "other_data": {
                             "average_brier_score": 0.40,
                             "rank": 1,
+                        },
+                    },
+                    {
+                        "event_id": "expected_event_id_2",
+                        "processed": 1,
+                        "metagraph_score": 0.8,  # UID 239 gets 80%
+                        "other_data": {
+                            "average_brier_score": 1.00,
+                            "rank": 3,
                         },
                     },
                 ],
@@ -373,7 +474,7 @@ class TestMetagraphScoring:
                     "debug": [
                         (
                             "Found events to calculate metagraph scores.",
-                            {"n_events": 2},
+                            {"n_events": 2, "burn_uid": 239},
                         ),
                         (
                             "Processing event for metagraph scoring.",
@@ -404,6 +505,16 @@ class TestMetagraphScoring:
                         miner_hotkey="hk3",
                         prediction=0.75,
                         event_score=0.80,
+                        created_at="2025-01-02 03:00:00",
+                        spec_version=1,
+                        processed=False,
+                    ),
+                    ScoresModel(
+                        event_id="expected_event_id_1",
+                        miner_uid=239,
+                        miner_hotkey="hk239",
+                        prediction=0.0,
+                        event_score=1.00,
                         created_at="2025-01-02 03:00:00",
                         spec_version=1,
                         processed=False,
@@ -453,40 +564,64 @@ class TestMetagraphScoring:
                         miner_uid=5,
                         miner_hotkey="hk5",
                         prediction=0.75,
-                        event_score=0.10,  # Very low Brier (excellent prediction!)
+                        event_score=0.10,
+                        created_at="2025-01-02 03:00:00",
+                        spec_version=1,
+                        processed=False,
+                    ),
+                    ScoresModel(
+                        event_id="expected_event_id_2",
+                        miner_uid=239,
+                        miner_hotkey="hk239",
+                        prediction=0.0,
+                        event_score=1.00,
+                        created_at="2025-01-02 03:00:00",
+                        spec_version=1,
+                        processed=False,
+                    ),
+                    ScoresModel(
+                        event_id="expected_event_id_3",
+                        miner_uid=239,
+                        miner_hotkey="hk239",
+                        prediction=0.0,
+                        event_score=1.00,
                         created_at="2025-01-02 03:00:00",
                         spec_version=1,
                         processed=False,
                     ),
                 ],
                 [
-                    # Event 1: Only miner 3
                     {
                         "event_id": "expected_event_id_1",
                         "processed": 1,
-                        "metagraph_score": 0.99,  # Rank 1, wins (99%)
+                        "metagraph_score": 0.198,  # Miner 3: rank 1, gets (1-0.80)*0.99 = 0.198
                         "other_data": {
                             "average_brier_score": 0.80,
                             "rank": 1,
                         },
                     },
-                    # Event 2: Miner 3 avg=0.60, Miner 4 avg=0.40, Miner 5 avg=0.10
-                    # Order: 5(0.10) < 4(0.40) < 3(0.60)
+                    {
+                        "event_id": "expected_event_id_1",
+                        "processed": 1,
+                        "metagraph_score": 0.8,  # UID 239 gets 80%
+                        "other_data": {
+                            "average_brier_score": 1.00,
+                            "rank": 2,
+                        },
+                    },
                     {
                         "event_id": "expected_event_id_2",
                         "processed": 1,
-                        "metagraph_score": 0.004,  # Miner 3: Rank 3, gets 0.4%
+                        "metagraph_score": 0.0004,  # Miner 3: avg=0.60, rank 3, gets (1-0.80)*(1-0.99)*(1/3)/(1/2+1/3) ≈ 0.0004
                         "other_data": {
                             "average_brier_score": 0.60,
                             "rank": 3,
                         },
                     },
-                    # Event 3: Miner 3 avg=0.60, Miner 4 avg=0.40, Miner 5 avg=0.10 (still in window!)
-                    # Order: 5(0.10) < 4(0.40) < 3(0.60)
                     {
                         "event_id": "expected_event_id_3",
                         "processed": 1,
-                        "metagraph_score": 0.004,  # Miner 3: Rank 3, gets 0.4%
+                        "metagraph_score": 0.0004,  # Miner 3: avg=0.60, rank 3
                         "other_data": {
                             "average_brier_score": 0.60,
                             "rank": 3,
@@ -495,7 +630,7 @@ class TestMetagraphScoring:
                     {
                         "event_id": "expected_event_id_2",
                         "processed": 1,
-                        "metagraph_score": 0.006,  # Miner 4: Rank 2, gets 0.6%
+                        "metagraph_score": 0.0006,  # Miner 4: avg=0.40, rank 2, gets (1-0.80)*(1-0.99)*(1/2)/(1/2+1/3) ≈ 0.0006
                         "other_data": {
                             "average_brier_score": 0.40,
                             "rank": 2,
@@ -504,7 +639,7 @@ class TestMetagraphScoring:
                     {
                         "event_id": "expected_event_id_3",
                         "processed": 1,
-                        "metagraph_score": 0.006,  # Miner 4: Rank 2, gets 0.6%
+                        "metagraph_score": 0.0006,  # Miner 4: avg=0.40, rank 2
                         "other_data": {
                             "average_brier_score": 0.40,
                             "rank": 2,
@@ -513,10 +648,28 @@ class TestMetagraphScoring:
                     {
                         "event_id": "expected_event_id_2",
                         "processed": 1,
-                        "metagraph_score": 0.99,  # Miner 5: Rank 1, wins (99%)
+                        "metagraph_score": 0.198,  # Miner 5: avg=0.10, rank 1, gets (1-0.80)*0.99 = 0.198
                         "other_data": {
                             "average_brier_score": 0.10,
                             "rank": 1,
+                        },
+                    },
+                    {
+                        "event_id": "expected_event_id_2",
+                        "processed": 1,
+                        "metagraph_score": 0.8,  # UID 239 gets 80%
+                        "other_data": {
+                            "average_brier_score": 1.00,
+                            "rank": 4,
+                        },
+                    },
+                    {
+                        "event_id": "expected_event_id_3",
+                        "processed": 1,
+                        "metagraph_score": 0.8,  # UID 239 gets 80%
+                        "other_data": {
+                            "average_brier_score": 1.00,
+                            "rank": 4,
                         },
                     },
                 ],
@@ -524,7 +677,7 @@ class TestMetagraphScoring:
                     "debug": [
                         (
                             "Found events to calculate metagraph scores.",
-                            {"n_events": 3},
+                            {"n_events": 3, "burn_uid": 239},
                         ),
                         (
                             "Processing event for metagraph scoring.",

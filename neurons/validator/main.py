@@ -155,6 +155,7 @@ async def main():
         db_operations=db_operations,
         page_size=1000,
         logger=logger,
+        metagraph=bt_metagraph,
     )
 
     export_scores_task = ExportScores(

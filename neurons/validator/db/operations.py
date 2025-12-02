@@ -858,7 +858,13 @@ class DatabaseOperations:
         return events
 
     async def set_metagraph_scores(
-        self, event_id: str, n_events: int, winner_weight: float, decay_power: float
+        self,
+        event_id: str,
+        n_events: int,
+        burn_weight: float,
+        winner_weight: float,
+        decay_power: float,
+        burn_uid: int,
     ) -> list:
         """
         Calculate the moving average of metagraph scores for a given event
@@ -869,8 +875,10 @@ class DatabaseOperations:
             parameters={
                 "event_id": event_id,
                 "n_events": n_events,
+                "burn_weight": burn_weight,
                 "winner_weight": winner_weight,
                 "decay_power": decay_power,
+                "burn_uid": burn_uid,
             },
         )
 
