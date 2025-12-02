@@ -1,5 +1,8 @@
 # Release Notes
 
+## [2.0.2] - 2025-11-30
+- **Validator**: Implement burn mechanism - UID 239 receives 80% of emissions, remaining miners share 20%
+
 ## [2.0.1] - 2025-11-28
 - **Validator**: Added validator synchronization hour configuration
 
