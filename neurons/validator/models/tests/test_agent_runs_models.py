@@ -232,10 +232,10 @@ class TestAgentRunsModel:
 
 class TestAgentRunStatus:
     def test_status_enum_values(self):
-        assert AgentRunStatus.SUCCESS.value == "success"
-        assert AgentRunStatus.INTERNAL_AGENT_ERROR.value == "internal_agent_error"
-        assert AgentRunStatus.INVALID_SANDBOX_OUTPUT.value == "invalid_sandbox_output"
-        assert AgentRunStatus.SANDBOX_TIMEOUT.value == "sandbox_timeout"
+        assert AgentRunStatus.SUCCESS.value == "SUCCESS"
+        assert AgentRunStatus.INTERNAL_AGENT_ERROR.value == "INTERNAL_AGENT_ERROR"
+        assert AgentRunStatus.INVALID_SANDBOX_OUTPUT.value == "INVALID_SANDBOX_OUTPUT"
+        assert AgentRunStatus.SANDBOX_TIMEOUT.value == "SANDBOX_TIMEOUT"
 
 
 class TestAgentRunExportedStatus:

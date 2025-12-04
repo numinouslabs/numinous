@@ -1,5 +1,9 @@
 # Release Notes
 
+## [2.0.3] - 2025-12-03
+- **Scoring**: Fill missing predictions with 0.5 for miners without predictions
+- **Architecture**: Sandbox retry mechanism and error handling with comprehensive log exports
+
 ## [2.0.2] - 2025-11-30
 - **Validator**: Implement burn mechanism - UID 239 receives 80% of emissions, remaining miners share 20%
 

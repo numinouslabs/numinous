@@ -18,6 +18,12 @@ last_n_events AS (
     ORDER BY event_min_row DESC
     LIMIT :n_events
 ),
+current_event_miners AS (
+    -- Get all (miner_uid, miner_hotkey) pairs that exist in the current event
+    SELECT DISTINCT miner_uid, miner_hotkey
+    FROM scores
+    WHERE event_id = :event_id
+),
 miner_event_briers AS (
     -- Calculate Brier score for each miner's prediction for each event in the window
     SELECT
@@ -28,6 +34,9 @@ miner_event_briers AS (
         s.event_score AS brier_score
     FROM scores s
     JOIN events e ON s.event_id = e.event_id
+    JOIN current_event_miners cem
+        ON s.miner_uid = cem.miner_uid
+        AND s.miner_hotkey = cem.miner_hotkey
     WHERE s.event_id IN (SELECT event_id FROM last_n_events)
 ),
 avg_brier_per_miner AS (

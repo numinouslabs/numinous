@@ -17,6 +17,7 @@ from neurons.validator.models.numinous_client import (
     GetEventsResolvedResponse,
     GetEventsResponse,
     PostAgentLogsRequestBody,
+    PostAgentRunsRequestBody,
     PostPredictionsRequestBody,
     PostScoresRequestBody,
 )
@@ -225,6 +226,26 @@ class NuminousClient:
             other_headers={**auth_headers, "Content-Type": "application/json"}
         ) as session:
             path = "/api/v1/validators/agents/logs"
+
+            async with session.post(path, data=data) as response:
+                response.raise_for_status()
+
+                return await response.json()
+
+    async def post_agent_runs(self, body: PostAgentRunsRequestBody):
+        if not isinstance(body, PostAgentRunsRequestBody):
+            raise ValueError("Invalid parameter")
+
+        assert len(body.runs) > 0
+
+        data = body.model_dump_json()
+
+        auth_headers = self.make_auth_headers(data=data)
+
+        async with self.create_session(
+            other_headers={**auth_headers, "Content-Type": "application/json"}
+        ) as session:
+            path = "/api/v1/validators/agents/runs"
 
             async with session.post(path, data=data) as response:
                 response.raise_for_status()

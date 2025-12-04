@@ -148,6 +148,22 @@ class GatewayCall(BaseModel):
     run_id: UUID
 
 
+class AgentRunSubmission(BaseModel):
+    run_id: UUID
+    miner_uid: int
+    miner_hotkey: str
+    vali_uid: int
+    vali_hotkey: str
+    status: str
+    event_id: str
+    version_id: UUID
+    is_final: bool
+
+
+class PostAgentRunsRequestBody(BaseModel):
+    runs: typing.List[AgentRunSubmission]
+
+
 class ChutesInferenceRequest(GatewayCall):
     model: ChuteModel = Field(..., description="Model to use for inference.")
     messages: list[Message] = Field(..., description="List of chat messages")

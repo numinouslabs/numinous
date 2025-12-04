@@ -4,6 +4,17 @@ from typing import Iterable, Optional, Type, TypeVar
 from pydantic import BaseModel
 
 from neurons.validator.db.client import DatabaseClient
+from neurons.validator.models.agent_run_logs import (
+    AGENT_RUN_LOGS_FIELDS,
+    AgentRunLogExportedStatus,
+    AgentRunLogsModel,
+)
+from neurons.validator.models.agent_runs import (
+    AGENT_RUNS_FIELDS,
+    AgentRunExportedStatus,
+    AgentRunsModel,
+    AgentRunStatus,
+)
 from neurons.validator.models.event import EVENTS_FIELDS, EventsModel, EventStatus
 from neurons.validator.models.miner import MINERS_FIELDS, MinersModel
 from neurons.validator.models.miner_agent import MINER_AGENTS_FIELDS, MinerAgentsModel
@@ -958,28 +969,23 @@ class DatabaseOperations:
 
     async def get_last_metagraph_scores(self) -> list:
         """
-        Returns the last known metagraph_score for each miner_uid, miner_hotkey;
-        We cannot simply take from the last event - could be an old event scored now, so
-        if the miner registered after the event cutoff, we will have no metagraph_score
+        Returns metagraph_scores for all miners from the SINGLE latest processed event.
+        This ensures all miners are scored from the same ranking, preserving winner-take-all.
         """
         rows = await self.__db_client.many(
             f"""
-                WITH grouped AS (
-                    SELECT miner_uid AS g_miner_uid,
-                        miner_hotkey AS g_miner_hotkey,
-                        MAX(ROWID) AS max_rowid
+                WITH latest_event AS (
+                    SELECT event_id
                     FROM scores
                     WHERE processed = 1
                         AND created_at > datetime(CURRENT_TIMESTAMP, '-10 day')
-                    GROUP BY miner_uid, miner_hotkey
+                    ORDER BY ROWID DESC
+                    LIMIT 1
                 )
                 SELECT
                     {', '.join(SCORE_FIELDS)}
                 FROM scores s
-                JOIN grouped
-                    ON s.miner_uid = grouped.g_miner_uid
-                    AND s.miner_hotkey = grouped.g_miner_hotkey
-                    AND s.ROWID = grouped.max_rowid
+                WHERE s.event_id = (SELECT event_id FROM latest_event)
             """,
             use_row_factory=True,
         )
@@ -1113,3 +1119,206 @@ class DatabaseOperations:
         )
 
         return self._parse_rows(model=MinerAgentsModel, rows=rows)
+
+    async def upsert_agent_runs(self, runs: list[AgentRunsModel]) -> None:
+        if not runs:
+            return
+
+        fields_to_insert = [
+            "run_id",
+            "unique_event_id",
+            "agent_version_id",
+            "miner_uid",
+            "miner_hotkey",
+            "status",
+            "exported",
+            "is_final",
+        ]
+
+        run_tuples = [
+            (
+                run.run_id,
+                run.unique_event_id,
+                run.agent_version_id,
+                run.miner_uid,
+                run.miner_hotkey,
+                run.status.value,
+                1 if run.exported else 0,
+                1 if run.is_final else 0,
+            )
+            for run in runs
+        ]
+
+        placeholders = ", ".join(["?"] * len(fields_to_insert))
+        columns = ", ".join(fields_to_insert)
+
+        await self.__db_client.insert_many(
+            f"""
+                INSERT INTO agent_runs ({columns})
+                VALUES ({placeholders})
+                ON CONFLICT (run_id)
+                DO UPDATE SET
+                    status = excluded.status,
+                    exported = excluded.exported,
+                    is_final = excluded.is_final,
+                    updated_at = CURRENT_TIMESTAMP
+            """,
+            run_tuples,
+        )
+
+    async def get_unexported_agent_runs(self, limit: int = 1000) -> list[AgentRunsModel]:
+        rows = await self.__db_client.many(
+            f"""
+                SELECT {', '.join(AGENT_RUNS_FIELDS)}
+                FROM agent_runs
+                WHERE exported = ?
+                ORDER BY created_at ASC
+                LIMIT ?
+            """,
+            [AgentRunExportedStatus.NOT_EXPORTED, limit],
+            use_row_factory=True,
+        )
+
+        return self._parse_rows(model=AgentRunsModel, rows=rows)
+
+    async def mark_agent_runs_as_exported(self, run_ids: list[str]) -> None:
+        if not run_ids:
+            return
+
+        placeholders = ", ".join(["?" for _ in run_ids])
+
+        await self.__db_client.update(
+            f"""
+                UPDATE agent_runs
+                SET
+                    exported = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE run_id IN ({placeholders})
+            """,
+            [AgentRunExportedStatus.EXPORTED] + run_ids,
+        )
+
+    async def insert_agent_run_log(self, run_id: str, log_content: str) -> None:
+        truncated_log = log_content[:30000] if len(log_content) > 30000 else log_content
+
+        await self.__db_client.insert_many(
+            """
+                INSERT INTO agent_run_logs (run_id, log_content, exported)
+                VALUES (?, ?, ?)
+                ON CONFLICT (run_id)
+                DO UPDATE SET
+                    log_content = excluded.log_content,
+                    exported = excluded.exported,
+                    updated_at = CURRENT_TIMESTAMP
+            """,
+            [(run_id, truncated_log, AgentRunLogExportedStatus.NOT_EXPORTED)],
+        )
+
+    async def get_unexported_agent_run_logs(self, limit: int = 100) -> list[AgentRunLogsModel]:
+        rows = await self.__db_client.many(
+            f"""
+                SELECT {', '.join(AGENT_RUN_LOGS_FIELDS)}
+                FROM agent_run_logs
+                WHERE exported = ?
+                ORDER BY created_at ASC
+                LIMIT ?
+            """,
+            [AgentRunLogExportedStatus.NOT_EXPORTED, limit],
+            use_row_factory=True,
+        )
+
+        return self._parse_rows(model=AgentRunLogsModel, rows=rows)
+
+    async def mark_agent_run_logs_as_exported(self, run_ids: list[str]) -> None:
+        if not run_ids:
+            return
+
+        placeholders = ", ".join(["?" for _ in run_ids])
+
+        await self.__db_client.update(
+            f"""
+                UPDATE agent_run_logs
+                SET
+                    exported = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE run_id IN ({placeholders})
+            """,
+            [AgentRunLogExportedStatus.EXPORTED] + run_ids,
+        )
+
+    async def delete_agent_run_logs(self, batch_size: int) -> Iterable[tuple[int]]:
+        return await self.__db_client.delete(
+            """
+                WITH logs_to_delete AS (
+                    SELECT
+                        ROWID
+                    FROM
+                        agent_run_logs
+                    WHERE
+                        exported = ?
+                        AND datetime(created_at) < datetime(CURRENT_TIMESTAMP, '-7 day')
+                    ORDER BY
+                        ROWID ASC
+                    LIMIT ?
+                )
+                DELETE FROM
+                    agent_run_logs
+                WHERE
+                    ROWID IN (
+                        SELECT
+                            ROWID
+                        FROM
+                            logs_to_delete
+                    )
+                RETURNING
+                    ROWID
+            """,
+            [AgentRunLogExportedStatus.EXPORTED, batch_size],
+        )
+
+    async def count_runs_for_event_and_agent(
+        self,
+        unique_event_id: str,
+        agent_version_id: str,
+        status: Optional[AgentRunStatus] = None,
+        is_final: Optional[bool] = None,
+    ) -> int:
+        conditions = [
+            "unique_event_id = ?",
+            "agent_version_id = ?",
+        ]
+        params: list = [unique_event_id, agent_version_id]
+
+        if status is not None:
+            conditions.append("status = ?")
+            params.append(status.value)
+
+        if is_final is not None:
+            conditions.append("is_final = ?")
+            params.append(1 if is_final else 0)
+
+        sql = f"""
+            SELECT COUNT(*)
+            FROM agent_runs
+            WHERE {' AND '.join(conditions)}
+        """
+
+        result = await self.__db_client.one(sql, params)
+        return result[0] if result else 0
+
+    async def has_final_run(
+        self,
+        unique_event_id: str,
+        agent_version_id: str,
+    ) -> bool:
+        sql = """
+            SELECT 1
+            FROM agent_runs
+            WHERE unique_event_id = ?
+                AND agent_version_id = ?
+                AND is_final = 1
+            LIMIT 1
+        """
+
+        result = await self.__db_client.one(sql, [unique_event_id, agent_version_id])
+        return result is not None

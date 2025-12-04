@@ -6,11 +6,13 @@ from pathlib import Path
 from typing import List, Optional
 
 from neurons.validator.db.operations import DatabaseOperations
+from neurons.validator.models.agent_runs import AgentRunsModel, AgentRunStatus
 from neurons.validator.models.miner_agent import MinerAgentsModel
 from neurons.validator.models.numinous_client import PostAgentLogsRequestBody
 from neurons.validator.models.prediction import PredictionsModel
 from neurons.validator.numinous_client.client import NuminousClient
 from neurons.validator.sandbox import SandboxManager
+from neurons.validator.sandbox.models import SandboxErrorType
 from neurons.validator.scheduler.task import AbstractTask
 from neurons.validator.utils.common.converters import torch_or_numpy_to_int
 from neurons.validator.utils.common.interval import (
@@ -21,7 +23,8 @@ from neurons.validator.utils.if_metagraph import IfMetagraph
 from neurons.validator.utils.logger.logger import NuminousLogger
 
 TITLE_SEPARATOR = " ==Further Information==: "
-MAX_LOG_CHARS = 25_000  # ~25KB limit for logs
+MAX_LOG_CHARS = 25_000
+MAX_TIMEOUT_RETRIES = 3
 
 
 class RunAgents(AbstractTask):
@@ -306,9 +309,16 @@ class RunAgents(AbstractTask):
                 extra={"run_id": run_id, "error": str(e)},
             )
 
-    def validate_sandbox_result(
-        self, result: dict, event_id: str, agent_version_id: str, run_id: str
-    ) -> Optional[float]:
+    def _determine_status_and_extract_prediction(
+        self,
+        result: Optional[dict],
+        event_id: str,
+        agent_version_id: str,
+        run_id: str,
+    ) -> tuple[AgentRunStatus, Optional[float]]:
+        if result is None:
+            return (AgentRunStatus.SANDBOX_TIMEOUT, None)
+
         if not isinstance(result, dict):
             self.logger.error(
                 "Invalid result type from sandbox",
@@ -318,9 +328,11 @@ class RunAgents(AbstractTask):
                     "result_type": type(result).__name__,
                 },
             )
-            return
+            return (AgentRunStatus.INVALID_SANDBOX_OUTPUT, None)
 
+        # Handle error status from sandbox
         if result.get("status") == "error":
+            error_type = result.get("error_type")
             self.logger.error(
                 "Agent execution failed",
                 extra={
@@ -328,10 +340,26 @@ class RunAgents(AbstractTask):
                     "agent_version_id": agent_version_id,
                     "run_id": run_id,
                     "error": result.get("error", "Unknown error"),
+                    "error_type": error_type,
                 },
             )
-            return
 
+            if error_type == SandboxErrorType.TIMEOUT:
+                return (AgentRunStatus.SANDBOX_TIMEOUT, None)
+            elif error_type == SandboxErrorType.CONTAINER_ERROR:
+                return (AgentRunStatus.SANDBOX_TIMEOUT, None)
+            elif error_type == SandboxErrorType.INVALID_OUTPUT:
+                return (AgentRunStatus.INVALID_SANDBOX_OUTPUT, None)
+            elif error_type == SandboxErrorType.AGENT_ERROR:
+                return (AgentRunStatus.INTERNAL_AGENT_ERROR, None)
+            else:
+                self.logger.warning(
+                    "Unknown error_type from sandbox, defaulting to INTERNAL_AGENT_ERROR",
+                    extra={"error_type": error_type, "error": result.get("error")},
+                )
+                return (AgentRunStatus.INTERNAL_AGENT_ERROR, None)
+
+        # Handle success status - validate output structure
         output = result.get("output")
         if not isinstance(output, dict):
             self.logger.error(
@@ -342,7 +370,7 @@ class RunAgents(AbstractTask):
                     "result": str(result),
                 },
             )
-            return
+            return (AgentRunStatus.INVALID_SANDBOX_OUTPUT, None)
 
         if "prediction" not in output:
             self.logger.error(
@@ -353,7 +381,7 @@ class RunAgents(AbstractTask):
                     "output": str(output),
                 },
             )
-            return
+            return (AgentRunStatus.INVALID_SANDBOX_OUTPUT, None)
 
         prediction_value = output["prediction"]
         if not isinstance(prediction_value, (int, float)):
@@ -366,9 +394,38 @@ class RunAgents(AbstractTask):
                     "type": type(prediction_value).__name__,
                 },
             )
-            return
+            return (AgentRunStatus.INVALID_SANDBOX_OUTPUT, None)
 
-        return float(prediction_value)
+        return (AgentRunStatus.SUCCESS, float(prediction_value))
+
+    async def _create_agent_run(
+        self,
+        run_id: str,
+        event_id: str,
+        agent: MinerAgentsModel,
+        status: AgentRunStatus,
+    ) -> AgentRunsModel:
+        if status != AgentRunStatus.SANDBOX_TIMEOUT:
+            is_final = True
+        else:
+            timeout_count = await self.db_operations.count_runs_for_event_and_agent(
+                unique_event_id=event_id,
+                agent_version_id=agent.version_id,
+                status=AgentRunStatus.SANDBOX_TIMEOUT,
+                is_final=False,
+            )
+            is_final = timeout_count >= MAX_TIMEOUT_RETRIES - 1
+
+        return AgentRunsModel(
+            run_id=run_id,
+            unique_event_id=event_id,
+            agent_version_id=agent.version_id,
+            miner_uid=agent.miner_uid,
+            miner_hotkey=agent.miner_hotkey,
+            status=status,
+            exported=False,
+            is_final=is_final,
+        )
 
     async def execute_agent_for_event(
         self,
@@ -434,24 +491,32 @@ class RunAgents(AbstractTask):
 
         await self.post_agent_logs(run_id, logs)
 
-        if result is None:
-            self.logger.error(
-                "Sandbox execution failed or timed out",
+        run_status, prediction_value = self._determine_status_and_extract_prediction(
+            result, event_id, agent.version_id, run_id
+        )
+
+        agent_run = await self._create_agent_run(
+            run_id=run_id,
+            event_id=event_id,
+            agent=agent,
+            status=run_status,
+        )
+        await self.db_operations.upsert_agent_runs([agent_run])
+
+        if run_status == AgentRunStatus.SUCCESS and prediction_value is not None:
+            await self.store_prediction(
+                event_id, agent, prediction_value, run_id, interval_start_minutes
+            )
+        else:
+            self.logger.info(
+                "Agent execution completed with non-success status",
                 extra={
                     "event_id": event_id,
                     "agent_version_id": agent.version_id,
                     "run_id": run_id,
+                    "status": run_status.value,
                 },
             )
-            return
-
-        prediction_value = self.validate_sandbox_result(result, event_id, agent.version_id, run_id)
-        if prediction_value is None:
-            return
-
-        await self.store_prediction(
-            event_id, agent, prediction_value, run_id, interval_start_minutes
-        )
 
     async def execute_all(
         self, events: List[tuple], agents: List[MinerAgentsModel], interval_start_minutes: int
@@ -534,7 +599,21 @@ class RunAgents(AbstractTask):
                 )
                 return
 
-            # No prediction exists - execute agent
+            has_final_run = await self.db_operations.has_final_run(
+                unique_event_id=event_id,
+                agent_version_id=agent.version_id,
+            )
+
+            if has_final_run:
+                self.logger.debug(
+                    "Skipping execution - final run exists",
+                    extra={
+                        "event_id": event_id,
+                        "agent_version_id": agent.version_id,
+                    },
+                )
+                return
+
             await self.execute_agent_for_event(
                 event_id=event_id,
                 agent=agent,

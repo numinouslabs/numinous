@@ -22,6 +22,7 @@ from neurons.validator.models.numinous_client import (
     GetEventsResolvedResponse,
     GetEventsResponse,
     PostAgentLogsRequestBody,
+    PostAgentRunsRequestBody,
     PostPredictionsRequestBody,
     PostScoresRequestBody,
 )
@@ -678,6 +679,96 @@ class TestNuminousClient:
 
             with pytest.raises(ClientResponseError) as e:
                 await client_test_env.post_agent_logs(body=request_body)
+
+            mocked.assert_called_with(
+                url=url_path, method="POST", data=request_body.model_dump_json()
+            )
+
+            assert e.value.status == status_code
+
+    async def test_post_agent_runs(self, client_test_env: NuminousClient):
+        mock_response_data = {}
+
+        request_body = PostAgentRunsRequestBody.model_validate(
+            {
+                "runs": [
+                    {
+                        "run_id": "123e4567-e89b-12d3-a456-426614174000",
+                        "miner_uid": 10,
+                        "miner_hotkey": "miner_hotkey_1",
+                        "vali_uid": 5,
+                        "vali_hotkey": "validator_hotkey",
+                        "status": "SUCCESS",
+                        "event_id": "event_123",
+                        "version_id": "223e4567-e89b-12d3-a456-426614174001",
+                        "is_final": True,
+                    },
+                    {
+                        "run_id": "323e4567-e89b-12d3-a456-426614174002",
+                        "miner_uid": 20,
+                        "miner_hotkey": "miner_hotkey_2",
+                        "vali_uid": 5,
+                        "vali_hotkey": "validator_hotkey",
+                        "status": "SANDBOX_TIMEOUT",
+                        "event_id": "event_456",
+                        "version_id": "423e4567-e89b-12d3-a456-426614174003",
+                        "is_final": False,
+                    },
+                ]
+            }
+        )
+
+        with aioresponses() as mocked:
+            url_path = "/api/v1/validators/agents/runs"
+
+            mocked.post(
+                url_path,
+                status=204,
+                body=json.dumps(mock_response_data).encode("utf-8"),
+            )
+
+            result = await client_test_env.post_agent_runs(body=request_body)
+
+            mocked.assert_called_with(
+                url=url_path, method="POST", data=request_body.model_dump_json()
+            )
+
+            assert result == mock_response_data
+
+    async def test_post_agent_runs_error_raised(self, client_test_env: NuminousClient):
+        mock_response_data = {"error": "Failed to process runs"}
+
+        request_body = PostAgentRunsRequestBody.model_validate(
+            {
+                "runs": [
+                    {
+                        "run_id": "523e4567-e89b-12d3-a456-426614174004",
+                        "miner_uid": 30,
+                        "miner_hotkey": "miner_hotkey_3",
+                        "vali_uid": 5,
+                        "vali_hotkey": "validator_hotkey",
+                        "status": "INTERNAL_AGENT_ERROR",
+                        "event_id": "event_789",
+                        "version_id": "623e4567-e89b-12d3-a456-426614174005",
+                        "is_final": True,
+                    }
+                ]
+            }
+        )
+
+        status_code = 500
+
+        with aioresponses() as mocked:
+            url_path = "/api/v1/validators/agents/runs"
+
+            mocked.post(
+                url_path,
+                status=status_code,
+                body=json.dumps(mock_response_data).encode("utf-8"),
+            )
+
+            with pytest.raises(ClientResponseError) as e:
+                await client_test_env.post_agent_runs(body=request_body)
 
             mocked.assert_called_with(
                 url=url_path, method="POST", data=request_body.model_dump_json()

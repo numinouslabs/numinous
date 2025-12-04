@@ -12,6 +12,7 @@ from neurons.validator.main import main
 @patch("neurons.validator.main.ExportScores", spec=True)
 @patch("neurons.validator.main.MetagraphScoring", spec=True)
 @patch("neurons.validator.main.Scoring", spec=True)
+@patch("neurons.validator.main.ExportAgentRuns", spec=True)
 @patch("neurons.validator.main.ExportPredictions", spec=True)
 class TestValidatorMain:
     @pytest.mark.parametrize(
@@ -24,6 +25,7 @@ class TestValidatorMain:
     def test_main(
         self,
         mock_export_predictions,
+        mock_export_agent_runs,
         mock_peer_scoring,
         mock_metagraph_scoring,
         mock_export_scores,
@@ -114,7 +116,7 @@ class TestValidatorMain:
             mock_measure_event_loop_lag.assert_awaited_once()
 
             # Verify tasks added count
-            assert mock_scheduler.add.call_count == 13
+            assert mock_scheduler.add.call_count == 14
 
             # Verify logging
             mock_logger.info.assert_called_with(

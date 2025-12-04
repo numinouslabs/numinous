@@ -6,10 +6,10 @@ from pydantic import BaseModel, field_validator
 
 
 class AgentRunStatus(str, Enum):
-    SUCCESS = "success"
-    INTERNAL_AGENT_ERROR = "internal_agent_error"
-    INVALID_SANDBOX_OUTPUT = "invalid_sandbox_output"
-    SANDBOX_TIMEOUT = "sandbox_timeout"
+    SUCCESS = "SUCCESS"
+    INTERNAL_AGENT_ERROR = "INTERNAL_AGENT_ERROR"
+    INVALID_SANDBOX_OUTPUT = "INVALID_SANDBOX_OUTPUT"
+    SANDBOX_TIMEOUT = "SANDBOX_TIMEOUT"
 
 
 class AgentRunExportedStatus(IntEnum):
@@ -54,4 +54,4 @@ class AgentRunsModel(BaseModel):
         return v
 
 
-RUN_FIELDS = AgentRunsModel.model_fields.keys()
+AGENT_RUNS_FIELDS = AgentRunsModel.model_fields.keys()
