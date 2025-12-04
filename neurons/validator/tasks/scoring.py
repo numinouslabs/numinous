@@ -302,7 +302,7 @@ class Scoring(AbstractTask):
             ]
         )
 
-    def fill_unresponsive_miners(
+    def fill_missing_predictions(
         self, interval_scores: pd.DataFrame, imputed_prediction: float = 0.5
     ) -> pd.DataFrame:
         interval_scores_df = interval_scores.copy()
@@ -310,14 +310,9 @@ class Scoring(AbstractTask):
             ScoreNames.interval_agg_prediction
         ].astype("Float64")
 
-        # for miners with registered_date_minutes < interval_start but no answer:
-        unresponsive_miners = (
-            interval_scores_df[ScoreNames.miner_registered_minutes]
-            < interval_scores_df[ScoreNames.interval_start]
-        ) & (interval_scores_df[ScoreNames.interval_agg_prediction].isnull())
-
+        missing_predictions = interval_scores_df[ScoreNames.interval_agg_prediction].isnull()
         interval_scores_df.loc[
-            unresponsive_miners, ScoreNames.interval_agg_prediction
+            missing_predictions, ScoreNames.interval_agg_prediction
         ] = imputed_prediction
 
         return interval_scores_df
@@ -376,11 +371,8 @@ class Scoring(AbstractTask):
                 "No intervals to score - event discarded.", event.event_id
             )
 
-        # do not score miners which registered after the scoring window started
-        miners = self.miners_last_reg[
-            self.miners_last_reg[ScoreNames.miner_registered_minutes]
-            <= scoring_window_start_minutes
-        ].copy()
+        # Score all miners in the metagraph - those without predictions get 0.5 imputed
+        miners = self.miners_last_reg.copy()
         if miners.empty:
             return self.return_empty_scores_df("No miners to score.", event.event_id)
 
@@ -393,8 +385,8 @@ class Scoring(AbstractTask):
             predictions_df=predictions_df, miners=miners, intervals=intervals
         )
 
-        # Fill unresponsive miners
-        interval_scores_df = self.fill_unresponsive_miners(
+        # Fill missing predictions with 0.5 for miners without predictions
+        interval_scores_df = self.fill_missing_predictions(
             interval_scores_df, imputed_prediction=0.5
         )
 

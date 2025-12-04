@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
@@ -5,9 +6,11 @@ import numpy as np
 import pytest
 
 from neurons.validator.db.operations import DatabaseOperations
+from neurons.validator.models.agent_runs import AgentRunsModel, AgentRunStatus
 from neurons.validator.models.miner_agent import MinerAgentsModel
 from neurons.validator.numinous_client.client import NuminousClient
 from neurons.validator.sandbox import SandboxManager
+from neurons.validator.sandbox.models import SandboxErrorType
 from neurons.validator.tasks.run_agents import RunAgents
 from neurons.validator.utils.if_metagraph import IfMetagraph
 from neurons.validator.utils.logger.logger import NuminousLogger
@@ -548,6 +551,8 @@ class TestRunAgentsIdempotency:
 
         # No prediction exists
         mock_db_operations.get_latest_prediction_for_event_and_miner.return_value = None
+        mock_db_operations.has_final_run = AsyncMock(return_value=False)
+        mock_db_operations.count_runs_for_event_and_agent = AsyncMock(return_value=0)
 
         task = RunAgents(
             interval_seconds=600.0,
@@ -797,14 +802,14 @@ class TestRunAgentsSandbox:
         agent_code = "def agent_main(): return {'prediction': 0.75}"
 
         def mock_create_sandbox(agent_code, event_data, run_id, on_finish, timeout):
-            on_finish({"success": False, "error": "Execution failed"})
+            on_finish({"SUCCESS": False, "error": "Execution failed"})
             return "sandbox_123"
 
         mock_sandbox_manager.create_sandbox = mock_create_sandbox
 
         result = await task.run_sandbox(agent_code, event_data, "run_123")
 
-        assert result["success"] is False
+        assert result["SUCCESS"] is False
         assert "error" in result
 
     async def test_run_sandbox_timeout(
@@ -1111,7 +1116,7 @@ class TestRunAgentsErrorLogging:
 
         task.load_agent_code = AsyncMock(return_value="def agent_main(): pass")
         invalid_result = {
-            "status": "success",
+            "status": "SUCCESS",
             "output": {"event_id": "event_123"},
             "logs": "[AGENT_RUNNER] Starting\n[AGENT_RUNNER] Completed",
         }
@@ -1141,6 +1146,8 @@ class TestRunAgentsErrorLogging:
         sample_agent,
         sample_event_tuple,
     ):
+        mock_db_operations.count_runs_for_event_and_agent = AsyncMock(return_value=0)
+
         task = RunAgents(
             interval_seconds=600.0,
             db_operations=mock_db_operations,
@@ -1167,6 +1174,9 @@ class TestRunAgentsErrorLogging:
 
         assert "Sandbox timeout - no logs" in logs
 
+
+@pytest.mark.asyncio
+class TestRunAgentsSyncHour:
     async def test_run_skips_when_before_sync_hour(
         self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
     ):
@@ -1249,3 +1259,834 @@ class TestRunAgentsErrorLogging:
 
         mock_metagraph.sync.assert_called_once()
         mock_db_operations.get_events_to_predict.assert_called_once()
+
+
+class TestRunAgentsDetermineRunStatus:
+    def test_timeout_at_run_agents_level(
+        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+    ):
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+        )
+
+        status, prediction = task._determine_status_and_extract_prediction(
+            result=None, event_id="event1", agent_version_id="agent1", run_id="run1"
+        )
+        assert status == AgentRunStatus.SANDBOX_TIMEOUT
+        assert prediction is None
+
+    def test_success_with_valid_prediction(
+        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+    ):
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+        )
+
+        result = {"status": "SUCCESS", "output": {"prediction": 0.75}}
+        status, prediction = task._determine_status_and_extract_prediction(
+            result=result, event_id="event1", agent_version_id="agent1", run_id="run1"
+        )
+        assert status == AgentRunStatus.SUCCESS
+        assert prediction == 0.75
+
+    def test_success_but_invalid_prediction_type(
+        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+    ):
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+        )
+
+        result = {"status": "SUCCESS", "output": {"prediction": "invalid"}}
+        status, prediction = task._determine_status_and_extract_prediction(
+            result=result, event_id="event1", agent_version_id="agent1", run_id="run1"
+        )
+        assert status == AgentRunStatus.INVALID_SANDBOX_OUTPUT
+        assert prediction is None
+
+    def test_success_but_missing_prediction_field(
+        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+    ):
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+        )
+
+        result = {"status": "SUCCESS", "output": {"event_id": "event1"}}
+        status, prediction = task._determine_status_and_extract_prediction(
+            result=result, event_id="event1", agent_version_id="agent1", run_id="run1"
+        )
+        assert status == AgentRunStatus.INVALID_SANDBOX_OUTPUT
+        assert prediction is None
+
+    def test_success_but_invalid_output_format(
+        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+    ):
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+        )
+
+        result = {"status": "SUCCESS", "output": "not a dict"}
+        status, prediction = task._determine_status_and_extract_prediction(
+            result=result, event_id="event1", agent_version_id="agent1", run_id="run1"
+        )
+        assert status == AgentRunStatus.INVALID_SANDBOX_OUTPUT
+        assert prediction is None
+
+    def test_error_timeout(
+        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+    ):
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+        )
+
+        result = {
+            "status": "error",
+            "error": "Timeout exceeded",
+            "error_type": SandboxErrorType.TIMEOUT,
+        }
+        status, prediction = task._determine_status_and_extract_prediction(
+            result=result, event_id="event1", agent_version_id="agent1", run_id="run1"
+        )
+        assert status == AgentRunStatus.SANDBOX_TIMEOUT
+        assert prediction is None
+
+    def test_error_container_error(
+        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+    ):
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+        )
+
+        result = {
+            "status": "error",
+            "error": "Container error: Failed to start",
+            "error_type": SandboxErrorType.CONTAINER_ERROR,
+        }
+        status, prediction = task._determine_status_and_extract_prediction(
+            result=result, event_id="event1", agent_version_id="agent1", run_id="run1"
+        )
+        assert status == AgentRunStatus.SANDBOX_TIMEOUT
+        assert prediction is None
+
+    def test_error_invalid_output(
+        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+    ):
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+        )
+
+        result = {
+            "status": "error",
+            "error": "Failed to read output.json",
+            "error_type": SandboxErrorType.INVALID_OUTPUT,
+        }
+        status, prediction = task._determine_status_and_extract_prediction(
+            result=result, event_id="event1", agent_version_id="agent1", run_id="run1"
+        )
+        assert status == AgentRunStatus.INVALID_SANDBOX_OUTPUT
+        assert prediction is None
+
+    def test_error_agent_error(
+        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+    ):
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+        )
+
+        result = {
+            "status": "error",
+            "error": "agent_main() must return a dict",
+            "error_type": SandboxErrorType.AGENT_ERROR,
+        }
+        status, prediction = task._determine_status_and_extract_prediction(
+            result=result, event_id="event1", agent_version_id="agent1", run_id="run1"
+        )
+        assert status == AgentRunStatus.INTERNAL_AGENT_ERROR
+        assert prediction is None
+
+    def test_error_unknown_type(
+        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+    ):
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+        )
+
+        result = {"status": "error", "error": "Unknown error", "error_type": "unknown_type"}
+        status, prediction = task._determine_status_and_extract_prediction(
+            result=result, event_id="event1", agent_version_id="agent1", run_id="run1"
+        )
+        assert status == AgentRunStatus.INTERNAL_AGENT_ERROR
+        assert prediction is None
+        mock_logger.warning.assert_called_once()
+
+    def test_invalid_result_type(
+        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+    ):
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+        )
+
+        result = "not a dict"
+        status, prediction = task._determine_status_and_extract_prediction(
+            result=result, event_id="event1", agent_version_id="agent1", run_id="run1"
+        )
+        assert status == AgentRunStatus.INVALID_SANDBOX_OUTPUT
+        assert prediction is None
+
+
+@pytest.mark.asyncio
+class TestRunAgentsCreateAgentRun:
+    async def test_create_agent_run_success(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_metagraph,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
+    ):
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+        )
+
+        run_id = "test-run-123"
+        event_id = "event-456"
+
+        run = await task._create_agent_run(
+            run_id=run_id,
+            event_id=event_id,
+            agent=sample_agent,
+            status=AgentRunStatus.SUCCESS,
+        )
+
+        assert isinstance(run, AgentRunsModel)
+        assert run.run_id == run_id
+        assert run.unique_event_id == event_id
+        assert run.agent_version_id == sample_agent.version_id
+        assert run.miner_uid == sample_agent.miner_uid
+        assert run.miner_hotkey == sample_agent.miner_hotkey
+        assert run.status == AgentRunStatus.SUCCESS
+        assert run.exported is False
+        assert run.is_final is True
+
+    async def test_create_agent_run_internal_agent_error(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_metagraph,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
+    ):
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+        )
+
+        run_id = "test-run-789"
+        event_id = "event-abc"
+
+        run = await task._create_agent_run(
+            run_id=run_id,
+            event_id=event_id,
+            agent=sample_agent,
+            status=AgentRunStatus.INTERNAL_AGENT_ERROR,
+        )
+
+        assert run.status == AgentRunStatus.INTERNAL_AGENT_ERROR
+        assert run.is_final is True
+
+    async def test_create_agent_run_sandbox_timeout_not_final(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_metagraph,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
+    ):
+        mock_db_operations.count_runs_for_event_and_agent = AsyncMock(return_value=0)
+
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+        )
+
+        run = await task._create_agent_run(
+            run_id="run-timeout",
+            event_id="event-timeout",
+            agent=sample_agent,
+            status=AgentRunStatus.SANDBOX_TIMEOUT,
+        )
+
+        assert run.status == AgentRunStatus.SANDBOX_TIMEOUT
+        assert run.is_final is False
+
+    async def test_create_agent_run_sandbox_timeout_final(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_metagraph,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
+    ):
+        mock_db_operations.count_runs_for_event_and_agent = AsyncMock(return_value=2)
+
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+        )
+
+        run = await task._create_agent_run(
+            run_id="run-timeout-final",
+            event_id="event-timeout",
+            agent=sample_agent,
+            status=AgentRunStatus.SANDBOX_TIMEOUT,
+        )
+
+        assert run.status == AgentRunStatus.SANDBOX_TIMEOUT
+        assert run.is_final is True
+
+    async def test_create_agent_run_invalid_sandbox_output(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_metagraph,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
+    ):
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+        )
+
+        run = await task._create_agent_run(
+            run_id="run-invalid",
+            event_id="event-invalid",
+            agent=sample_agent,
+            status=AgentRunStatus.INVALID_SANDBOX_OUTPUT,
+        )
+
+        assert run.status == AgentRunStatus.INVALID_SANDBOX_OUTPUT
+        assert run.is_final is True
+
+
+@pytest.mark.asyncio
+class TestRunAgentsRunCreation:
+    async def test_creates_run_on_success(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_metagraph,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
+        sample_event_tuple,
+    ):
+        mock_db_operations.upsert_predictions = AsyncMock()
+        mock_db_operations.upsert_agent_runs = AsyncMock()
+
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+            timeout_seconds=120,
+        )
+
+        task.load_agent_code = AsyncMock(return_value="def agent_main(): pass")
+        success_result = {
+            "status": "SUCCESS",
+            "output": {"event_id": "external_event_123", "prediction": 0.75},
+            "logs": "[AGENT_RUNNER] Success",
+        }
+        task.run_sandbox = AsyncMock(return_value=success_result)
+
+        await task.execute_agent_for_event(
+            event_id="event_123",
+            agent=sample_agent,
+            event_tuple=sample_event_tuple,
+            interval_start_minutes=1000,
+        )
+
+        # Verify run was created
+        mock_db_operations.upsert_agent_runs.assert_called_once()
+        runs = mock_db_operations.upsert_agent_runs.call_args[0][0]
+        assert len(runs) == 1
+        run = runs[0]
+        assert run.status == AgentRunStatus.SUCCESS
+        assert run.is_final is True
+        assert run.exported is False
+        assert run.unique_event_id == "event_123"
+        assert run.agent_version_id == sample_agent.version_id
+
+        # Verify prediction was stored
+        mock_db_operations.upsert_predictions.assert_called_once()
+
+    async def test_creates_run_on_timeout(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_metagraph,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
+        sample_event_tuple,
+    ):
+        mock_db_operations.upsert_agent_runs = AsyncMock()
+        mock_db_operations.count_runs_for_event_and_agent = AsyncMock(return_value=0)
+
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+            timeout_seconds=1,
+        )
+
+        task.load_agent_code = AsyncMock(return_value="def agent_main(): pass")
+        task.run_sandbox = AsyncMock(return_value=None)  # Timeout
+
+        await task.execute_agent_for_event(
+            event_id="event_timeout",
+            agent=sample_agent,
+            event_tuple=sample_event_tuple,
+            interval_start_minutes=1000,
+        )
+
+        mock_db_operations.upsert_agent_runs.assert_called_once()
+        runs = mock_db_operations.upsert_agent_runs.call_args[0][0]
+        assert len(runs) == 1
+        run = runs[0]
+        assert run.status == AgentRunStatus.SANDBOX_TIMEOUT
+        assert run.is_final is False
+        assert run.exported is False
+
+    async def test_creates_run_on_agent_error(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_metagraph,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
+        sample_event_tuple,
+    ):
+        mock_db_operations.upsert_agent_runs = AsyncMock()
+
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+            timeout_seconds=120,
+        )
+
+        task.load_agent_code = AsyncMock(return_value="def agent_main(): pass")
+        error_result = {
+            "status": "error",
+            "error": "agent_main() must return a dict",
+            "error_type": SandboxErrorType.AGENT_ERROR,
+            "traceback": "Traceback...",
+            "logs": "[AGENT_RUNNER] Error",
+        }
+        task.run_sandbox = AsyncMock(return_value=error_result)
+
+        await task.execute_agent_for_event(
+            event_id="event_error",
+            agent=sample_agent,
+            event_tuple=sample_event_tuple,
+            interval_start_minutes=1000,
+        )
+
+        mock_db_operations.upsert_agent_runs.assert_called_once()
+        runs = mock_db_operations.upsert_agent_runs.call_args[0][0]
+        assert len(runs) == 1
+        run = runs[0]
+        assert run.status == AgentRunStatus.INTERNAL_AGENT_ERROR
+        assert run.is_final is True
+        assert run.exported is False
+
+    async def test_creates_run_on_invalid_output(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_metagraph,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
+        sample_event_tuple,
+    ):
+        mock_db_operations.upsert_agent_runs = AsyncMock()
+
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+            timeout_seconds=120,
+        )
+
+        task.load_agent_code = AsyncMock(return_value="def agent_main(): pass")
+        # Success status but missing prediction field
+        invalid_result = {
+            "status": "SUCCESS",
+            "output": {"event_id": "external_event_123"},  # Missing prediction!
+            "logs": "[AGENT_RUNNER] Success but invalid",
+        }
+        task.run_sandbox = AsyncMock(return_value=invalid_result)
+
+        await task.execute_agent_for_event(
+            event_id="event_invalid",
+            agent=sample_agent,
+            event_tuple=sample_event_tuple,
+            interval_start_minutes=1000,
+        )
+
+        mock_db_operations.upsert_agent_runs.assert_called_once()
+        runs = mock_db_operations.upsert_agent_runs.call_args[0][0]
+        assert len(runs) == 1
+        run = runs[0]
+        assert run.status == AgentRunStatus.INVALID_SANDBOX_OUTPUT
+        assert run.is_final is True
+        assert run.exported is False
+
+    async def test_run_links_to_prediction_on_success(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_metagraph,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
+        sample_event_tuple,
+    ):
+        mock_db_operations.upsert_predictions = AsyncMock()
+        mock_db_operations.upsert_agent_runs = AsyncMock()
+
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+            timeout_seconds=120,
+        )
+
+        task.load_agent_code = AsyncMock(return_value="def agent_main(): pass")
+        success_result = {
+            "status": "SUCCESS",
+            "output": {"event_id": "external_event_123", "prediction": 0.85},
+            "logs": "[AGENT_RUNNER] Success",
+        }
+        task.run_sandbox = AsyncMock(return_value=success_result)
+
+        await task.execute_agent_for_event(
+            event_id="event_123",
+            agent=sample_agent,
+            event_tuple=sample_event_tuple,
+            interval_start_minutes=1000,
+        )
+
+        # Verify run and prediction share same run_id
+        runs = mock_db_operations.upsert_agent_runs.call_args[0][0]
+        predictions = mock_db_operations.upsert_predictions.call_args[0][0]
+
+        assert len(runs) == 1
+        assert len(predictions) == 1
+
+        run_id = runs[0].run_id
+        prediction_run_id = predictions[0].run_id
+
+        assert run_id == prediction_run_id
+        assert runs[0].status == AgentRunStatus.SUCCESS
+        assert predictions[0].latest_prediction == 0.85
+
+    async def test_no_prediction_stored_on_error(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_metagraph,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
+        sample_event_tuple,
+    ):
+        mock_db_operations.upsert_predictions = AsyncMock()
+        mock_db_operations.upsert_agent_runs = AsyncMock()
+
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+            timeout_seconds=120,
+        )
+
+        task.load_agent_code = AsyncMock(return_value="def agent_main(): pass")
+        error_result = {
+            "status": "error",
+            "error": "Something went wrong",
+            "error_type": SandboxErrorType.AGENT_ERROR,
+            "logs": "[AGENT_RUNNER] Error",
+        }
+        task.run_sandbox = AsyncMock(return_value=error_result)
+
+        await task.execute_agent_for_event(
+            event_id="event_error",
+            agent=sample_agent,
+            event_tuple=sample_event_tuple,
+            interval_start_minutes=1000,
+        )
+
+        mock_db_operations.upsert_agent_runs.assert_called_once()
+        mock_db_operations.upsert_predictions.assert_not_called()
+
+        info_calls = [
+            call
+            for call in mock_logger.info.call_args_list
+            if len(call[0]) > 0
+            and "Agent execution completed with non-success status" in call[0][0]
+        ]
+        assert len(info_calls) == 1
+
+
+@pytest.mark.asyncio
+class TestRunAgentsMaxRetries:
+    async def test_first_timeout_allows_execution(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_metagraph,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
+        sample_event_tuple,
+    ):
+        mock_db_operations.get_latest_prediction_for_event_and_miner = AsyncMock(return_value=None)
+        mock_db_operations.has_final_run = AsyncMock(return_value=False)
+        mock_db_operations.count_runs_for_event_and_agent = AsyncMock(return_value=0)
+
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+            timeout_seconds=1,
+        )
+        task.execute_agent_for_event = AsyncMock()
+
+        semaphore = asyncio.Semaphore(1)
+        await task.execute_with_semaphore(
+            semaphore=semaphore,
+            event=sample_event_tuple,
+            agent=sample_agent,
+            interval_start_minutes=1000,
+        )
+
+        mock_db_operations.has_final_run.assert_called_once_with(
+            unique_event_id="event_123",
+            agent_version_id="agent_v1",
+        )
+        task.execute_agent_for_event.assert_called_once()
+
+    async def test_second_timeout_allows_execution(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_metagraph,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
+        sample_event_tuple,
+    ):
+        mock_db_operations.get_latest_prediction_for_event_and_miner = AsyncMock(return_value=None)
+        mock_db_operations.has_final_run = AsyncMock(return_value=False)
+        mock_db_operations.count_runs_for_event_and_agent = AsyncMock(return_value=1)
+
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+            timeout_seconds=1,
+        )
+        task.execute_agent_for_event = AsyncMock()
+
+        semaphore = asyncio.Semaphore(1)
+        await task.execute_with_semaphore(
+            semaphore=semaphore,
+            event=sample_event_tuple,
+            agent=sample_agent,
+            interval_start_minutes=1000,
+        )
+
+        task.execute_agent_for_event.assert_called_once()
+
+    async def test_third_timeout_allows_execution_creates_final_run(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_metagraph,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
+        sample_event_tuple,
+    ):
+        mock_db_operations.get_latest_prediction_for_event_and_miner = AsyncMock(return_value=None)
+        mock_db_operations.has_final_run = AsyncMock(return_value=False)
+        mock_db_operations.count_runs_for_event_and_agent = AsyncMock(return_value=2)
+
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+            timeout_seconds=1,
+        )
+        task.execute_agent_for_event = AsyncMock()
+
+        semaphore = asyncio.Semaphore(1)
+        await task.execute_with_semaphore(
+            semaphore=semaphore,
+            event=sample_event_tuple,
+            agent=sample_agent,
+            interval_start_minutes=1000,
+        )
+
+        task.execute_agent_for_event.assert_called_once()
+
+    async def test_fourth_call_skips_when_final_run_exists(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_metagraph,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
+        sample_event_tuple,
+    ):
+        mock_db_operations.get_latest_prediction_for_event_and_miner = AsyncMock(return_value=None)
+        mock_db_operations.has_final_run = AsyncMock(return_value=True)
+
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+            timeout_seconds=1,
+        )
+        task.execute_agent_for_event = AsyncMock()
+
+        semaphore = asyncio.Semaphore(1)
+        await task.execute_with_semaphore(
+            semaphore=semaphore,
+            event=sample_event_tuple,
+            agent=sample_agent,
+            interval_start_minutes=1000,
+        )
+
+        task.execute_agent_for_event.assert_not_called()
+        mock_logger.debug.assert_called_with(
+            "Skipping execution - final run exists",
+            extra={
+                "event_id": "event_123",
+                "agent_version_id": "agent_v1",
+            },
+        )

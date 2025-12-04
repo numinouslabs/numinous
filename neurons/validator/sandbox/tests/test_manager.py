@@ -50,7 +50,7 @@ class TestSandboxManagerCore:
         manager.docker_client.containers.run = MagicMock(return_value=mock_container)
         temp_dir = tempfile.mkdtemp(prefix="test_sandbox_")
         (Path(temp_dir) / "output.json").write_text(
-            json.dumps({"status": "success", "output": {"event_id": "test", "prediction": 0.5}})
+            json.dumps({"status": "SUCCESS", "output": {"event_id": "test", "prediction": 0.5}})
         )
 
         sandbox_id = "sandbox_test"
@@ -113,7 +113,7 @@ class TestSandboxManagerCore:
         manager.docker_client.containers.run = MagicMock(return_value=mock_container)
         temp_dir = tempfile.mkdtemp(prefix="test_sandbox_")
         (Path(temp_dir) / "output.json").write_text(
-            json.dumps({"status": "success", "output": {"event_id": "test", "prediction": 0.5}})
+            json.dumps({"status": "SUCCESS", "output": {"event_id": "test", "prediction": 0.5}})
         )
 
         manager.sandboxes["sandbox_test"] = SandboxState(

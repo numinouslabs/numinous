@@ -232,75 +232,62 @@ class TestDbOperationsPart2(TestDbOperationsBase):
 
     async def test_get_last_metagraph_scores(self, db_operations, db_client):
         created_at = datetime.now(timezone.utc) - timedelta(days=1)
-        scores_list = [
+
+        # Older event with some scores (should be ignored)
+        older_event_scores = [
             ScoresModel(
-                event_id="expected_event_id_1",
+                event_id="older_event",
                 miner_uid=3,
                 miner_hotkey="hk3",
                 prediction=0.75,
                 event_score=0.80,
-                metagraph_score=1.0,
-                created_at=created_at,
-                spec_version=1,
-                processed=True,
-            ),
-            ScoresModel(
-                event_id="expected_event_id_2",
-                miner_uid=3,
-                miner_hotkey="hk3",
-                prediction=0.75,
-                event_score=0.40,
-                metagraph_score=0.9,
-                created_at=created_at,
-                spec_version=1,
-                processed=True,
-            ),
-            ScoresModel(
-                event_id="expected_event_id_3",
-                miner_uid=3,
-                miner_hotkey="hk3",
-                prediction=0.75,
-                event_score=0.60,
-                metagraph_score=0.835,
-                created_at=created_at,
-                spec_version=1,
-                processed=True,
-            ),
-            ScoresModel(
-                event_id="expected_event_id_2",
-                miner_uid=4,
-                miner_hotkey="hk4",
-                prediction=0.75,
-                event_score=0.40,
-                metagraph_score=0.1,
-                created_at=created_at,
-                spec_version=1,
-                processed=True,
-            ),
-            ScoresModel(
-                event_id="expected_event_id_1",
-                miner_uid=4,
-                miner_hotkey="hk4",
-                prediction=0.75,
-                event_score=0.40,
-                metagraph_score=0.165,
-                created_at=created_at,
-                spec_version=1,
-                processed=True,
-            ),
-            ScoresModel(
-                event_id="expected_event_id_2",
-                miner_uid=5,
-                miner_hotkey="hk5",
-                prediction=0.75,
-                event_score=-0.40,
-                metagraph_score=0.0,
+                metagraph_score=0.5,  # Different score than latest
                 created_at=created_at,
                 spec_version=1,
                 processed=True,
             ),
         ]
-        # insert scores
+
+        # Latest event with ALL miners (this is what should be returned)
+        latest_event_scores = [
+            ScoresModel(
+                event_id="latest_event",
+                miner_uid=3,
+                miner_hotkey="hk3",
+                prediction=0.75,
+                event_score=0.10,
+                metagraph_score=0.198,  # Winner (rank 1)
+                created_at=created_at,
+                spec_version=1,
+                processed=True,
+            ),
+            ScoresModel(
+                event_id="latest_event",
+                miner_uid=4,
+                miner_hotkey="hk4",
+                prediction=0.50,
+                event_score=0.25,
+                metagraph_score=0.001,  # Rank 2
+                created_at=created_at,
+                spec_version=1,
+                processed=True,
+            ),
+            ScoresModel(
+                event_id="latest_event",
+                miner_uid=5,
+                miner_hotkey="hk5",
+                prediction=0.50,
+                event_score=0.25,
+                metagraph_score=0.001,  # Rank 3
+                created_at=created_at,
+                spec_version=1,
+                processed=True,
+            ),
+        ]
+
+        # Insert older event first, then latest event
+        scores_list = older_event_scores + latest_event_scores
+
         sql = f"""
             INSERT INTO scores ({', '.join(SCORE_FIELDS)})
             VALUES ({', '.join(['?'] * len(SCORE_FIELDS))})
@@ -313,24 +300,27 @@ class TestDbOperationsPart2(TestDbOperationsBase):
         inserted_scores = await db_client.many("SELECT * FROM scores")
         assert len(inserted_scores) == len(scores_list)
 
-        # get last metagraph scores
+        # Get last metagraph scores - should return all miners from latest_event only
         last_metagraph_scores = await db_operations.get_last_metagraph_scores()
+
+        # Should have 3 scores, all from latest_event
         assert len(last_metagraph_scores) == 3
 
-        assert last_metagraph_scores[0].event_id == "expected_event_id_3"
-        assert last_metagraph_scores[0].miner_uid == 3
-        assert last_metagraph_scores[0].miner_hotkey == "hk3"
-        assert last_metagraph_scores[0].metagraph_score == 0.835
+        # All scores should be from the same (latest) event
+        for score in last_metagraph_scores:
+            assert score.event_id == "latest_event"
 
-        assert last_metagraph_scores[1].event_id == "expected_event_id_1"
-        assert last_metagraph_scores[1].miner_uid == 4
-        assert last_metagraph_scores[1].miner_hotkey == "hk4"
-        assert last_metagraph_scores[1].metagraph_score == 0.165
+        # Verify the miners and their scores
+        scores_by_uid = {s.miner_uid: s for s in last_metagraph_scores}
 
-        assert last_metagraph_scores[2].event_id == "expected_event_id_2"
-        assert last_metagraph_scores[2].miner_uid == 5
-        assert last_metagraph_scores[2].miner_hotkey == "hk5"
-        assert last_metagraph_scores[2].metagraph_score == 0.0
+        assert scores_by_uid[3].miner_hotkey == "hk3"
+        assert scores_by_uid[3].metagraph_score == 0.198  # Winner
+
+        assert scores_by_uid[4].miner_hotkey == "hk4"
+        assert scores_by_uid[4].metagraph_score == 0.001
+
+        assert scores_by_uid[5].miner_hotkey == "hk5"
+        assert scores_by_uid[5].metagraph_score == 0.001
 
     async def test_mark_event_as_discarded(self, db_operations, db_client):
         now = datetime.now(timezone.utc)

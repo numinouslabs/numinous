@@ -6,9 +6,11 @@ import pytest
 from pydantic import ValidationError
 
 from neurons.validator.models.numinous_client import (
+    AgentRunSubmission,
     GetAgentsQueryParams,
     GetAgentsResponse,
     MinerAgentWithCode,
+    PostAgentRunsRequestBody,
 )
 
 
@@ -205,3 +207,157 @@ class TestGetAgentsResponse:
         assert len(response.items) == 2
         assert response.items[0].miner_uid == 1
         assert response.items[1].miner_uid == 2
+
+
+class TestAgentRunSubmission:
+    def test_create_valid_run(self):
+        run = AgentRunSubmission(
+            run_id=UUID("123e4567-e89b-12d3-a456-426614174000"),
+            miner_uid=10,
+            miner_hotkey="miner_hotkey_1",
+            vali_uid=5,
+            vali_hotkey="validator_hotkey",
+            status="SUCCESS",
+            event_id="event_123",
+            version_id=UUID("223e4567-e89b-12d3-a456-426614174001"),
+            is_final=True,
+        )
+
+        assert run.run_id == UUID("123e4567-e89b-12d3-a456-426614174000")
+        assert run.miner_uid == 10
+        assert run.miner_hotkey == "miner_hotkey_1"
+        assert run.vali_uid == 5
+        assert run.vali_hotkey == "validator_hotkey"
+        assert run.status == "SUCCESS"
+        assert run.event_id == "event_123"
+        assert run.version_id == UUID("223e4567-e89b-12d3-a456-426614174001")
+        assert run.is_final is True
+
+    def test_create_from_json(self):
+        json_data = {
+            "run_id": "323e4567-e89b-12d3-a456-426614174002",
+            "miner_uid": 20,
+            "miner_hotkey": "miner_hotkey_2",
+            "vali_uid": 5,
+            "vali_hotkey": "validator_hotkey",
+            "status": "SANDBOX_TIMEOUT",
+            "event_id": "event_456",
+            "version_id": "423e4567-e89b-12d3-a456-426614174003",
+            "is_final": False,
+        }
+
+        run = AgentRunSubmission.model_validate(json_data)
+
+        assert run.run_id == UUID("323e4567-e89b-12d3-a456-426614174002")
+        assert run.miner_uid == 20
+        assert run.status == "SANDBOX_TIMEOUT"
+        assert run.is_final is False
+
+    def test_invalid_run_id(self):
+        with pytest.raises(ValidationError):
+            AgentRunSubmission(
+                run_id="not-a-uuid",
+                miner_uid=10,
+                miner_hotkey="miner_hotkey",
+                vali_uid=5,
+                vali_hotkey="validator_hotkey",
+                status="SUCCESS",
+                event_id="event_123",
+                version_id=UUID("223e4567-e89b-12d3-a456-426614174001"),
+                is_final=True,
+            )
+
+    def test_invalid_version_id(self):
+        with pytest.raises(ValidationError):
+            AgentRunSubmission(
+                run_id=UUID("123e4567-e89b-12d3-a456-426614174000"),
+                miner_uid=10,
+                miner_hotkey="miner_hotkey",
+                vali_uid=5,
+                vali_hotkey="validator_hotkey",
+                status="SUCCESS",
+                event_id="event_123",
+                version_id="not-a-uuid",
+                is_final=True,
+            )
+
+
+class TestPostAgentRunsRequestBody:
+    def test_empty_runs_list(self):
+        body = PostAgentRunsRequestBody(runs=[])
+
+        assert body.runs == []
+
+    def test_single_run(self):
+        run = AgentRunSubmission(
+            run_id=UUID("523e4567-e89b-12d3-a456-426614174004"),
+            miner_uid=30,
+            miner_hotkey="miner_hotkey_3",
+            vali_uid=5,
+            vali_hotkey="validator_hotkey",
+            status="INTERNAL_AGENT_ERROR",
+            event_id="event_789",
+            version_id=UUID("623e4567-e89b-12d3-a456-426614174005"),
+            is_final=True,
+        )
+
+        body = PostAgentRunsRequestBody(runs=[run])
+
+        assert len(body.runs) == 1
+        assert body.runs[0].run_id == UUID("523e4567-e89b-12d3-a456-426614174004")
+        assert body.runs[0].status == "INTERNAL_AGENT_ERROR"
+
+    def test_multiple_runs(self):
+        runs = [
+            AgentRunSubmission(
+                run_id=UUID("723e4567-e89b-12d3-a456-426614174006"),
+                miner_uid=10,
+                miner_hotkey="miner_1",
+                vali_uid=5,
+                vali_hotkey="validator_hotkey",
+                status="SUCCESS",
+                event_id="event_1",
+                version_id=UUID("823e4567-e89b-12d3-a456-426614174007"),
+                is_final=True,
+            ),
+            AgentRunSubmission(
+                run_id=UUID("923e4567-e89b-12d3-a456-426614174008"),
+                miner_uid=20,
+                miner_hotkey="miner_2",
+                vali_uid=5,
+                vali_hotkey="validator_hotkey",
+                status="SANDBOX_TIMEOUT",
+                event_id="event_2",
+                version_id=UUID("a23e4567-e89b-12d3-a456-426614174009"),
+                is_final=False,
+            ),
+        ]
+
+        body = PostAgentRunsRequestBody(runs=runs)
+
+        assert len(body.runs) == 2
+        assert body.runs[0].miner_uid == 10
+        assert body.runs[1].miner_uid == 20
+
+    def test_from_json(self):
+        json_data = {
+            "runs": [
+                {
+                    "run_id": "b23e4567-e89b-12d3-a456-42661417400a",
+                    "miner_uid": 40,
+                    "miner_hotkey": "miner_hotkey_4",
+                    "vali_uid": 5,
+                    "vali_hotkey": "validator_hotkey",
+                    "status": "SUCCESS",
+                    "event_id": "event_abc",
+                    "version_id": "c23e4567-e89b-12d3-a456-42661417400b",
+                    "is_final": True,
+                }
+            ]
+        }
+
+        body = PostAgentRunsRequestBody.model_validate(json_data)
+
+        assert len(body.runs) == 1
+        assert body.runs[0].miner_uid == 40
+        assert body.runs[0].event_id == "event_abc"

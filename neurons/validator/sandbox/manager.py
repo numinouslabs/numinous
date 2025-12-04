@@ -14,7 +14,7 @@ import requests.exceptions
 from bittensor_wallet import Wallet
 
 from neurons.validator.sandbox.agent_models import AgentOutput, AgentRunnerOutput, RunStatus
-from neurons.validator.sandbox.models import SandboxResult, SandboxState
+from neurons.validator.sandbox.models import SandboxErrorType, SandboxResult, SandboxState
 from neurons.validator.sandbox.utils.docker import build_docker_image, image_exists
 from neurons.validator.sandbox.utils.temp import cleanup_temp_dir, create_temp_dir
 from neurons.validator.utils.logger.logger import NuminousLogger
@@ -383,12 +383,15 @@ class SandboxManager:
             self.logger.warning("Sandbox not found", extra={"sandbox_id": sandbox_id})
             return
 
-        def finish_with_error(error_msg: str, result: SandboxResult) -> None:
+        def finish_with_error(
+            error_msg: str, result: SandboxResult, error_type: SandboxErrorType
+        ) -> None:
             self.logger.warning(
                 "Sandbox failed", extra={"sandbox_id": sandbox_id, "error": error_msg}
             )
             result.status = "error"
             result.error = error_msg
+            result.error_type = error_type
             try:
                 sandbox.on_finish(result.model_dump())
             except Exception as e:
@@ -454,7 +457,7 @@ class SandboxManager:
                     )
                     result.logs = f"Failed to capture partial logs on timeout: {e}"
 
-                finish_with_error("Timeout exceeded", result)
+                finish_with_error("Timeout exceeded", result, error_type=SandboxErrorType.TIMEOUT)
                 return
 
             self.logger.debug("Sandbox finished", extra={"sandbox_id": sandbox_id})
@@ -479,7 +482,9 @@ class SandboxManager:
 
         except Exception as e:
             result.traceback = traceback.format_exc()
-            finish_with_error(f"Container error: {e}", result)
+            finish_with_error(
+                f"Container error: {e}", result, error_type=SandboxErrorType.CONTAINER_ERROR
+            )
             return
 
         # Read output.json
@@ -488,7 +493,11 @@ class SandboxManager:
             output_dict = json.loads(output_path.read_text())
             self.logger.debug("Read output.json", extra={"sandbox_id": sandbox_id})
         except Exception as e:
-            finish_with_error(f"Failed to read output.json: {e}", result)
+            finish_with_error(
+                f"Failed to read output.json: {e}",
+                result,
+                error_type=SandboxErrorType.INVALID_OUTPUT,
+            )
             return
 
         # Validate output structure
@@ -496,13 +505,21 @@ class SandboxManager:
             output = AgentRunnerOutput(**output_dict)
             self.logger.debug("Validated output with Pydantic", extra={"sandbox_id": sandbox_id})
         except Exception as e:
-            finish_with_error(f"Invalid output.json structure: {e}", result)
+            finish_with_error(
+                f"Invalid output.json structure: {e}",
+                result,
+                error_type=SandboxErrorType.INVALID_OUTPUT,
+            )
             return
 
         # Handle success or error status
         if output.status == RunStatus.SUCCESS:
             if output.output is None:
-                finish_with_error("output.json has status='success' but no 'output' field", result)
+                finish_with_error(
+                    "output.json has status='success' but no 'output' field",
+                    result,
+                    error_type=SandboxErrorType.INVALID_OUTPUT,
+                )
                 return
 
             try:
@@ -516,18 +533,30 @@ class SandboxManager:
                     },
                 )
             except Exception as e:
-                finish_with_error(f"Invalid agent output structure: {e}", result)
+                finish_with_error(
+                    f"Invalid agent output structure: {e}",
+                    result,
+                    error_type=SandboxErrorType.INVALID_OUTPUT,
+                )
                 return
 
         elif output.status == RunStatus.ERROR:
             if output.error is None:
-                finish_with_error("output.json has status='error' but no 'error' field", result)
+                finish_with_error(
+                    "output.json has status='error' but no 'error' field",
+                    result,
+                    error_type=SandboxErrorType.INVALID_OUTPUT,
+                )
                 return
             result.traceback = output.traceback
-            finish_with_error(output.error, result)
+            finish_with_error(output.error, result, error_type=SandboxErrorType.AGENT_ERROR)
             return
         else:
-            finish_with_error(f"Invalid status in output.json: {output.status}", result)
+            finish_with_error(
+                f"Invalid status in output.json: {output.status}",
+                result,
+                error_type=SandboxErrorType.INVALID_OUTPUT,
+            )
             return
 
         # Success - call on_finish

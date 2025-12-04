@@ -497,6 +497,8 @@ class TestMetagraphScoring:
                 },
             ),
             # Case 7: 1 miner 3 events, 1 miner 2 events, 1 miner 1 event with very low Brier score.
+            # Event 3 only considers miners IN event 3 (not miner 5).
+            # This means miner 4 becomes rank 1 for event 3 (not miner 5 who isn't present).
             (
                 [
                     ScoresModel(
@@ -591,6 +593,7 @@ class TestMetagraphScoring:
                     ),
                 ],
                 [
+                    # Event 1: Only miners 3 and 239
                     {
                         "event_id": "expected_event_id_1",
                         "processed": 1,
@@ -609,28 +612,31 @@ class TestMetagraphScoring:
                             "rank": 2,
                         },
                     },
+                    # Event 2: Miners 3, 4, 5, 239 - miner 5 is present and wins
                     {
                         "event_id": "expected_event_id_2",
                         "processed": 1,
-                        "metagraph_score": 0.0004,  # Miner 3: avg=0.60, rank 3, gets (1-0.80)*(1-0.99)*(1/3)/(1/2+1/3) ≈ 0.0004
+                        "metagraph_score": 0.0008,  # Miner 3: avg=0.60, rank 3, gets (1-0.80)*(1-0.99)*(1/3)/(1/2+1/3)
                         "other_data": {
                             "average_brier_score": 0.60,
                             "rank": 3,
                         },
                     },
+                    # Event 3: Only miners 3, 4, 239 - miner 5 NOT present!
+                    # Miner 4 (avg=0.40) becomes rank 1, miner 3 (avg=0.60) becomes rank 2
                     {
                         "event_id": "expected_event_id_3",
                         "processed": 1,
-                        "metagraph_score": 0.0004,  # Miner 3: avg=0.60, rank 3
+                        "metagraph_score": 0.002,  # Miner 3: avg=0.60, rank 2, only non-winner non-burn, gets all 0.002
                         "other_data": {
                             "average_brier_score": 0.60,
-                            "rank": 3,
+                            "rank": 2,
                         },
                     },
                     {
                         "event_id": "expected_event_id_2",
                         "processed": 1,
-                        "metagraph_score": 0.0006,  # Miner 4: avg=0.40, rank 2, gets (1-0.80)*(1-0.99)*(1/2)/(1/2+1/3) ≈ 0.0006
+                        "metagraph_score": 0.0012,  # Miner 4: avg=0.40, rank 2, gets (1-0.80)*(1-0.99)*(1/2)/(1/2+1/3)
                         "other_data": {
                             "average_brier_score": 0.40,
                             "rank": 2,
@@ -639,10 +645,10 @@ class TestMetagraphScoring:
                     {
                         "event_id": "expected_event_id_3",
                         "processed": 1,
-                        "metagraph_score": 0.0006,  # Miner 4: avg=0.40, rank 2
+                        "metagraph_score": 0.198,  # Miner 4: avg=0.40, rank 1 (winner since miner 5 not in event 3)
                         "other_data": {
                             "average_brier_score": 0.40,
-                            "rank": 2,
+                            "rank": 1,
                         },
                     },
                     {
@@ -666,10 +672,10 @@ class TestMetagraphScoring:
                     {
                         "event_id": "expected_event_id_3",
                         "processed": 1,
-                        "metagraph_score": 0.8,  # UID 239 gets 80%
+                        "metagraph_score": 0.8,  # UID 239 gets 80%, rank 3 (only 3 miners in event)
                         "other_data": {
                             "average_brier_score": 1.00,
-                            "rank": 4,
+                            "rank": 3,
                         },
                     },
                 ],

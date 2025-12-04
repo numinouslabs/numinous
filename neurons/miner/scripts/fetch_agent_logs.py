@@ -211,7 +211,6 @@ def fetch_logs(
 
                     # Add all metadata fields
                     meta_table.add_row("Event ID", str(metadata.get("event_id", "N/A")))
-                    meta_table.add_row("Market Type", str(metadata.get("market_type", "N/A")))
                     meta_table.add_row("Validator UID", str(metadata.get("vali_uid", "N/A")))
 
                     validator_hotkey = str(metadata.get("vali_hotkey", "N/A"))
@@ -219,14 +218,27 @@ def fetch_logs(
                         validator_hotkey = validator_hotkey[:16] + "..." + validator_hotkey[-8:]
                     meta_table.add_row("Validator Hotkey", validator_hotkey)
 
-                    meta_table.add_row(
-                        "Interval Prediction", str(metadata.get("interval_agg_prediction", "N/A"))
-                    )
-                    meta_table.add_row(
-                        "Interval DateTime", str(metadata.get("interval_datetime", "N/A"))
-                    )
-                    meta_table.add_row("Submitted At", str(metadata.get("submitted_at", "N/A")))
                     meta_table.add_row("Version ID", str(metadata.get("version_id", "N/A")))
+                    meta_table.add_row("Status", str(metadata.get("status", "N/A")))
+                    meta_table.add_row("Is Final", str(metadata.get("is_final", "N/A")))
+
+                    # Add prediction fields if available
+                    prediction = metadata.get("prediction")
+                    if prediction:
+                        meta_table.add_row(
+                            "Interval Prediction",
+                            str(prediction.get("interval_agg_prediction", "N/A")),
+                        )
+                        meta_table.add_row(
+                            "Interval DateTime", str(prediction.get("interval_datetime", "N/A"))
+                        )
+                        meta_table.add_row(
+                            "Submitted At", str(prediction.get("submitted_at", "N/A"))
+                        )
+                    else:
+                        meta_table.add_row("Interval Prediction", "N/A")
+                        meta_table.add_row("Interval DateTime", "N/A")
+                        meta_table.add_row("Submitted At", "N/A")
 
                     console.print(
                         Panel.fit(meta_table, title="📊 Run Metadata", border_style="cyan")
