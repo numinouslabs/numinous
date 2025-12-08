@@ -79,6 +79,26 @@ class DbCleaner(AbstractTask):
 
         await asyncio.sleep(1)
 
+        # Delete agent run logs
+        deleted_agent_run_logs = await self.db_operations.delete_agent_run_logs(self.batch_size)
+
+        if len(deleted_agent_run_logs) > 0:
+            self.logger.debug(
+                "Agent run logs deleted", extra={"deleted_count": len(deleted_agent_run_logs)}
+            )
+
+        await asyncio.sleep(1)
+
+        # Delete agent runs
+        deleted_agent_runs = await self.db_operations.delete_agent_runs(self.batch_size)
+
+        if len(deleted_agent_runs) > 0:
+            self.logger.debug(
+                "Agent runs deleted", extra={"deleted_count": len(deleted_agent_runs)}
+            )
+
+        await asyncio.sleep(1)
+
         # Delete events
         deleted_events = await self.db_operations.delete_events_hard_delete(self.batch_size)
 

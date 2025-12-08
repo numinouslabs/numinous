@@ -20,6 +20,8 @@ class TestDbCleanerTask:
             db_operations_mock.delete_predictions = AsyncMock(return_value=[1, 2])
             db_operations_mock.delete_scores = AsyncMock(return_value=[3])
             db_operations_mock.delete_reasonings = AsyncMock(return_value=[5, 6, 7])
+            db_operations_mock.delete_agent_run_logs = AsyncMock(return_value=[8, 9])
+            db_operations_mock.delete_agent_runs = AsyncMock(return_value=[10, 11, 12])
             db_operations_mock.delete_events_hard_delete = AsyncMock(return_value=(3, 4, 5, 7, 8))
             logger_mock = MagicMock(spec=NuminousLogger)
             batch_size = 100
@@ -38,6 +40,8 @@ class TestDbCleanerTask:
             db_operations_mock.delete_predictions.assert_awaited_once_with(batch_size)
             db_operations_mock.delete_scores.assert_awaited_once_with(batch_size)
             db_operations_mock.delete_reasonings.assert_awaited_once_with(batch_size)
+            db_operations_mock.delete_agent_run_logs.assert_awaited_once_with(batch_size)
+            db_operations_mock.delete_agent_runs.assert_awaited_once_with(batch_size)
             db_operations_mock.delete_events_hard_delete.assert_awaited_once_with(batch_size)
 
             logger_mock.debug.assert_has_calls(
@@ -45,11 +49,13 @@ class TestDbCleanerTask:
                     call("Predictions deleted", extra={"deleted_count": 2}),
                     call("Scores deleted", extra={"deleted_count": 1}),
                     call("Reasonings deleted", extra={"deleted_count": 3}),
+                    call("Agent run logs deleted", extra={"deleted_count": 2}),
+                    call("Agent runs deleted", extra={"deleted_count": 3}),
                     call("Events hard deleted", extra={"deleted_count": 5}),
                 ]
             )
 
-            assert sleep_mock.call_args_list == [call(1), call(1), call(1)]
+            assert sleep_mock.call_args_list == [call(1), call(1), call(1), call(1), call(1)]
 
     async def test_db_cleaner_run_no_deletions(self, db_operations_mock: AsyncMock):
         # Prepare mocks
@@ -57,6 +63,8 @@ class TestDbCleanerTask:
             db_operations_mock.delete_predictions = AsyncMock(return_value=[])
             db_operations_mock.delete_scores = AsyncMock(return_value=[])
             db_operations_mock.delete_reasonings = AsyncMock(return_value=[])
+            db_operations_mock.delete_agent_run_logs = AsyncMock(return_value=[])
+            db_operations_mock.delete_agent_runs = AsyncMock(return_value=[])
             db_operations_mock.delete_events_hard_delete = AsyncMock(return_value=[])
             logger_mock = MagicMock(spec=NuminousLogger)
             batch_size = 100
@@ -75,8 +83,10 @@ class TestDbCleanerTask:
             db_operations_mock.delete_predictions.assert_awaited_once_with(batch_size)
             db_operations_mock.delete_scores.assert_awaited_once_with(batch_size)
             db_operations_mock.delete_reasonings.assert_awaited_once_with(batch_size)
+            db_operations_mock.delete_agent_run_logs.assert_awaited_once_with(batch_size)
+            db_operations_mock.delete_agent_runs.assert_awaited_once_with(batch_size)
             db_operations_mock.delete_events_hard_delete.assert_awaited_once_with(batch_size)
             logger_mock.debug.assert_not_called()
 
             # Sleep called between each delete
-            assert sleep_mock.call_args_list == [call(1), call(1), call(1)]
+            assert sleep_mock.call_args_list == [call(1), call(1), call(1), call(1), call(1)]

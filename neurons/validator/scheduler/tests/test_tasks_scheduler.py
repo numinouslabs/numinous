@@ -1,4 +1,5 @@
 import asyncio
+import sys
 from unittest.mock import MagicMock
 
 import pytest
@@ -172,13 +173,56 @@ class TestTasksScheduler:
         assert logger.info.call_count == 2  # task started logs
         assert logger.exception.call_count == 2  # task errored logs
 
+    async def test_task_timeout(self, scheduler, await_start_with_timeout, logger):
+        original_timeout = TasksScheduler.DEFAULT_TASK_TIMEOUT_SECONDS
+        TasksScheduler.DEFAULT_TASK_TIMEOUT_SECONDS = 0.1
+
+        try:
+
+            class HangingTask(AbstractTask):
+                @property
+                def name(self):
+                    return "Hanging Task"
+
+                @property
+                def interval_seconds(self):
+                    return 10.0
+
+                async def run(self):
+                    # Intentionally sleep longer than the scheduler timeout to trigger a timeout
+                    await asyncio.sleep(10)
+
+            captured_excs = []
+
+            def capture_exception(message, *args, **kwargs):
+                captured_excs.append(sys.exc_info()[1])
+
+            logger.exception.side_effect = capture_exception
+
+            task = HangingTask()
+            scheduler.add(task)
+
+            # Run the scheduler briefly to allow at least one timeout to occur
+            await await_start_with_timeout(start_future=scheduler.start(), timeout=0.2)
+
+            # Task should return to idle even after the timeout
+            assert task.status == "idle"
+
+            # Ensure an exception was logged and it originated from a timeout
+            assert len(captured_excs) >= 1
+
+            assert any(isinstance(e, asyncio.TimeoutError) for e in captured_excs)
+
+            assert any(
+                call.args and call.args[0] == "Task errored" for call in logger.exception.mock_calls
+            )
+        finally:
+            # Restore timeout
+            TasksScheduler.DEFAULT_TASK_TIMEOUT_SECONDS = original_timeout
+
     async def test_task_with_invalid_status(self, scheduler, await_start_with_timeout):
         # Verify the task is not executed because its status is not "unscheduled"
         runs = 0
-
-        async def dummy_task():
-            nonlocal runs
-            runs += 1
 
         class TestTask(AbstractTask):
             @property

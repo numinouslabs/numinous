@@ -3,6 +3,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+import aiohttp
 import pandas as pd
 import torch
 from bittensor import AsyncSubtensor
@@ -10,6 +11,9 @@ from bittensor.utils.weight_utils import process_weights
 from bittensor_wallet.wallet import Wallet
 
 from neurons.validator.db.operations import DatabaseOperations
+from neurons.validator.models.numinous_client import GetWeightsResponse
+from neurons.validator.models.weights import WeightsModel
+from neurons.validator.numinous_client.client import NuminousClient
 from neurons.validator.scheduler.task import AbstractTask
 from neurons.validator.utils.common.converters import (
     pydantic_models_to_dataframe,
@@ -51,12 +55,16 @@ class SetWeights(AbstractTask):
         netuid: int,
         subtensor: AsyncSubtensor,
         wallet: Wallet,  # type: ignore
+        api_client: NuminousClient,
     ):
         if not isinstance(interval_seconds, float) or interval_seconds <= 0:
             raise ValueError("interval_seconds must be a positive number (float).")
 
         if not isinstance(db_operations, DatabaseOperations):
             raise TypeError("db_operations must be an instance of DatabaseOperations.")
+
+        if not isinstance(api_client, NuminousClient):
+            raise TypeError("api_client must be an instance of NuminousClient.")
 
         self.interval = interval_seconds
         self.db_operations = db_operations
@@ -66,6 +74,7 @@ class SetWeights(AbstractTask):
         self.netuid = netuid
         self.subtensor = subtensor
         self.wallet = wallet
+        self.api_client = api_client
 
         self.current_hotkeys = None
         self.n_hotkeys = None
@@ -134,32 +143,24 @@ class SetWeights(AbstractTask):
 
             return True
 
-    def filter_last_scores(self, last_metagraph_scores) -> pd.DataFrame:
-        # this is re-normalizing the weights for the current miners
-
-        filtered_scores = pydantic_models_to_dataframe(last_metagraph_scores)
-        # merge the current metagraph with the last metagraph scores
-        filtered_scores = pd.merge(
+    def merge_weights_with_metagraph(self, weights_from_api) -> pd.DataFrame:
+        merged_weights = pydantic_models_to_dataframe(weights_from_api)
+        merged_weights = pd.merge(
             self.current_miners_df,
-            filtered_scores,
+            merged_weights,
             on=[SWNames.miner_uid, SWNames.miner_hotkey],
             how="left",
         )
 
-        # some stats for logging
         stats = {
-            "len_last_metagraph_scores": len(last_metagraph_scores),
-            "len_filtered_scores": len(filtered_scores),
+            "len_weights_from_api": len(weights_from_api),
+            "len_merged_weights": len(merged_weights),
             "len_current_miners": len(self.current_miners_df),
-            "len_valid_meta_scores": len(filtered_scores.dropna(subset=[SWNames.metagraph_score])),
-            "len_valid_event_scores": len(filtered_scores.dropna(subset=[SWNames.event_score])),
-            "distinct_events": len(filtered_scores[SWNames.event_id].unique()),
-            "distinct_spec_version": len(filtered_scores[SWNames.spec_version_name].unique()),
-            "distinct_created_at": len(filtered_scores[SWNames.created_at].unique()),
+            "len_non_zero_weights": (merged_weights[SWNames.metagraph_score].notna()).sum(),
         }
-        self.logger.debug("Stats for filter last scores", extra=stats)
+        self.logger.debug("Merged API weights with current metagraph", extra=stats)
 
-        filtered_scores = filtered_scores[
+        merged_weights = merged_weights[
             [SWNames.miner_uid, SWNames.miner_hotkey, SWNames.metagraph_score]
         ]
         data_types = {
@@ -167,12 +168,12 @@ class SetWeights(AbstractTask):
             SWNames.miner_hotkey: "str",
             SWNames.metagraph_score: "float",
         }
-        filtered_scores = filtered_scores.astype(data_types)
-        filtered_scores[SWNames.metagraph_score] = filtered_scores[SWNames.metagraph_score].fillna(
+        merged_weights = merged_weights.astype(data_types)
+        merged_weights[SWNames.metagraph_score] = merged_weights[SWNames.metagraph_score].fillna(
             0.0
         )
 
-        return filtered_scores
+        return merged_weights
 
     def check_scores_sanity(self, filtered_scores: pd.DataFrame) -> bool:
         # Do some sanity checks before and throw assert exceptions if there are issues
@@ -347,6 +348,30 @@ class SetWeights(AbstractTask):
 
         return {"uid": owner_uid, "hotkey": owner_hotkey}
 
+    def _convert_api_weights_to_weights(
+        self, api_response: GetWeightsResponse
+    ) -> list[WeightsModel]:
+        weights = []
+        for weight in api_response.weights:
+            weights.append(
+                WeightsModel(
+                    miner_uid=weight.miner_uid,
+                    miner_hotkey=weight.miner_hotkey,
+                    metagraph_score=weight.aggregated_weight,
+                    aggregated_at=api_response.aggregated_at,
+                )
+            )
+
+        self.logger.debug(
+            "Converted API response to weights",
+            extra={
+                "num_weights": len(weights),
+                "aggregated_at": api_response.aggregated_at.isoformat(),
+            },
+        )
+
+        return weights
+
     async def run(self):
         await self.metagraph_lite_sync()
 
@@ -354,16 +379,49 @@ class SetWeights(AbstractTask):
         if not can_set_weights:
             return
 
-        last_metagraph_scores = await self.db_operations.get_last_metagraph_scores()
+        try:
+            api_response = await self.api_client.get_weights()
 
-        if not last_metagraph_scores:
-            raise ValueError("Failed to get the last metagraph scores.")
+            self.logger.info(
+                "Fetched centralized weights from API",
+                extra={
+                    "aggregated_at": api_response.aggregated_at.isoformat(),
+                    "num_weights": len(api_response.weights),
+                    "count": api_response.count,
+                },
+            )
 
-        filtered_scores = self.filter_last_scores(last_metagraph_scores)
+            weights_from_api = self._convert_api_weights_to_weights(api_response)
 
-        self.check_scores_sanity(filtered_scores)
+        except aiohttp.ClientResponseError as e:
+            if e.status == 503:
+                self.logger.warning(
+                    "Backend has no weights available yet (503). Skipping set_weights this round.",
+                    extra={"status": e.status},
+                )
+                return
+            else:
+                self.logger.error(
+                    "Failed to fetch weights from backend API",
+                    extra={"status": e.status, "message": str(e)},
+                )
+                raise
 
-        normalized_scores = self.renormalize_weights(filtered_scores)
+        except Exception as e:
+            self.logger.exception(
+                "Unexpected error fetching weights from API",
+                extra={"error_type": type(e).__name__},
+            )
+            raise
+
+        if not weights_from_api:
+            raise ValueError("Failed to get weights from API (empty response).")
+
+        merged_weights = self.merge_weights_with_metagraph(weights_from_api)
+
+        self.check_scores_sanity(merged_weights)
+
+        normalized_scores = self.renormalize_weights(merged_weights)
 
         uids, weights = await self.preprocess_weights(normalized_scores)
 

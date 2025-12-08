@@ -14,6 +14,7 @@ from neurons.validator.scheduler.tasks_scheduler import TasksScheduler
 from neurons.validator.tasks.db_cleaner import DbCleaner
 from neurons.validator.tasks.db_vacuum import DbVacuum
 from neurons.validator.tasks.delete_events import DeleteEvents
+from neurons.validator.tasks.export_agent_run_logs import ExportAgentRunLogs
 from neurons.validator.tasks.export_agent_runs import ExportAgentRuns
 from neurons.validator.tasks.export_predictions import ExportPredictions
 from neurons.validator.tasks.export_scores import ExportScores
@@ -179,6 +180,14 @@ async def main():
         validator_hotkey=validator_hotkey,
     )
 
+    export_agent_run_logs_task = ExportAgentRunLogs(
+        interval_seconds=600.0,
+        batch_size=500,
+        db_operations=db_operations,
+        api_client=numinous_api_client,
+        logger=logger,
+    )
+
     set_weights_task = SetWeights(
         interval_seconds=379.0,
         db_operations=db_operations,
@@ -187,6 +196,7 @@ async def main():
         netuid=bt_netuid,
         subtensor=bt_subtensor,
         wallet=bt_wallet,
+        api_client=numinous_api_client,
     )
 
     db_cleaner_task = DbCleaner(
@@ -211,6 +221,7 @@ async def main():
     scheduler.add(task=run_agents_task)
     scheduler.add(task=export_predictions_task)
     scheduler.add(task=export_agent_runs_task)
+    scheduler.add(task=export_agent_run_logs_task)
     scheduler.add(task=scoring_task)
     scheduler.add(task=metagraph_scoring_task)
     scheduler.add(task=export_scores_task)

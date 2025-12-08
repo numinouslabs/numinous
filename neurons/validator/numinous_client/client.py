@@ -16,6 +16,7 @@ from neurons.validator.models.numinous_client import (
     GetEventsDeletedResponse,
     GetEventsResolvedResponse,
     GetEventsResponse,
+    GetWeightsResponse,
     PostAgentLogsRequestBody,
     PostAgentRunsRequestBody,
     PostPredictionsRequestBody,
@@ -309,3 +310,16 @@ class NuminousClient:
 
                 data = await response.json()
                 return AISearchResponse.model_validate(data)
+
+    async def get_weights(self):
+        auth_headers = self.make_auth_headers(data="")
+
+        async with self.create_session(other_headers=auth_headers) as session:
+            path = "/api/v1/validators/weights"
+
+            async with session.get(path) as response:
+                response.raise_for_status()
+
+                data = await response.json()
+
+                return GetWeightsResponse.model_validate(data)

@@ -1,6 +1,6 @@
 import asyncio
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
@@ -242,9 +242,19 @@ class TestRunAgentsInit:
 
 @pytest.mark.asyncio
 class TestRunAgentsRun:
+    @patch("neurons.validator.tasks.run_agents.datetime")
     async def test_no_events(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_datetime,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_metagraph,
+        mock_api_client,
+        mock_logger,
     ):
+        # Mock datetime.utcnow() to return hour >= 4 to pass sync_hour check
+        mock_datetime.utcnow.return_value = datetime(2025, 12, 3, 10, 0, 0)
+
         mock_db_operations.get_events_to_predict.return_value = []
 
         task = RunAgents(
@@ -262,9 +272,19 @@ class TestRunAgentsRun:
         mock_logger.debug.assert_called_with("No events to predict")
         mock_db_operations.get_active_agents.assert_not_called()
 
+    @patch("neurons.validator.tasks.run_agents.datetime")
     async def test_no_agents(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_datetime,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_metagraph,
+        mock_api_client,
+        mock_logger,
     ):
+        # Mock datetime.utcnow() to return hour >= 4 to pass sync_hour check
+        mock_datetime.utcnow.return_value = datetime(2025, 12, 3, 10, 0, 0)
+
         mock_db_operations.get_events_to_predict.return_value = [
             (
                 "event_1",
@@ -479,8 +499,10 @@ class TestRunAgentsParsing:
 
 @pytest.mark.asyncio
 class TestRunAgentsIdempotency:
+    @patch("neurons.validator.tasks.run_agents.datetime")
     async def test_skip_when_prediction_exists(
         self,
+        mock_datetime,
         mock_db_operations,
         mock_sandbox_manager,
         mock_metagraph,
@@ -489,6 +511,9 @@ class TestRunAgentsIdempotency:
         sample_event_tuple,
         sample_agent,
     ):
+        # Mock datetime.utcnow() to return hour >= 4 to pass sync_hour check
+        mock_datetime.utcnow.return_value = datetime(2025, 12, 3, 10, 0, 0)
+
         from neurons.validator.models.prediction import PredictionsModel
         from neurons.validator.utils.common.interval import get_interval_start_minutes
 
@@ -531,8 +556,10 @@ class TestRunAgentsIdempotency:
             extra={"event_id": "event_123", "agent_version_id": "agent_v1", "miner_uid": 42},
         )
 
+    @patch("neurons.validator.tasks.run_agents.datetime")
     async def test_execute_when_prediction_not_exists(
         self,
+        mock_datetime,
         mock_db_operations,
         mock_sandbox_manager,
         mock_metagraph,
@@ -541,6 +568,9 @@ class TestRunAgentsIdempotency:
         sample_event_tuple,
         sample_agent,
     ):
+        # Mock datetime.utcnow() to return hour >= 4 to pass sync_hour check
+        mock_datetime.utcnow.return_value = datetime(2025, 12, 3, 10, 0, 0)
+
         mock_db_operations.get_events_to_predict.return_value = [sample_event_tuple]
         mock_db_operations.get_active_agents.return_value = [sample_agent]
 
@@ -574,8 +604,10 @@ class TestRunAgentsIdempotency:
         assert call_args["agent"] == sample_agent
         assert call_args["event_tuple"] == sample_event_tuple
 
+    @patch("neurons.validator.tasks.run_agents.datetime")
     async def test_replicate_when_prediction_exists_in_different_interval(
         self,
+        mock_datetime,
         mock_db_operations,
         mock_sandbox_manager,
         mock_metagraph,
@@ -584,6 +616,9 @@ class TestRunAgentsIdempotency:
         sample_event_tuple,
         sample_agent,
     ):
+        # Mock datetime.utcnow() to return hour >= 4 to pass sync_hour check
+        mock_datetime.utcnow.return_value = datetime(2025, 12, 3, 10, 0, 0)
+
         from neurons.validator.models.prediction import PredictionsModel
 
         mock_db_operations.get_events_to_predict.return_value = [sample_event_tuple]
@@ -956,55 +991,6 @@ class TestRunAgentsPredictionStorage:
 
 
 @pytest.mark.asyncio
-class TestRunAgentsPostLogs:
-    async def test_post_agent_logs_success(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
-    ):
-        task = RunAgents(
-            interval_seconds=600.0,
-            db_operations=mock_db_operations,
-            sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
-            api_client=mock_api_client,
-            logger=mock_logger,
-        )
-
-        run_id = "123e4567-e89b-12d3-a456-426614174000"
-        logs = "Agent execution log:\nStep 1: Initialize\nStep 2: Process\nStep 3: Complete"
-
-        await task.post_agent_logs(run_id, logs)
-
-        mock_api_client.post_agent_logs.assert_called_once()
-        call_args = mock_api_client.post_agent_logs.call_args[0][0]
-        assert str(call_args.run_id) == run_id
-        assert call_args.log_content == logs
-
-    async def test_post_agent_logs_truncates_long_logs(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
-    ):
-        task = RunAgents(
-            interval_seconds=600.0,
-            db_operations=mock_db_operations,
-            sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
-            api_client=mock_api_client,
-            logger=mock_logger,
-        )
-
-        run_id = "223e4567-e89b-12d3-a456-426614174001"
-        # > MAX_LOG_CHARS (25,000)
-        long_logs = "x" * 30000
-
-        await task.post_agent_logs(run_id, long_logs)
-
-        mock_api_client.post_agent_logs.assert_called_once()
-        call_args = mock_api_client.post_agent_logs.call_args[0][0]
-        assert str(call_args.run_id) == run_id
-        assert "LOG TRUNCATED" in call_args.log_content
-        assert len(call_args.log_content) < 30000
-
-
-@pytest.mark.asyncio
 class TestRunAgentsErrorLogging:
     async def test_logs_exported_on_agent_execution_error(
         self,
@@ -1042,10 +1028,12 @@ class TestRunAgentsErrorLogging:
             interval_start_minutes=1000,
         )
 
-        mock_api_client.post_agent_logs.assert_called_once()
-        body = mock_api_client.post_agent_logs.call_args[0][0]
-        logs = body.log_content
+        mock_db_operations.insert_agent_run_log.assert_called_once()
+        call_args = mock_db_operations.insert_agent_run_log.call_args
+        run_id = call_args[0][0]
+        logs = call_args[0][1]
 
+        assert run_id is not None
         assert "[AGENT_RUNNER] Starting" in logs
         assert "ERROR DETAILS" in logs
         assert "agent_main() must return a dict" in logs
@@ -1086,10 +1074,12 @@ class TestRunAgentsErrorLogging:
             interval_start_minutes=1000,
         )
 
-        mock_api_client.post_agent_logs.assert_called_once()
-        body = mock_api_client.post_agent_logs.call_args[0][0]
-        logs = body.log_content
+        mock_db_operations.insert_agent_run_log.assert_called_once()
+        call_args = mock_db_operations.insert_agent_run_log.call_args
+        run_id = call_args[0][0]
+        logs = call_args[0][1]
 
+        assert run_id is not None
         assert "[AGENT_RUNNER] Starting" in logs
         assert "TIMEOUT" in logs
         assert "Execution exceeded timeout limit" in logs
@@ -1129,10 +1119,12 @@ class TestRunAgentsErrorLogging:
             interval_start_minutes=1000,
         )
 
-        mock_api_client.post_agent_logs.assert_called_once()
-        body = mock_api_client.post_agent_logs.call_args[0][0]
-        logs = body.log_content
+        mock_db_operations.insert_agent_run_log.assert_called_once()
+        call_args = mock_db_operations.insert_agent_run_log.call_args
+        run_id = call_args[0][0]
+        logs = call_args[0][1]
 
+        assert run_id is not None
         assert "[AGENT_RUNNER] Starting" in logs
         assert "[AGENT_RUNNER] Completed" in logs
 
@@ -1168,10 +1160,12 @@ class TestRunAgentsErrorLogging:
             interval_start_minutes=1000,
         )
 
-        mock_api_client.post_agent_logs.assert_called_once()
-        body = mock_api_client.post_agent_logs.call_args[0][0]
-        logs = body.log_content
+        mock_db_operations.insert_agent_run_log.assert_called_once()
+        call_args = mock_db_operations.insert_agent_run_log.call_args
+        run_id = call_args[0][0]
+        logs = call_args[0][1]
 
+        assert run_id is not None
         assert "Sandbox timeout - no logs" in logs
 
 

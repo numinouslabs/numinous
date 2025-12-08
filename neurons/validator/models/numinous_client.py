@@ -239,3 +239,15 @@ class GatewayDesearchWebSearchResponse(WebSearchResponse, GatewayCallResponse):
 
 class GatewayDesearchWebCrawlResponse(WebCrawlResponse, GatewayCallResponse):
     pass
+
+
+class MinerWeight(BaseModel):
+    miner_uid: int
+    miner_hotkey: str
+    aggregated_weight: float
+
+
+class GetWeightsResponse(BaseModel):
+    aggregated_at: datetime
+    weights: typing.List[MinerWeight]
+    count: int

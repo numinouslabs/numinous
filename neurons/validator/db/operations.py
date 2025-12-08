@@ -1276,6 +1276,36 @@ class DatabaseOperations:
             [AgentRunLogExportedStatus.EXPORTED, batch_size],
         )
 
+    async def delete_agent_runs(self, batch_size: int) -> Iterable[tuple[int]]:
+        return await self.__db_client.delete(
+            """
+                WITH runs_to_delete AS (
+                    SELECT
+                        ROWID
+                    FROM
+                        agent_runs
+                    WHERE
+                        exported = ?
+                        AND datetime(created_at) < datetime(CURRENT_TIMESTAMP, '-7 day')
+                    ORDER BY
+                        ROWID ASC
+                    LIMIT ?
+                )
+                DELETE FROM
+                    agent_runs
+                WHERE
+                    ROWID IN (
+                        SELECT
+                            ROWID
+                        FROM
+                            runs_to_delete
+                    )
+                RETURNING
+                    ROWID
+            """,
+            [AgentRunExportedStatus.EXPORTED, batch_size],
+        )
+
     async def count_runs_for_event_and_agent(
         self,
         unique_event_id: str,

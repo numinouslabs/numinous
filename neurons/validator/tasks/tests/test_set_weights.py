@@ -11,7 +11,8 @@ from freezegun import freeze_time
 
 from neurons.validator.db.client import DatabaseClient
 from neurons.validator.db.operations import DatabaseOperations
-from neurons.validator.models.score import SCORE_FIELDS, ScoresModel
+from neurons.validator.models.score import ScoresModel
+from neurons.validator.models.weights import WeightsModel
 from neurons.validator.tasks.set_weights import SetWeights, SWNames
 from neurons.validator.utils.common.interval import BLOCK_DURATION
 from neurons.validator.utils.if_metagraph import IfMetagraph
@@ -44,6 +45,8 @@ class TestSetWeights:
         db_operations: DatabaseOperations,
         bt_wallet: Wallet,  # type: ignore
     ):
+        from neurons.validator.numinous_client.client import NuminousClient
+
         metagraph = MagicMock(spec=IfMetagraph)
         metagraph.sync = AsyncMock()
         subtensor = MagicMock(spec=bt.AsyncSubtensor)
@@ -59,6 +62,8 @@ class TestSetWeights:
         subtensor.weights_rate_limit = AsyncMock(return_value=100)  # Set weights rate limit
         subtensor.network = "mock"
 
+        api_client = MagicMock(spec=NuminousClient)
+
         logger = MagicMock(spec=NuminousLogger)
 
         with freeze_time("2024-12-27 07:00:00"):
@@ -70,6 +75,7 @@ class TestSetWeights:
                 netuid=155,
                 subtensor=subtensor,
                 wallet=bt_wallet,
+                api_client=api_client,
             )
 
     def test_init(self, set_weights_task: SetWeights):
@@ -84,6 +90,7 @@ class TestSetWeights:
         assert unit.netuid == 155
         assert unit.subtensor is not None
         assert unit.wallet is not None
+        assert unit.api_client is not None
 
         assert unit.spec_version == spec_version
 
@@ -122,13 +129,12 @@ class TestSetWeights:
 
         assert result is expected
 
-    async def test_filter_last_scores(self, set_weights_task: SetWeights):
+    async def test_merge_weights_with_metagraph(self, set_weights_task: SetWeights):
         unit = set_weights_task
 
-        # Need to call sync to load instance data
         await unit.metagraph_lite_sync()
 
-        last_metagraph_scores = [
+        weights_from_api = [
             ScoresModel(
                 miner_uid=1,
                 miner_hotkey="hotkey1",
@@ -161,32 +167,28 @@ class TestSetWeights:
             ),
         ]
 
-        filtered_scores = unit.filter_last_scores(last_metagraph_scores)
+        merged_weights = unit.merge_weights_with_metagraph(weights_from_api)
 
-        assert len(filtered_scores) == 3
-        assert filtered_scores.loc[0].miner_uid == 1
-        assert filtered_scores.loc[1].miner_uid == 2
-        assert filtered_scores.loc[2].miner_uid == 3
-        assert filtered_scores.loc[0].miner_hotkey == "hotkey1"
-        assert filtered_scores.loc[1].miner_hotkey == "hotkey2"
-        assert filtered_scores.loc[2].miner_hotkey == "hotkey3"
-        assert filtered_scores.loc[0].metagraph_score == 0.8
-        assert filtered_scores.loc[1].metagraph_score == 0.0
-        assert filtered_scores.loc[2].metagraph_score == 0.0
+        assert len(merged_weights) == 3
+        assert merged_weights.loc[0].miner_uid == 1
+        assert merged_weights.loc[1].miner_uid == 2
+        assert merged_weights.loc[2].miner_uid == 3
+        assert merged_weights.loc[0].miner_hotkey == "hotkey1"
+        assert merged_weights.loc[1].miner_hotkey == "hotkey2"
+        assert merged_weights.loc[2].miner_hotkey == "hotkey3"
+        assert merged_weights.loc[0].metagraph_score == 0.8
+        assert merged_weights.loc[1].metagraph_score == 0.0
+        assert merged_weights.loc[2].metagraph_score == 0.0
 
         expected_stats = {
-            "len_last_metagraph_scores": 3,
-            "len_filtered_scores": 3,
+            "len_weights_from_api": 3,
+            "len_merged_weights": 3,
             "len_current_miners": 3,
-            "len_valid_meta_scores": 1,
-            "len_valid_event_scores": 2,
-            "distinct_events": 3,  # null counts as distinct
-            "distinct_spec_version": 2,
-            "distinct_created_at": 3,
+            "len_non_zero_weights": 1,
         }
 
         assert unit.logger.debug.call_count == 1
-        assert unit.logger.debug.call_args[0][0] == "Stats for filter last scores"
+        assert unit.logger.debug.call_args[0][0] == "Merged API weights with current metagraph"
         assert unit.logger.debug.call_args[1]["extra"] == expected_stats
 
     @pytest.mark.parametrize(
@@ -435,8 +437,37 @@ class TestSetWeights:
         with pytest.raises(AssertionError, match="Owner uid not found in metagraph uids"):
             unit.get_owner_neuron()
 
+    def test_convert_api_weights_to_weights(self, set_weights_task: SetWeights):
+        from neurons.validator.models.numinous_client import GetWeightsResponse, MinerWeight
+
+        unit = set_weights_task
+
+        api_response = GetWeightsResponse(
+            aggregated_at=datetime(2025, 1, 30, 12, 0, 0, tzinfo=timezone.utc),
+            weights=[
+                MinerWeight(miner_uid=1, miner_hotkey="hk1", aggregated_weight=0.6),
+                MinerWeight(miner_uid=2, miner_hotkey="hk2", aggregated_weight=0.4),
+            ],
+            count=2,
+        )
+
+        result = unit._convert_api_weights_to_weights(api_response)
+
+        assert len(result) == 2
+        assert isinstance(result[0], WeightsModel)
+        assert result[0].miner_uid == 1
+        assert result[0].miner_hotkey == "hk1"
+        assert result[0].metagraph_score == 0.6
+        assert result[0].aggregated_at == datetime(2025, 1, 30, 12, 0, 0, tzinfo=timezone.utc)
+
+        assert result[1].miner_uid == 2
+        assert result[1].miner_hotkey == "hk2"
+        assert result[1].metagraph_score == 0.4
+
     @pytest.mark.asyncio
     async def test_run_successful_x(self, set_weights_task: SetWeights, monkeypatch, db_client):
+        from neurons.validator.models.numinous_client import GetWeightsResponse, MinerWeight
+
         unit = set_weights_task
         unit.metagraph.owner_hotkey = "hk3"
         unit.metagraph.uids = torch.tensor([0, 1, 2, 3, 4], dtype=torch.int32)
@@ -444,49 +475,22 @@ class TestSetWeights:
         unit.last_set_weights_at = time.time() - 101 * BLOCK_DURATION
 
         created_at = datetime.now(timezone.utc) - timedelta(days=1)
-        scores_list = [
-            ScoresModel(
-                event_id="latest_event",
-                miner_uid=3,
-                miner_hotkey="hk3",
-                prediction=0.75,
-                event_score=0.10,
-                metagraph_score=0.835,  # Winner gets ~0.835
-                created_at=created_at,
-                spec_version=1,
-                processed=True,
-            ),
-            ScoresModel(
-                event_id="latest_event",
-                miner_uid=4,
-                miner_hotkey="hk4",
-                prediction=0.50,
-                event_score=0.25,
-                metagraph_score=0.165,  # Second place
-                created_at=created_at,
-                spec_version=1,
-                processed=True,
-            ),
-        ]
-        # insert scores
-        sql = f"""
-            INSERT INTO scores ({', '.join(SCORE_FIELDS)})
-            VALUES ({', '.join(['?'] * len(SCORE_FIELDS))})
-        """
-        score_tuples = [
-            tuple(getattr(score, field) for field in SCORE_FIELDS) for score in scores_list
-        ]
-        await db_client.insert_many(sql, score_tuples)
 
-        inserted_scores = await db_client.many("SELECT * FROM scores")
-        assert len(inserted_scores) == len(scores_list)
+        mock_api_response = GetWeightsResponse(
+            aggregated_at=created_at,
+            weights=[
+                MinerWeight(miner_uid=3, miner_hotkey="hk3", aggregated_weight=0.835),
+                MinerWeight(miner_uid=4, miner_hotkey="hk4", aggregated_weight=0.165),
+            ],
+            count=2,
+        )
 
+        unit.api_client.get_weights = AsyncMock(return_value=mock_api_response)
         unit.subtensor.set_weights = AsyncMock(return_value=(True, "Success"))
 
-        # run the task
         await unit.run()
 
-        assert unit.logger.debug.call_count == 4
+        assert unit.logger.debug.call_count == 5
         assert unit.logger.warning.call_count == 0
         assert unit.logger.error.call_count == 0
 
@@ -494,9 +498,10 @@ class TestSetWeights:
         assert debug_calls[0][0][0] == "Attempting to set the weights - enough blocks passed."
         assert debug_calls[0][1]["extra"]["blocks_since_last_attempt"] >= 100
 
-        assert debug_calls[1][0][0] == "Stats for filter last scores"
-        assert debug_calls[2][0][0] == "Top 5 and bottom 5 miners by raw_weights"
-        assert debug_calls[3][0][0] == "Weights set successfully."
+        assert debug_calls[1][0][0] == "Converted API response to weights"
+        assert debug_calls[2][0][0] == "Merged API weights with current metagraph"
+        assert debug_calls[3][0][0] == "Top 5 and bottom 5 miners by raw_weights"
+        assert debug_calls[4][0][0] == "Weights set successfully."
 
         assert unit.subtensor.set_weights.call_count == 1
         assert unit.subtensor.set_weights.call_args.kwargs["uids"].tolist() == [3, 4]
@@ -504,3 +509,69 @@ class TestSetWeights:
             unit.subtensor.set_weights.call_args.kwargs["weights"],
             torch.tensor([0.835, 0.165], dtype=torch.float),
         )
+
+    async def test_run_with_api_weights(self, set_weights_task: SetWeights):
+        from neurons.validator.models.numinous_client import GetWeightsResponse, MinerWeight
+
+        unit = set_weights_task
+
+        mock_api_response = GetWeightsResponse(
+            aggregated_at=datetime(2025, 1, 30, 12, 0, 0, tzinfo=timezone.utc),
+            weights=[
+                MinerWeight(miner_uid=1, miner_hotkey="hotkey1", aggregated_weight=0.5),
+                MinerWeight(miner_uid=2, miner_hotkey="hotkey2", aggregated_weight=0.3),
+                MinerWeight(miner_uid=3, miner_hotkey="hotkey3", aggregated_weight=0.2),
+            ],
+            count=3,
+        )
+
+        unit.api_client.get_weights = AsyncMock(return_value=mock_api_response)
+
+        unit.subtensor.weights_rate_limit = AsyncMock(return_value=0)
+        unit.subtensor.min_allowed_weights = AsyncMock(return_value=1)
+        unit.subtensor.max_weight_limit = AsyncMock(return_value=10)
+        unit.subtensor.set_weights = AsyncMock(return_value=(True, "Success"))
+
+        await unit.run()
+
+        unit.api_client.get_weights.assert_called_once()
+        unit.subtensor.set_weights.assert_called_once()
+
+    async def test_run_handles_503_gracefully(self, set_weights_task: SetWeights):
+        import aiohttp
+
+        unit = set_weights_task
+
+        error = aiohttp.ClientResponseError(
+            request_info=MagicMock(),
+            history=(),
+            status=503,
+            message="Service Unavailable",
+        )
+        unit.api_client.get_weights = AsyncMock(side_effect=error)
+
+        unit.subtensor.weights_rate_limit = AsyncMock(return_value=0)
+        unit.subtensor.set_weights = AsyncMock()
+
+        await unit.run()
+
+        unit.subtensor.set_weights.assert_not_called()
+        unit.logger.warning.assert_called_once()
+
+    async def test_run_raises_on_other_http_errors(self, set_weights_task: SetWeights):
+        import aiohttp
+
+        unit = set_weights_task
+
+        error = aiohttp.ClientResponseError(
+            request_info=MagicMock(),
+            history=(),
+            status=500,
+            message="Internal Server Error",
+        )
+        unit.api_client.get_weights = AsyncMock(side_effect=error)
+
+        unit.subtensor.weights_rate_limit = AsyncMock(return_value=0)
+
+        with pytest.raises(aiohttp.ClientResponseError):
+            await unit.run()

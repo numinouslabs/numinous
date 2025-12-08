@@ -1,14 +1,13 @@
 import asyncio
 import json
-import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
+from uuid import uuid4
 
 from neurons.validator.db.operations import DatabaseOperations
 from neurons.validator.models.agent_runs import AgentRunsModel, AgentRunStatus
 from neurons.validator.models.miner_agent import MinerAgentsModel
-from neurons.validator.models.numinous_client import PostAgentLogsRequestBody
 from neurons.validator.models.prediction import PredictionsModel
 from neurons.validator.numinous_client.client import NuminousClient
 from neurons.validator.sandbox import SandboxManager
@@ -290,25 +289,6 @@ class RunAgents(AbstractTask):
                 logs += f"\nTraceback:\n{traceback}"
         return logs
 
-    async def post_agent_logs(self, run_id: str, logs: str) -> None:
-        try:
-            original_length = len(logs)
-            if original_length > MAX_LOG_CHARS:
-                truncation_msg = (
-                    f"[LOG TRUNCATED: Original {original_length:,} chars, "
-                    f"showing last {MAX_LOG_CHARS:,} chars]\n\n"
-                )
-                logs = truncation_msg + logs[-MAX_LOG_CHARS:]
-
-            body = PostAgentLogsRequestBody(run_id=uuid.UUID(run_id), log_content=logs)
-            await self.api_client.post_agent_logs(body)
-
-        except Exception as e:
-            self.logger.warning(
-                "Failed to post agent logs",
-                extra={"run_id": run_id, "error": str(e)},
-            )
-
     def _determine_status_and_extract_prediction(
         self,
         result: Optional[dict],
@@ -445,7 +425,7 @@ class RunAgents(AbstractTask):
             metadata,
         ) = event_tuple
 
-        run_id = str(uuid.uuid4())
+        run_id = str(uuid4())
         self.logger.info(
             "Executing agent for event",
             extra={
@@ -489,7 +469,13 @@ class RunAgents(AbstractTask):
                     logs, result.get("error", "Unknown error"), result.get("traceback")
                 )
 
-        await self.post_agent_logs(run_id, logs)
+        original_length = len(logs)
+        if original_length > MAX_LOG_CHARS:
+            truncation_msg = (
+                f"[LOG TRUNCATED: Original {original_length:,} chars, "
+                f"showing last {MAX_LOG_CHARS:,} chars]\n\n"
+            )
+            logs = truncation_msg + logs[-MAX_LOG_CHARS:]
 
         run_status, prediction_value = self._determine_status_and_extract_prediction(
             result, event_id, agent.version_id, run_id
@@ -502,6 +488,15 @@ class RunAgents(AbstractTask):
             status=run_status,
         )
         await self.db_operations.upsert_agent_runs([agent_run])
+
+        try:
+            await self.db_operations.insert_agent_run_log(run_id, logs)
+        except Exception as e:
+            self.logger.error(
+                "Failed to store agent run log",
+                extra={"run_id": run_id, "error": str(e), "log_content": logs},
+                exc_info=True,
+            )
 
         if run_status == AgentRunStatus.SUCCESS and prediction_value is not None:
             await self.store_prediction(

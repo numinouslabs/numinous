@@ -21,6 +21,7 @@ from neurons.validator.models.numinous_client import (
     GetEventsDeletedResponse,
     GetEventsResolvedResponse,
     GetEventsResponse,
+    GetWeightsResponse,
     PostAgentLogsRequestBody,
     PostAgentRunsRequestBody,
     PostPredictionsRequestBody,
@@ -1083,5 +1084,83 @@ class TestNuminousClient:
             mocked.assert_called_with(
                 url=url_path, method="POST", data=request_body.model_dump_json()
             )
+
+            assert e.value.status == status_code
+
+    async def test_get_weights_response(self, client_test_env: NuminousClient):
+        mock_response_data = {
+            "aggregated_at": "2025-01-30T12:00:00Z",
+            "weights": [
+                {
+                    "miner_uid": 0,
+                    "miner_hotkey": "5C4hrfjw9DjXZTzV3MwzrrAr9P1MJhSrvWGWqi1eSuyUpnhM",
+                    "aggregated_weight": 0.5,
+                },
+                {
+                    "miner_uid": 1,
+                    "miner_hotkey": "5Dpqn31QEwkqXoMJQF2xvPn9Rh6dDo9CKk1aq3PJxJZgP5Wf",
+                    "aggregated_weight": 0.3,
+                },
+                {
+                    "miner_uid": 2,
+                    "miner_hotkey": "5F3sa2TJAWMqDhXG6jhV4N8ko9SxwGy8TpaNS1repo5EYjQX",
+                    "aggregated_weight": 0.2,
+                },
+            ],
+            "count": 3,
+        }
+
+        with aioresponses() as mocked:
+            mocked.get(
+                "/api/v1/validators/weights",
+                status=200,
+                body=json.dumps(mock_response_data).encode("utf-8"),
+            )
+
+            result = await client_test_env.get_weights()
+
+            mocked.assert_called_once()
+
+            assert result == GetWeightsResponse.model_validate(mock_response_data)
+            assert len(result.weights) == 3
+            assert result.count == 3
+            assert result.weights[0].miner_uid == 0
+            assert result.weights[0].aggregated_weight == 0.5
+
+    async def test_get_weights_error_503_raised(self, client_test_env: NuminousClient):
+        mock_response_data = {"message": "No weights available yet"}
+        status_code = 503
+
+        with aioresponses() as mocked:
+            url_path = "/api/v1/validators/weights"
+            mocked.get(
+                url_path,
+                status=status_code,
+                body=json.dumps(mock_response_data).encode("utf-8"),
+            )
+
+            with pytest.raises(ClientResponseError) as e:
+                await client_test_env.get_weights()
+
+            mocked.assert_called_with(url_path)
+
+            assert e.value.status == status_code
+
+    async def test_get_weights_error_500_raised(self, client_test_env: NuminousClient):
+        mock_response_data = {"message": "Internal server error"}
+        status_code = 500
+
+        with aioresponses() as mocked:
+            url_path = "/api/v1/validators/weights"
+            mocked.get(
+                url_path,
+                status=status_code,
+                body=json.dumps(mock_response_data).encode("utf-8"),
+            )
+
+            with pytest.raises(ClientResponseError) as e:
+                await client_test_env.get_weights()
+
+            mocked.assert_called_with(url_path)
 
             assert e.value.status == status_code

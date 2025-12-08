@@ -15,6 +15,8 @@ class ChuteModel(StrEnum):
     DEEPSEEK_V3_1 = "deepseek-ai/DeepSeek-V3.1"
     DEEPSEEK_TNG_R1T2_CHIMERA = "tngtech/DeepSeek-TNG-R1T2-Chimera"
     DEEPSEEK_V3_2_EXP = "deepseek-ai/DeepSeek-V3.2-Exp"
+    DEEPSEEK_V3_2 = "deepseek-ai/DeepSeek-V3.2"
+    DEEPSEEK_V3_2_SPECIALE = "deepseek-ai/DeepSeek-V3.2-Speciale"
 
     # Gemma models
     GEMMA_3_4B_IT = "unsloth/gemma-3-4b-it"
@@ -170,6 +172,16 @@ CHUTES_REGISTRY: dict[ChuteModel, Chute] = {
         name=ChuteModel.DEEPSEEK_V3_2_EXP,
         input_cost=0.25,
         output_cost=0.35,
+    ),
+    ChuteModel.DEEPSEEK_V3_2: Chute(
+        name=ChuteModel.DEEPSEEK_V3_2,
+        input_cost=0.27,
+        output_cost=0.41,
+    ),
+    ChuteModel.DEEPSEEK_V3_2_SPECIALE: Chute(
+        name=ChuteModel.DEEPSEEK_V3_2_SPECIALE,
+        input_cost=0.27,
+        output_cost=0.41,
     ),
     ChuteModel.GLM_4_6: Chute(
         name=ChuteModel.GLM_4_6,

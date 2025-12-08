@@ -12,6 +12,7 @@ class TasksScheduler:
 
     __tasks: list[AbstractTask]
     __logger: NuminousLogger
+    DEFAULT_TASK_TIMEOUT_SECONDS = 60 * 60 * 24  # 24 hours
 
     def __init__(self, logger: NuminousLogger):
         # Validate logger
@@ -37,8 +38,8 @@ class TasksScheduler:
             self.__logger.info("Task started", extra={"task_name": task.name})
 
             try:
-                # Execute the task's run async function
-                await task.run()
+                # Execute the task's run async function with a default timeout
+                await asyncio.wait_for(task.run(), timeout=self.DEFAULT_TASK_TIMEOUT_SECONDS)
 
                 elapsed_time_ms = round((time.time() - start_time) * 1000)
 

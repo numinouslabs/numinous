@@ -1,5 +1,11 @@
 # Release Notes
 
+## [2.0.4] - 2025-12-08
+- **Weights**: SetWeights task now fetches latest weights from backend API
+- **Database**: Migration to backfill agent runs from validator predictions
+- **Tasks**: Run agents task stores execution logs; db cleaner removes exported logs
+- **Scheduler**: Added timeout handling for scheduled tasks
+
 ## [2.0.3] - 2025-12-03
 - **Scoring**: Fill missing predictions with 0.5 for miners without predictions
 - **Architecture**: Sandbox retry mechanism and error handling with comprehensive log exports
