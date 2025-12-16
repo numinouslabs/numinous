@@ -2,7 +2,6 @@ from datetime import datetime, timezone
 
 from neurons.validator.db.operations import DatabaseOperations
 from neurons.validator.scheduler.task import AbstractTask
-from neurons.validator.utils.common.converters import torch_or_numpy_to_int
 from neurons.validator.utils.if_metagraph import IfMetagraph
 from neurons.validator.utils.logger.logger import NuminousLogger
 
@@ -50,7 +49,7 @@ class SyncMinersMetadata(AbstractTask):
     async def run(self) -> None:
         await self.metagraph.sync()
 
-        block = torch_or_numpy_to_int(self.metagraph.block)
+        block = self.metagraph.block.item()
         miners_count = await self.db_operations.get_miners_count()
 
         registered_date = (
@@ -61,7 +60,7 @@ class SyncMinersMetadata(AbstractTask):
 
         miners = []
         for uid in self.metagraph.uids:
-            int_uid = torch_or_numpy_to_int(uid)
+            int_uid = int(uid)
             axon = self.metagraph.axons[int_uid]
 
             if axon is None:
@@ -69,9 +68,7 @@ class SyncMinersMetadata(AbstractTask):
 
             trust_value = self.metagraph.validator_trust[int_uid]
             is_validating = bool(float(trust_value) > 0.0)
-            validator_permit = bool(
-                torch_or_numpy_to_int(self.metagraph.validator_permit[int_uid]) > 0
-            )
+            validator_permit = bool(int(self.metagraph.validator_permit[int_uid]) > 0)
 
             miners.append(
                 (

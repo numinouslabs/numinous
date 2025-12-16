@@ -3,9 +3,10 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import ANY, AsyncMock, MagicMock
 
 import bittensor as bt
+import numpy as np
 import pandas as pd
 import pytest
-import torch
+from async_substrate_interface.errors import SubstrateRequestException
 from bittensor_wallet import Wallet
 from freezegun import freeze_time
 
@@ -52,9 +53,9 @@ class TestSetWeights:
         subtensor = MagicMock(spec=bt.AsyncSubtensor)
 
         # Mock metagraph attributes
-        metagraph.uids = torch.tensor([1, 2, 3], dtype=torch.int32).to("cpu")
+        metagraph.uids = np.array([1, 2, 3], dtype=np.int64)
         metagraph.hotkeys = ["hotkey1", "hotkey2", "hotkey3"]
-        metagraph.n = torch.tensor(3, dtype=torch.int32).to("cpu")
+        metagraph.n = np.array(3, dtype=np.int64)
 
         # Mock subtensor methods
         subtensor.min_allowed_weights.return_value = 1  # Set minimum allowed weights
@@ -97,7 +98,7 @@ class TestSetWeights:
     async def test_metagraph_lite_sync(self, set_weights_task: SetWeights):
         unit = set_weights_task
 
-        unit.metagraph.uids = torch.tensor([1, 2, 3, 4], dtype=torch.int32)
+        unit.metagraph.uids = np.array([1, 2, 3, 4], dtype=np.int64)
         unit.metagraph.hotkeys = ["hotkey1", "hotkey2", "hotkey3", "hotkey4"]
 
         await unit.metagraph_lite_sync()
@@ -281,10 +282,8 @@ class TestSetWeights:
         uids, weights = await set_weights_task.preprocess_weights(normalized)
 
         # Expect the same non-zero entries.
-        torch.testing.assert_close(
-            weights, torch.tensor(data[SWNames.raw_weights], dtype=torch.float)
-        )
-        torch.testing.assert_close(uids, torch.tensor(data[SWNames.miner_uid], dtype=torch.int))
+        np.testing.assert_allclose(weights, np.array(data[SWNames.raw_weights], dtype=np.float32))
+        np.testing.assert_array_equal(uids, np.array(data[SWNames.miner_uid], dtype=np.int64))
 
     async def test_preprocess_weights_edge_cases(self, set_weights_task, monkeypatch):
         data = {
@@ -295,8 +294,8 @@ class TestSetWeights:
         normalized = pd.DataFrame(data)
 
         uids, weights = await set_weights_task.preprocess_weights(normalized)
-        torch.testing.assert_close(weights, torch.tensor([0.4, 0.6], dtype=torch.float))
-        torch.testing.assert_close(uids, torch.tensor([1, 2], dtype=torch.int))
+        np.testing.assert_allclose(weights, np.array([0.4, 0.6], dtype=np.float32))
+        np.testing.assert_array_equal(uids, np.array([1, 2], dtype=np.int64))
 
         # Weights get normalized
         assert set_weights_task.logger.warning.call_count == 1
@@ -310,7 +309,10 @@ class TestSetWeights:
         # Force return empty tensors
         monkeypatch.setattr(
             "neurons.validator.tasks.set_weights.process_weights",
-            lambda uids, weights, **kwargs: (torch.tensor([]), torch.tensor([])),
+            lambda uids, weights, **kwargs: (
+                np.array([], dtype=np.int64),
+                np.array([], dtype=np.float32),
+            ),
         )
 
         with pytest.raises(
@@ -330,7 +332,7 @@ class TestSetWeights:
         # Force return different UIDs
         monkeypatch.setattr(
             "neurons.validator.tasks.set_weights.process_weights",
-            lambda uids, weights, **kwargs: (torch.tensor([1, 2, 4]), weights),
+            lambda uids, weights, **kwargs: (np.array([1, 2, 4], dtype=np.int64), weights),
         )
         with pytest.raises(
             expected_exception=ValueError, match="Processed UIDs do not match the original UIDs."
@@ -348,14 +350,14 @@ class TestSetWeights:
         # Force return different weights
         monkeypatch.setattr(
             "neurons.validator.tasks.set_weights.process_weights",
-            lambda uids, weights, **kwargs: (uids, torch.tensor([0.2, 0.3, 0.4])),
+            lambda uids, weights, **kwargs: (uids, np.array([0.2, 0.3, 0.4], dtype=np.float32)),
         )
 
         normalized.loc[2, SWNames.raw_weights] = 0.41
         uids, weights = await set_weights_task.preprocess_weights(normalized)
 
-        assert torch.equal(uids, torch.tensor([1, 2, 3], dtype=torch.int))
-        torch.testing.assert_close(weights, torch.tensor([0.2, 0.3, 0.4], dtype=torch.float))
+        np.testing.assert_array_equal(uids, np.array([1, 2, 3], dtype=np.int64))
+        np.testing.assert_allclose(weights, np.array([0.2, 0.3, 0.4], dtype=np.float32))
 
         assert set_weights_task.logger.warning.call_count == 1
         assert set_weights_task.logger.error.call_count == 0
@@ -379,8 +381,8 @@ class TestSetWeights:
     async def test_subtensor_set_weights(
         self, set_weights_task: SetWeights, successful, sw_msg, expected_log
     ):
-        processed_uids = torch.tensor([1, 2, 3])
-        processed_weights = torch.tensor([0.2, 0.3, 0.5])
+        processed_uids = np.array([1, 2, 3], dtype=np.int64)
+        processed_weights = np.array([0.2, 0.3, 0.5], dtype=np.float32)
         set_weights_task.subtensor.set_weights = AsyncMock(return_value=(successful, sw_msg))
         set_weights_task.logger.debug.reset_mock()
         set_weights_task.logger.warning.reset_mock()
@@ -420,7 +422,7 @@ class TestSetWeights:
     def test_get_owner_neuron(self, set_weights_task: SetWeights):
         unit = set_weights_task
         unit.metagraph.owner_hotkey = "hotkey1"
-        unit.metagraph.uids = torch.tensor([1, 2, 3], dtype=torch.int32)
+        unit.metagraph.uids = np.array([1, 2, 3], dtype=np.int32)
         unit.metagraph.hotkeys = ["hotkey1", "hotkey2", "hotkey3"]
 
         owner = unit.get_owner_neuron()
@@ -431,7 +433,7 @@ class TestSetWeights:
     def test_get_owner_neuron_not_found(self, set_weights_task: SetWeights):
         unit = set_weights_task
         unit.metagraph.owner_hotkey = "hotkey_not_in_metagraph"
-        unit.metagraph.uids = torch.tensor([1, 2, 3], dtype=torch.int32)
+        unit.metagraph.uids = np.array([1, 2, 3], dtype=np.int32)
         unit.metagraph.hotkeys = ["hotkey1", "hotkey2", "hotkey3"]
 
         with pytest.raises(AssertionError, match="Owner uid not found in metagraph uids"):
@@ -470,7 +472,7 @@ class TestSetWeights:
 
         unit = set_weights_task
         unit.metagraph.owner_hotkey = "hk3"
-        unit.metagraph.uids = torch.tensor([0, 1, 2, 3, 4], dtype=torch.int32)
+        unit.metagraph.uids = np.array([0, 1, 2, 3, 4], dtype=np.int64)
         unit.metagraph.hotkeys = ["hk0", "hk1", "hk2", "hk3", "hk4"]
         unit.last_set_weights_at = time.time() - 101 * BLOCK_DURATION
 
@@ -505,9 +507,10 @@ class TestSetWeights:
 
         assert unit.subtensor.set_weights.call_count == 1
         assert unit.subtensor.set_weights.call_args.kwargs["uids"].tolist() == [3, 4]
-        torch.testing.assert_close(
+        np.testing.assert_allclose(
             unit.subtensor.set_weights.call_args.kwargs["weights"],
-            torch.tensor([0.835, 0.165], dtype=torch.float),
+            np.array([0.835, 0.165], dtype=np.float32),
+            rtol=1e-5,
         )
 
     async def test_run_with_api_weights(self, set_weights_task: SetWeights):
@@ -575,3 +578,23 @@ class TestSetWeights:
 
         with pytest.raises(aiohttp.ClientResponseError):
             await unit.run()
+
+    async def test_run_handles_substrate_request_exception(self, set_weights_task: SetWeights):
+        unit = set_weights_task
+
+        unit.metagraph.subtensor = MagicMock()
+        unit.metagraph.subtensor.close = AsyncMock()
+
+        # Cause the exception
+        unit.subtensor.weights_rate_limit = AsyncMock(
+            side_effect=SubstrateRequestException("fake-exception")
+        )
+
+        with pytest.raises(SubstrateRequestException):
+            await unit.run()
+
+        # Assert warning is logged and close is awaited
+        unit.logger.warning.assert_called_with(
+            "SubstrateRequestException, attempt to close subscriptions"
+        )
+        unit.metagraph.subtensor.close.assert_awaited_once()

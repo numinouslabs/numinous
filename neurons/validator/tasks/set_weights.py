@@ -4,8 +4,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import aiohttp
+import numpy as np
 import pandas as pd
-import torch
+from async_substrate_interface.errors import SubstrateRequestException
 from bittensor import AsyncSubtensor
 from bittensor.utils.weight_utils import process_weights
 from bittensor_wallet.wallet import Wallet
@@ -15,10 +16,7 @@ from neurons.validator.models.numinous_client import GetWeightsResponse
 from neurons.validator.models.weights import WeightsModel
 from neurons.validator.numinous_client.client import NuminousClient
 from neurons.validator.scheduler.task import AbstractTask
-from neurons.validator.utils.common.converters import (
-    pydantic_models_to_dataframe,
-    torch_or_numpy_to_int,
-)
+from neurons.validator.utils.common.converters import pydantic_models_to_dataframe
 from neurons.validator.utils.common.interval import BLOCK_DURATION
 from neurons.validator.utils.if_metagraph import IfMetagraph
 from neurons.validator.utils.logger.logger import NuminousLogger
@@ -96,7 +94,7 @@ class SetWeights(AbstractTask):
         # sync the metagraph
         await self.metagraph.sync()
 
-        #  WARNING! hotkeys is a list[str] and uids is a torch.tensor
+        # hotkeys is list[str], uids is np.ndarray
         self.current_hotkeys = copy.deepcopy(self.metagraph.hotkeys)
         self.n_hotkeys = len(self.current_hotkeys)
         self.current_uids = copy.deepcopy(self.metagraph.uids)
@@ -230,20 +228,16 @@ class SetWeights(AbstractTask):
 
     async def preprocess_weights(
         self, normalized_scores: pd.DataFrame
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        miner_uids_tf = torch.tensor(
-            normalized_scores[SWNames.miner_uid].values, dtype=torch.int
-        ).to("cpu")
-        raw_weights_tf = torch.tensor(
-            normalized_scores[SWNames.raw_weights].values, dtype=torch.float
-        ).to("cpu")
+    ) -> tuple[np.ndarray, np.ndarray]:
+        miner_uids = np.array(normalized_scores[SWNames.miner_uid].values, dtype=np.int64)
+        raw_weights = np.array(normalized_scores[SWNames.raw_weights].values, dtype=np.float32)
 
         min_allowed_weights = await self.subtensor.min_allowed_weights(netuid=self.netuid)
         max_weight_limit = await self.subtensor.max_weight_limit(netuid=self.netuid)
 
         processed_uids, processed_weights = process_weights(
-            uids=miner_uids_tf,
-            weights=raw_weights_tf,
+            uids=miner_uids,
+            weights=raw_weights,
             num_neurons=self.metagraph.n,
             min_allowed_weights=min_allowed_weights,
             max_weight_limit=max_weight_limit,
@@ -252,8 +246,8 @@ class SetWeights(AbstractTask):
         if (
             processed_uids is None
             or processed_weights is None
-            or processed_uids.numel() == 0
-            or processed_weights.numel() == 0
+            or len(processed_uids) == 0
+            or len(processed_weights) == 0
         ):
             self.logger.error(
                 "Failed to process the weights - received None or empty tensors.",
@@ -269,36 +263,32 @@ class SetWeights(AbstractTask):
             raise ValueError("Failed to process the weights - received None or empty tensors.")
 
         # process_weights excludes the zero weights
-        mask = raw_weights_tf != 0
-        if not torch.equal(processed_uids, miner_uids_tf[mask]):
+        mask = raw_weights != 0
+        if not np.array_equal(processed_uids, miner_uids[mask]):
             self.logger.error(
                 "Processed UIDs do not match the original UIDs.",
                 extra={
                     "processed_uids[:10]": processed_uids.tolist()[:10],
-                    "original_uids[:10]": miner_uids_tf.tolist()[:10],
+                    "original_uids[:10]": miner_uids.tolist()[:10],
                 },
             )
             raise ValueError("Processed UIDs do not match the original UIDs.")
 
-        if (
-            not torch.isclose(processed_weights, raw_weights_tf[mask], atol=1e-5, rtol=1e-5)
-            .all()
-            .item()
-        ):
+        if not np.allclose(processed_weights, raw_weights[mask], atol=1e-5, rtol=1e-5):
             self.logger.warning(
                 "Processed weights do not match the original weights.",
                 extra={
                     "processed_weights[:10]": [
                         round(w, 5) for w in processed_weights.tolist()[:10]
                     ],
-                    "original_weights[:10]": [round(w, 5) for w in raw_weights_tf.tolist()[:10]],
+                    "original_weights[:10]": [round(w, 5) for w in raw_weights.tolist()[:10]],
                 },
             )
 
         return processed_uids, processed_weights
 
     async def subtensor_set_weights(
-        self, processed_uids: torch.Tensor, processed_weights: torch.Tensor
+        self, processed_uids: np.ndarray, processed_weights: np.ndarray
     ):
         successful, sw_msg = await self.subtensor.set_weights(
             wallet=self.wallet,
@@ -337,7 +327,7 @@ class SetWeights(AbstractTask):
         owner_hotkey = self.metagraph.owner_hotkey
 
         for idx, uid in enumerate(self.metagraph.uids):
-            int_uid = torch_or_numpy_to_int(uid)
+            int_uid = int(uid)
             hotkey = self.metagraph.hotkeys[idx]
 
             if hotkey == owner_hotkey:
@@ -373,56 +363,64 @@ class SetWeights(AbstractTask):
         return weights
 
     async def run(self):
-        await self.metagraph_lite_sync()
-
-        can_set_weights = await self.time_to_set_weights()
-        if not can_set_weights:
-            return
-
         try:
-            api_response = await self.api_client.get_weights()
+            await self.metagraph_lite_sync()
 
-            self.logger.info(
-                "Fetched centralized weights from API",
-                extra={
-                    "aggregated_at": api_response.aggregated_at.isoformat(),
-                    "num_weights": len(api_response.weights),
-                    "count": api_response.count,
-                },
-            )
-
-            weights_from_api = self._convert_api_weights_to_weights(api_response)
-
-        except aiohttp.ClientResponseError as e:
-            if e.status == 503:
-                self.logger.warning(
-                    "Backend has no weights available yet (503). Skipping set_weights this round.",
-                    extra={"status": e.status},
-                )
+            can_set_weights = await self.time_to_set_weights()
+            if not can_set_weights:
                 return
-            else:
-                self.logger.error(
-                    "Failed to fetch weights from backend API",
-                    extra={"status": e.status, "message": str(e)},
+
+            try:
+                api_response = await self.api_client.get_weights()
+
+                self.logger.info(
+                    "Fetched centralized weights from API",
+                    extra={
+                        "aggregated_at": api_response.aggregated_at.isoformat(),
+                        "num_weights": len(api_response.weights),
+                        "count": api_response.count,
+                    },
+                )
+
+                weights_from_api = self._convert_api_weights_to_weights(api_response)
+
+            except aiohttp.ClientResponseError as e:
+                if e.status == 503:
+                    self.logger.warning(
+                        "Backend has no weights available yet (503). Skipping set_weights this round.",
+                        extra={"status": e.status},
+                    )
+                    return
+                else:
+                    self.logger.error(
+                        "Failed to fetch weights from backend API",
+                        extra={"status": e.status, "message": str(e)},
+                    )
+                    raise
+
+            except Exception as e:
+                self.logger.exception(
+                    "Unexpected error fetching weights from API",
+                    extra={"error_type": type(e).__name__},
                 )
                 raise
 
-        except Exception as e:
-            self.logger.exception(
-                "Unexpected error fetching weights from API",
-                extra={"error_type": type(e).__name__},
-            )
+            if not weights_from_api:
+                raise ValueError("Failed to get weights from API (empty response).")
+
+            merged_weights = self.merge_weights_with_metagraph(weights_from_api)
+
+            self.check_scores_sanity(merged_weights)
+
+            normalized_scores = self.renormalize_weights(merged_weights)
+
+            uids, weights = await self.preprocess_weights(normalized_scores)
+
+            await self.subtensor_set_weights(processed_uids=uids, processed_weights=weights)
+
+        except SubstrateRequestException:
+            self.logger.warning("SubstrateRequestException, attempt to close subscriptions")
+
+            await self.metagraph.subtensor.close()
+
             raise
-
-        if not weights_from_api:
-            raise ValueError("Failed to get weights from API (empty response).")
-
-        merged_weights = self.merge_weights_with_metagraph(weights_from_api)
-
-        self.check_scores_sanity(merged_weights)
-
-        normalized_scores = self.renormalize_weights(merged_weights)
-
-        uids, weights = await self.preprocess_weights(normalized_scores)
-
-        await self.subtensor_set_weights(processed_uids=uids, processed_weights=weights)

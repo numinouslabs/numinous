@@ -33,8 +33,15 @@ def mock_sandbox_manager():
 
 @pytest.fixture
 def mock_api_client():
-    client = AsyncMock(spec=NuminousClient)
+    from uuid import UUID
+
+    from neurons.validator.models.numinous_client import CreateAgentRunResponse
+
+    client = MagicMock(spec=NuminousClient)
     client.post_agent_logs = AsyncMock()
+    client.create_agent_run = AsyncMock(
+        return_value=CreateAgentRunResponse(run_id=UUID("123e4567-e89b-12d3-a456-426614174000"))
+    )
     return client
 
 
@@ -66,7 +73,7 @@ def sample_event_tuple():
 @pytest.fixture
 def sample_agent():
     return MinerAgentsModel(
-        version_id="agent_v1",
+        version_id="a23e4567-e89b-12d3-a456-426614174000",
         miner_uid=42,
         miner_hotkey="5HotKey123",
         agent_name="test_agent",
@@ -239,6 +246,64 @@ class TestRunAgentsInit:
                 timeout_seconds=0,
             )
 
+    def test_invalid_validator_uid_negative(
+        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+    ):
+        with pytest.raises(ValueError, match="validator_uid must be"):
+            RunAgents(
+                interval_seconds=600.0,
+                db_operations=mock_db_operations,
+                sandbox_manager=mock_sandbox_manager,
+                metagraph=mock_metagraph,
+                api_client=mock_api_client,
+                logger=mock_logger,
+                validator_uid=-1,
+            )
+
+    def test_invalid_validator_uid_too_large(
+        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+    ):
+        with pytest.raises(ValueError, match="validator_uid must be"):
+            RunAgents(
+                interval_seconds=600.0,
+                db_operations=mock_db_operations,
+                sandbox_manager=mock_sandbox_manager,
+                metagraph=mock_metagraph,
+                api_client=mock_api_client,
+                logger=mock_logger,
+                validator_uid=257,
+            )
+
+    def test_invalid_validator_hotkey_type(
+        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+    ):
+        with pytest.raises(TypeError, match="validator_hotkey must be"):
+            RunAgents(
+                interval_seconds=600.0,
+                db_operations=mock_db_operations,
+                sandbox_manager=mock_sandbox_manager,
+                metagraph=mock_metagraph,
+                api_client=mock_api_client,
+                logger=mock_logger,
+                validator_hotkey=123,
+            )
+
+    def test_valid_initialization_with_validator_params(
+        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+    ):
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+            validator_uid=42,
+            validator_hotkey="5ValidatorHotkey123",
+        )
+        assert task.validator_uid == 42
+        assert task.validator_hotkey == "5ValidatorHotkey123"
+
 
 @pytest.mark.asyncio
 class TestRunAgentsRun:
@@ -337,7 +402,7 @@ class TestRunAgentsFiltering:
         self, mock_db_operations, mock_sandbox_manager, mock_api_client, mock_logger, sample_agent
     ):
         metagraph = MagicMock(spec=IfMetagraph)
-        metagraph.uids = [np.array([42])]
+        metagraph.uids = np.array([42], dtype=np.int64)
 
         axon = MagicMock()
         axon.hotkey = "different_hotkey"
@@ -360,7 +425,7 @@ class TestRunAgentsFiltering:
         self, mock_db_operations, mock_sandbox_manager, mock_api_client, mock_logger, sample_agent
     ):
         metagraph = MagicMock(spec=IfMetagraph)
-        metagraph.uids = [np.array([42])]
+        metagraph.uids = np.array([42], dtype=np.int64)
         metagraph.axons = {42: None}
 
         task = RunAgents(
@@ -380,7 +445,7 @@ class TestRunAgentsFiltering:
         self, mock_db_operations, mock_sandbox_manager, mock_api_client, mock_logger, sample_agent
     ):
         metagraph = MagicMock(spec=IfMetagraph)
-        metagraph.uids = [np.array([42])]
+        metagraph.uids = np.array([42], dtype=np.int64)
 
         axon = MagicMock()
         axon.hotkey = "5HotKey123"
@@ -435,7 +500,7 @@ class TestRunAgentsFiltering:
         )
 
         metagraph = MagicMock(spec=IfMetagraph)
-        metagraph.uids = [np.array([42]), np.array([100])]
+        metagraph.uids = np.array([42, 100], dtype=np.int64)
 
         axon1 = MagicMock()
         axon1.hotkey = "hotkey1"
@@ -520,7 +585,7 @@ class TestRunAgentsIdempotency:
         mock_db_operations.get_events_to_predict.return_value = [sample_event_tuple]
         mock_db_operations.get_active_agents.return_value = [sample_agent]
 
-        mock_metagraph.uids = [np.array([42])]
+        mock_metagraph.uids = np.array([42], dtype=np.int64)
         axon = MagicMock()
         axon.hotkey = "5HotKey123"
         mock_metagraph.axons = {42: axon}
@@ -553,7 +618,11 @@ class TestRunAgentsIdempotency:
         mock_db_operations.get_latest_prediction_for_event_and_miner.assert_called_once()
         mock_logger.debug.assert_any_call(
             "Skipping execution - prediction exists",
-            extra={"event_id": "event_123", "agent_version_id": "agent_v1", "miner_uid": 42},
+            extra={
+                "event_id": "event_123",
+                "agent_version_id": "a23e4567-e89b-12d3-a456-426614174000",
+                "miner_uid": 42,
+            },
         )
 
     @patch("neurons.validator.tasks.run_agents.datetime")
@@ -574,7 +643,7 @@ class TestRunAgentsIdempotency:
         mock_db_operations.get_events_to_predict.return_value = [sample_event_tuple]
         mock_db_operations.get_active_agents.return_value = [sample_agent]
 
-        mock_metagraph.uids = [np.array([42])]
+        mock_metagraph.uids = np.array([42], dtype=np.int64)
         axon = MagicMock()
         axon.hotkey = "5HotKey123"
         mock_metagraph.axons = {42: axon}
@@ -624,7 +693,7 @@ class TestRunAgentsIdempotency:
         mock_db_operations.get_events_to_predict.return_value = [sample_event_tuple]
         mock_db_operations.get_active_agents.return_value = [sample_agent]
 
-        mock_metagraph.uids = [np.array([42])]
+        mock_metagraph.uids = np.array([42], dtype=np.int64)
         axon = MagicMock()
         axon.hotkey = "5HotKey123"
         mock_metagraph.axons = {42: axon}
@@ -638,7 +707,7 @@ class TestRunAgentsIdempotency:
             interval_start_minutes=100,
             interval_agg_prediction=0.75,
             run_id="original_run_id",
-            version_id="agent_v1",
+            version_id="a23e4567-e89b-12d3-a456-426614174000",
         )
         mock_db_operations.get_latest_prediction_for_event_and_miner.return_value = (
             existing_prediction
@@ -669,7 +738,7 @@ class TestRunAgentsIdempotency:
         assert replicated.miner_uid == 42
         assert replicated.latest_prediction == 0.75
         assert replicated.run_id == "original_run_id"
-        assert replicated.version_id == "agent_v1"
+        assert replicated.version_id == "a23e4567-e89b-12d3-a456-426614174000"
 
         # Verify info log was called with replication message
         info_calls = [
@@ -680,7 +749,7 @@ class TestRunAgentsIdempotency:
         assert len(info_calls) == 1
         log_extra = info_calls[0][1]["extra"]
         assert log_extra["event_id"] == "event_123"
-        assert log_extra["agent_version_id"] == "agent_v1"
+        assert log_extra["agent_version_id"] == "a23e4567-e89b-12d3-a456-426614174000"
         assert log_extra["miner_uid"] == 42
         assert log_extra["from_interval"] == 100
         # to_interval should be different from from_interval
@@ -922,7 +991,7 @@ class TestRunAgentsPredictionStorage:
         assert prediction.miner_hotkey == "5HotKey123"
         assert prediction.latest_prediction == 0.75
         assert prediction.interval_agg_prediction == 0.75
-        assert prediction.version_id == "agent_v1"
+        assert prediction.version_id == "a23e4567-e89b-12d3-a456-426614174000"
 
     async def test_store_prediction_clips_values(
         self,
@@ -1656,6 +1725,7 @@ class TestRunAgentsRunCreation:
     ):
         mock_db_operations.upsert_predictions = AsyncMock()
         mock_db_operations.upsert_agent_runs = AsyncMock()
+        mock_db_operations.insert_agent_run_log = AsyncMock()
 
         task = RunAgents(
             interval_seconds=600.0,
@@ -1932,6 +2002,118 @@ class TestRunAgentsRunCreation:
         ]
         assert len(info_calls) == 1
 
+    async def test_api_create_agent_run_called_with_correct_params(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_metagraph,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
+        sample_event_tuple,
+    ):
+        from uuid import UUID
+
+        from neurons.validator.models.numinous_client import (
+            CreateAgentRunRequest,
+            CreateAgentRunResponse,
+        )
+
+        mock_db_operations.upsert_predictions = AsyncMock()
+        mock_db_operations.upsert_agent_runs = AsyncMock()
+        mock_db_operations.insert_agent_run_log = AsyncMock()
+
+        mock_api_client.create_agent_run = AsyncMock(
+            return_value=CreateAgentRunResponse(run_id=UUID("223e4567-e89b-12d3-a456-426614174001"))
+        )
+
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+            timeout_seconds=120,
+            validator_uid=99,
+            validator_hotkey="5ValidatorHotkey999",
+        )
+
+        task.load_agent_code = AsyncMock(return_value="def agent_main(): pass")
+        success_result = {
+            "status": "SUCCESS",
+            "output": {"event_id": "external_event_123", "prediction": 0.75},
+            "logs": "[AGENT_RUNNER] Success",
+        }
+        task.run_sandbox = AsyncMock(return_value=success_result)
+
+        await task.execute_agent_for_event(
+            event_id="event_123",
+            agent=sample_agent,
+            event_tuple=sample_event_tuple,
+            interval_start_minutes=1000,
+        )
+
+        mock_api_client.create_agent_run.assert_called_once()
+        call_args = mock_api_client.create_agent_run.call_args[0][0]
+
+        assert isinstance(call_args, CreateAgentRunRequest)
+        assert call_args.miner_uid == sample_agent.miner_uid
+        assert call_args.miner_hotkey == sample_agent.miner_hotkey
+        assert call_args.vali_uid == 99
+        assert call_args.vali_hotkey == "5ValidatorHotkey999"
+        assert call_args.event_id == "event_123"
+        assert str(call_args.version_id) == sample_agent.version_id
+
+    async def test_api_create_agent_run_failure_returns_early(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_metagraph,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
+        sample_event_tuple,
+    ):
+        mock_db_operations.upsert_predictions = AsyncMock()
+        mock_db_operations.upsert_agent_runs = AsyncMock()
+
+        mock_api_client.create_agent_run = AsyncMock(side_effect=Exception("API Error"))
+
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            metagraph=mock_metagraph,
+            api_client=mock_api_client,
+            logger=mock_logger,
+            timeout_seconds=120,
+            validator_uid=99,
+            validator_hotkey="5ValidatorHotkey999",
+        )
+
+        task.load_agent_code = AsyncMock(return_value="def agent_main(): pass")
+        task.run_sandbox = AsyncMock()
+
+        await task.execute_agent_for_event(
+            event_id="event_123",
+            agent=sample_agent,
+            event_tuple=sample_event_tuple,
+            interval_start_minutes=1000,
+        )
+
+        mock_api_client.create_agent_run.assert_called_once()
+        task.run_sandbox.assert_not_called()
+        mock_db_operations.upsert_agent_runs.assert_not_called()
+        mock_db_operations.upsert_predictions.assert_not_called()
+
+        error_calls = [
+            call
+            for call in mock_logger.error.call_args_list
+            if len(call[0]) > 0 and "Failed to create agent run via API" in call[0][0]
+        ]
+        assert len(error_calls) == 1
+
 
 @pytest.mark.asyncio
 class TestRunAgentsMaxRetries:
@@ -1970,7 +2152,7 @@ class TestRunAgentsMaxRetries:
 
         mock_db_operations.has_final_run.assert_called_once_with(
             unique_event_id="event_123",
-            agent_version_id="agent_v1",
+            agent_version_id="a23e4567-e89b-12d3-a456-426614174000",
         )
         task.execute_agent_for_event.assert_called_once()
 
@@ -2081,6 +2263,6 @@ class TestRunAgentsMaxRetries:
             "Skipping execution - final run exists",
             extra={
                 "event_id": "event_123",
-                "agent_version_id": "agent_v1",
+                "agent_version_id": "a23e4567-e89b-12d3-a456-426614174000",
             },
         )

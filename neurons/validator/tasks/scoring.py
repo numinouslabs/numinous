@@ -99,7 +99,7 @@ class Scoring(AbstractTask):
     async def metagraph_lite_sync(self):
         # sync the metagraph
         await self.metagraph.sync()
-        #  WARNING! hotkeys is a list[str] and uids is a torch.tensor
+        # hotkeys is a list[str] and uids is a numpy array
         self.current_hotkeys = copy.deepcopy(self.metagraph.hotkeys)
         self.n_hotkeys = len(self.current_hotkeys)
         self.current_uids = copy.deepcopy(self.metagraph.uids)

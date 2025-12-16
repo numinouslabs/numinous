@@ -1,5 +1,4 @@
 # please sort alphabetically to avoid duplicates
---extra-index-url https://download.pytorch.org/whl/cpu
 aiohttp~=3.13
 aiosqlite==0.21.0
 alembic==1.14.1
@@ -17,7 +16,5 @@ pydantic==2.9.2
 scikit-learn==1.5.2
 slowapi==0.1.9
 sqlalchemy==2.0.37
-torch==2.3.1+cpu; sys_platform == 'linux'
-torch==2.3.1; sys_platform == 'darwin'
 uvicorn==0.34.0
 websockets==15.0.1

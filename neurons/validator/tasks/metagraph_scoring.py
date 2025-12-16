@@ -1,6 +1,5 @@
 from neurons.validator.db.operations import DatabaseOperations
 from neurons.validator.scheduler.task import AbstractTask
-from neurons.validator.utils.common.converters import torch_or_numpy_to_int
 from neurons.validator.utils.if_metagraph import IfMetagraph
 from neurons.validator.utils.logger.logger import NuminousLogger
 
@@ -53,7 +52,7 @@ class MetagraphScoring(AbstractTask):
         owner_hotkey = self.metagraph.owner_hotkey
 
         for idx, uid in enumerate(self.metagraph.uids):
-            int_uid = torch_or_numpy_to_int(uid)
+            int_uid = int(uid)
             hotkey = self.metagraph.hotkeys[idx]
 
             if hotkey == owner_hotkey:

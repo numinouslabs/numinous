@@ -164,6 +164,33 @@ class PostAgentRunsRequestBody(BaseModel):
     runs: typing.List[AgentRunSubmission]
 
 
+class CreateAgentRunRequest(BaseModel):
+    miner_uid: int
+    miner_hotkey: str
+    vali_uid: int
+    vali_hotkey: str
+    event_id: str
+    version_id: UUID
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CreateAgentRunResponse(BaseModel):
+    run_id: UUID
+
+
+class UpdateAgentRunRequest(BaseModel):
+    run_id: UUID
+    status: str
+    is_final: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BatchUpdateAgentRunsRequest(BaseModel):
+    runs: typing.List[UpdateAgentRunRequest]
+
+
 class ChutesInferenceRequest(GatewayCall):
     model: ChuteModel = Field(..., description="Model to use for inference.")
     messages: list[Message] = Field(..., description="List of chat messages")

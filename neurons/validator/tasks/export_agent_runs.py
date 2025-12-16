@@ -2,7 +2,10 @@ from uuid import UUID
 
 from neurons.validator.db.operations import DatabaseOperations
 from neurons.validator.models.agent_runs import AgentRunsModel
-from neurons.validator.models.numinous_client import AgentRunSubmission, PostAgentRunsRequestBody
+from neurons.validator.models.numinous_client import (
+    BatchUpdateAgentRunsRequest,
+    UpdateAgentRunRequest,
+)
 from neurons.validator.numinous_client.client import NuminousClient
 from neurons.validator.scheduler.task import AbstractTask
 from neurons.validator.utils.logger.logger import NuminousLogger
@@ -51,27 +54,21 @@ class ExportAgentRuns(AbstractTask):
     def interval_seconds(self) -> float:
         return self.interval
 
-    def prepare_runs_payload(self, db_runs: list[AgentRunsModel]) -> PostAgentRunsRequestBody:
+    def prepare_runs_payload(self, db_runs: list[AgentRunsModel]) -> BatchUpdateAgentRunsRequest:
         runs = []
 
         for db_run in db_runs:
-            run = AgentRunSubmission(
+            run = UpdateAgentRunRequest(
                 run_id=UUID(db_run.run_id),
-                miner_uid=db_run.miner_uid,
-                miner_hotkey=db_run.miner_hotkey,
-                vali_uid=self.validator_uid,
-                vali_hotkey=self.validator_hotkey,
                 status=db_run.status.value,
-                event_id=db_run.unique_event_id,
-                version_id=UUID(db_run.agent_version_id),
                 is_final=db_run.is_final,
             )
             runs.append(run)
 
-        return PostAgentRunsRequestBody(runs=runs)
+        return BatchUpdateAgentRunsRequest(runs=runs)
 
-    async def export_runs_to_backend(self, payload: PostAgentRunsRequestBody) -> None:
-        await self.api_client.post_agent_runs(body=payload)
+    async def export_runs_to_backend(self, payload: BatchUpdateAgentRunsRequest) -> None:
+        await self.api_client.put_agent_runs(body=payload)
 
         self.logger.debug(
             "Exported runs to backend",

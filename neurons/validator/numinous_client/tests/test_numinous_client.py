@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
+from uuid import UUID
 
 import pytest
 from aiohttp import ClientResponseError
@@ -15,7 +16,10 @@ from yarl import URL
 from neurons.validator.models.chutes import ChuteModel, ChutesCompletion
 from neurons.validator.models.desearch import AISearchResponse, ModelEnum, ToolEnum
 from neurons.validator.models.numinous_client import (
+    BatchUpdateAgentRunsRequest,
     ChutesInferenceRequest,
+    CreateAgentRunRequest,
+    CreateAgentRunResponse,
     DesearchAISearchRequest,
     GetAgentsResponse,
     GetEventsDeletedResponse,
@@ -26,6 +30,7 @@ from neurons.validator.models.numinous_client import (
     PostAgentRunsRequestBody,
     PostPredictionsRequestBody,
     PostScoresRequestBody,
+    UpdateAgentRunRequest,
 )
 from neurons.validator.numinous_client.client import NuminousClient, NuminousEnvType
 from neurons.validator.utils.git import commit_short_hash
@@ -231,7 +236,7 @@ class TestNuminousClient:
         # Use aioresponses context manager to mock HTTP requests
         with aioresponses() as mocked:
             mocked.get(
-                "/api/v2/events?from_date=1234567890&offset=0&limit=10",
+                "/api/v1/validators/events?from_date=1234567890&offset=0&limit=10",
                 status=200,
                 body=json.dumps(mock_response_data).encode("utf-8"),
             )
@@ -250,7 +255,7 @@ class TestNuminousClient:
 
         # Use aioresponses context manager to mock HTTP requests
         with aioresponses() as mocked:
-            url_path = "/api/v2/events?from_date=1234567890&offset=0&limit=10"
+            url_path = "/api/v1/validators/events?from_date=1234567890&offset=0&limit=10"
             mocked.get(
                 url_path,
                 status=status_code,
@@ -441,6 +446,24 @@ class TestNuminousClient:
             "Authorization": f"Bearer {encoded}",
             "Validator": "ss58_address",
         }
+
+    def test_make_get_auth_headers(self, client_test_env: NuminousClient):
+        auth_headers = client_test_env.make_get_auth_headers()
+
+        assert "Authorization" in auth_headers
+        assert "Validator" in auth_headers
+        assert "X-Payload" in auth_headers
+
+        assert auth_headers["Validator"] == "ss58_address"
+
+        payload = auth_headers["X-Payload"]
+        assert payload.startswith("ss58_address:")
+
+        timestamp_part = payload.split(":")[-1]
+        assert timestamp_part.isdigit()
+
+        encoded_payload = base64.b64encode(payload.encode("utf-8")).decode("utf-8")
+        assert auth_headers["Authorization"] == f"Bearer {encoded_payload}"
 
     async def test_post_predictions(self, client_test_env: NuminousClient):
         # Define mock response data
@@ -773,6 +796,126 @@ class TestNuminousClient:
 
             mocked.assert_called_with(
                 url=url_path, method="POST", data=request_body.model_dump_json()
+            )
+
+            assert e.value.status == status_code
+
+    async def test_create_agent_run(self, client_test_env: NuminousClient):
+        mock_response_data = {"run_id": "723e4567-e89b-12d3-a456-426614174006"}
+
+        request_body = CreateAgentRunRequest(
+            miner_uid=10,
+            miner_hotkey="miner_hotkey_1",
+            vali_uid=5,
+            vali_hotkey="validator_hotkey",
+            event_id="event_123",
+            version_id="823e4567-e89b-12d3-a456-426614174007",
+        )
+
+        with aioresponses() as mocked:
+            url_path = "/api/v1/validators/agents/runs/create"
+
+            mocked.post(
+                url_path,
+                status=201,
+                body=json.dumps(mock_response_data).encode("utf-8"),
+            )
+
+            result = await client_test_env.create_agent_run(body=request_body)
+
+            mocked.assert_called_with(
+                url=url_path, method="POST", data=request_body.model_dump_json()
+            )
+
+            assert isinstance(result, CreateAgentRunResponse)
+            assert str(result.run_id) == mock_response_data["run_id"]
+
+    async def test_create_agent_run_error_raised(self, client_test_env: NuminousClient):
+        mock_response_data = {"error": "Failed to create agent run"}
+
+        request_body = CreateAgentRunRequest(
+            miner_uid=10,
+            miner_hotkey="miner_hotkey_1",
+            vali_uid=5,
+            vali_hotkey="validator_hotkey",
+            event_id="event_456",
+            version_id="923e4567-e89b-12d3-a456-426614174008",
+        )
+
+        status_code = 500
+
+        with aioresponses() as mocked:
+            url_path = "/api/v1/validators/agents/runs/create"
+
+            mocked.post(
+                url_path,
+                status=status_code,
+                body=json.dumps(mock_response_data).encode("utf-8"),
+            )
+
+            with pytest.raises(ClientResponseError) as e:
+                await client_test_env.create_agent_run(body=request_body)
+
+            mocked.assert_called_with(
+                url=url_path, method="POST", data=request_body.model_dump_json()
+            )
+
+            assert e.value.status == status_code
+
+    async def test_put_agent_runs(self, client_test_env: NuminousClient):
+        request_body = BatchUpdateAgentRunsRequest(
+            runs=[
+                UpdateAgentRunRequest(
+                    run_id=UUID("623e4567-e89b-12d3-a456-426614174006"),
+                    status="SUCCESS",
+                    is_final=True,
+                ),
+                UpdateAgentRunRequest(
+                    run_id=UUID("723e4567-e89b-12d3-a456-426614174007"),
+                    status="INTERNAL_AGENT_ERROR",
+                    is_final=True,
+                ),
+            ]
+        )
+
+        with aioresponses() as mocked:
+            url_path = "/api/v1/validators/agents/runs"
+
+            mocked.put(url_path, status=204)
+
+            await client_test_env.put_agent_runs(body=request_body)
+
+            mocked.assert_called_with(
+                url=url_path, method="PUT", data=request_body.model_dump_json()
+            )
+
+    async def test_put_agent_runs_error_raised(self, client_test_env: NuminousClient):
+        request_body = BatchUpdateAgentRunsRequest(
+            runs=[
+                UpdateAgentRunRequest(
+                    run_id=UUID("823e4567-e89b-12d3-a456-426614174008"),
+                    status="SUCCESS",
+                    is_final=True,
+                )
+            ]
+        )
+
+        status_code = 500
+
+        with aioresponses() as mocked:
+            url_path = "/api/v1/validators/agents/runs"
+
+            mocked.put(
+                url_path,
+                status=status_code,
+                body=json.dumps({"error": "Internal error"}).encode("utf-8"),
+            )
+
+            with pytest.raises(ClientResponseError) as e:
+                await client_test_env.put_agent_runs(body=request_body)
+
+            mocked.assert_called_with(
+                url=url_path, method="PUT", data=request_body.model_dump_json()
             )
 
             assert e.value.status == status_code

@@ -3,17 +3,16 @@ import json
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
-from uuid import uuid4
 
 from neurons.validator.db.operations import DatabaseOperations
 from neurons.validator.models.agent_runs import AgentRunsModel, AgentRunStatus
 from neurons.validator.models.miner_agent import MinerAgentsModel
+from neurons.validator.models.numinous_client import CreateAgentRunRequest
 from neurons.validator.models.prediction import PredictionsModel
 from neurons.validator.numinous_client.client import NuminousClient
 from neurons.validator.sandbox import SandboxManager
 from neurons.validator.sandbox.models import SandboxErrorType
 from neurons.validator.scheduler.task import AbstractTask
-from neurons.validator.utils.common.converters import torch_or_numpy_to_int
 from neurons.validator.utils.common.interval import (
     SCORING_WINDOW_INTERVALS,
     get_interval_start_minutes,
@@ -36,6 +35,8 @@ class RunAgents(AbstractTask):
     max_concurrent_sandboxes: int
     timeout_seconds: int
     sync_hour: int
+    validator_uid: int
+    validator_hotkey: str
 
     def __init__(
         self,
@@ -48,6 +49,8 @@ class RunAgents(AbstractTask):
         max_concurrent_sandboxes: int = 5,
         timeout_seconds: int = 600,
         sync_hour: int = 4,
+        validator_uid: int = 0,
+        validator_hotkey: str = "",
     ):
         if not isinstance(interval_seconds, float) or interval_seconds <= 0:
             raise ValueError("interval_seconds must be a positive number (float).")
@@ -73,6 +76,12 @@ class RunAgents(AbstractTask):
         if not isinstance(timeout_seconds, int) or timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be a positive integer.")
 
+        if not isinstance(validator_uid, int) or validator_uid < 0 or validator_uid > 256:
+            raise ValueError("validator_uid must be a positive integer.")
+
+        if not isinstance(validator_hotkey, str):
+            raise TypeError("validator_hotkey must be a string.")
+
         self.interval = interval_seconds
         self.db_operations = db_operations
         self.sandbox_manager = sandbox_manager
@@ -82,6 +91,8 @@ class RunAgents(AbstractTask):
         self.max_concurrent_sandboxes = max_concurrent_sandboxes
         self.timeout_seconds = timeout_seconds
         self.sync_hour = sync_hour
+        self.validator_uid = validator_uid
+        self.validator_hotkey = validator_hotkey
 
         self.logger.info(
             "RunAgents task initialized",
@@ -111,7 +122,7 @@ class RunAgents(AbstractTask):
 
         await self.metagraph.sync()
 
-        block = torch_or_numpy_to_int(self.metagraph.block)
+        block = self.metagraph.block.item()
         self.logger.debug(
             "Synced metagraph", extra={"block": block, "neurons": len(self.metagraph.uids)}
         )
@@ -149,7 +160,7 @@ class RunAgents(AbstractTask):
 
     def filter_agents_by_metagraph(self, agents: List[MinerAgentsModel]) -> List[MinerAgentsModel]:
         valid_agents = []
-        metagraph_uids = {torch_or_numpy_to_int(uid): uid for uid in self.metagraph.uids}
+        metagraph_uids = {int(uid): uid for uid in self.metagraph.uids}
 
         for agent in agents:
             if agent.miner_uid not in metagraph_uids:
@@ -425,16 +436,38 @@ class RunAgents(AbstractTask):
             metadata,
         ) = event_tuple
 
-        run_id = str(uuid4())
-        self.logger.info(
-            "Executing agent for event",
-            extra={
-                "event_id": event_id,
-                "agent_version_id": agent.version_id,
-                "miner_uid": agent.miner_uid,
-                "run_id": run_id,
-            },
-        )
+        try:
+            create_run_request = CreateAgentRunRequest(
+                miner_uid=agent.miner_uid,
+                miner_hotkey=agent.miner_hotkey,
+                vali_uid=self.validator_uid,
+                vali_hotkey=self.validator_hotkey,
+                event_id=event_id,
+                version_id=agent.version_id,
+            )
+
+            create_run_response = await self.api_client.create_agent_run(create_run_request)
+            run_id = str(create_run_response.run_id)
+
+            self.logger.info(
+                "Created agent run via API",
+                extra={
+                    "event_id": event_id,
+                    "agent_version_id": agent.version_id,
+                    "miner_uid": agent.miner_uid,
+                    "run_id": run_id,
+                },
+            )
+        except Exception as e:
+            self.logger.error(
+                "Failed to create agent run via API",
+                extra={
+                    "event_id": event_id,
+                    "agent_version_id": agent.version_id,
+                    "error": str(e),
+                },
+            )
+            return
 
         agent_code = await self.load_agent_code(agent)
         if agent_code is None:

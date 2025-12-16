@@ -1081,3 +1081,211 @@ Line 4: Newlines and tabs\t\n"""
         assert len(deleted) == 1
         assert isinstance(deleted[0], tuple)
         assert isinstance(deleted[0][0], int)
+
+    async def test_delete_agent_runs_old_exported(
+        self, db_operations: DatabaseOperations, db_client: DatabaseClient
+    ):
+        """Test deletion of old exported runs"""
+        await self._create_event(db_operations, "event_1")
+        await self._create_miner_agent(db_operations, "agent_v1", miner_uid=1)
+
+        run_id_old = str(uuid4())
+        run_id_recent = str(uuid4())
+
+        for run_id in [run_id_old, run_id_recent]:
+            run = AgentRunsModel(
+                run_id=run_id,
+                unique_event_id="event_1",
+                agent_version_id="agent_v1",
+                miner_uid=1,
+                miner_hotkey="hotkey_1",
+                status=AgentRunStatus.SUCCESS,
+                exported=True,
+            )
+            await db_operations.upsert_agent_runs([run])
+
+        await db_client.update(
+            "UPDATE agent_runs SET created_at = datetime('now', '-8 day') WHERE run_id = ?",
+            [run_id_old],
+        )
+
+        deleted = await db_operations.delete_agent_runs(batch_size=10)
+        deleted_rowids = [row[0] for row in deleted]
+
+        assert len(deleted_rowids) == 1
+
+        remaining = await db_client.many("SELECT run_id FROM agent_runs", [])
+        assert len(remaining) == 1
+        assert remaining[0][0] == run_id_recent
+
+    async def test_delete_agent_runs_batch_size(
+        self, db_operations: DatabaseOperations, db_client: DatabaseClient
+    ):
+        """Test batch_size limiting"""
+        await self._create_event(db_operations, "event_1")
+        await self._create_miner_agent(db_operations, "agent_v1", miner_uid=1)
+
+        run_ids = [str(uuid4()) for _ in range(5)]
+        for run_id in run_ids:
+            run = AgentRunsModel(
+                run_id=run_id,
+                unique_event_id="event_1",
+                agent_version_id="agent_v1",
+                miner_uid=1,
+                miner_hotkey="hotkey_1",
+                status=AgentRunStatus.SUCCESS,
+                exported=True,
+            )
+            await db_operations.upsert_agent_runs([run])
+
+        await db_client.update(
+            "UPDATE agent_runs SET created_at = datetime('now', '-8 day')",
+            [],
+        )
+
+        deleted = await db_operations.delete_agent_runs(batch_size=3)
+        deleted_rowids = [row[0] for row in deleted]
+
+        assert len(deleted_rowids) == 3
+
+        remaining = await db_client.many("SELECT run_id FROM agent_runs", [])
+        assert len(remaining) == 2
+
+    async def test_delete_agent_runs_no_delete_unexported(
+        self, db_operations: DatabaseOperations, db_client: DatabaseClient
+    ):
+        """Test unexported runs are not deleted"""
+        await self._create_event(db_operations, "event_1")
+        await self._create_miner_agent(db_operations, "agent_v1", miner_uid=1)
+
+        run_id = str(uuid4())
+        run = AgentRunsModel(
+            run_id=run_id,
+            unique_event_id="event_1",
+            agent_version_id="agent_v1",
+            miner_uid=1,
+            miner_hotkey="hotkey_1",
+            status=AgentRunStatus.SUCCESS,
+            exported=False,
+        )
+        await db_operations.upsert_agent_runs([run])
+
+        await db_client.update(
+            "UPDATE agent_runs SET created_at = datetime('now', '-8 day') WHERE run_id = ?",
+            [run_id],
+        )
+
+        deleted = await db_operations.delete_agent_runs(batch_size=10)
+        deleted_rowids = [row[0] for row in deleted]
+
+        assert len(deleted_rowids) == 0
+
+        remaining = await db_client.many("SELECT run_id FROM agent_runs", [])
+        assert len(remaining) == 1
+
+    async def test_delete_agent_runs_no_delete_recent_exported(
+        self, db_operations: DatabaseOperations, db_client: DatabaseClient
+    ):
+        """Test recent exported runs are not deleted"""
+        await self._create_event(db_operations, "event_1")
+        await self._create_miner_agent(db_operations, "agent_v1", miner_uid=1)
+
+        run_id = str(uuid4())
+        run = AgentRunsModel(
+            run_id=run_id,
+            unique_event_id="event_1",
+            agent_version_id="agent_v1",
+            miner_uid=1,
+            miner_hotkey="hotkey_1",
+            status=AgentRunStatus.SUCCESS,
+            exported=True,
+        )
+        await db_operations.upsert_agent_runs([run])
+
+        deleted = await db_operations.delete_agent_runs(batch_size=10)
+        deleted_rowids = [row[0] for row in deleted]
+
+        assert len(deleted_rowids) == 0
+
+        remaining = await db_client.many("SELECT run_id FROM agent_runs", [])
+        assert len(remaining) == 1
+
+    async def test_delete_agent_runs_no_delete_with_logs(
+        self, db_operations: DatabaseOperations, db_client: DatabaseClient
+    ):
+        """Test runs with remaining logs are not deleted (FK constraint protection)"""
+        await self._create_event(db_operations, "event_1")
+        await self._create_miner_agent(db_operations, "agent_v1", miner_uid=1)
+
+        run_id_with_log = str(uuid4())
+        run_id_without_log = str(uuid4())
+
+        for run_id in [run_id_with_log, run_id_without_log]:
+            run = AgentRunsModel(
+                run_id=run_id,
+                unique_event_id="event_1",
+                agent_version_id="agent_v1",
+                miner_uid=1,
+                miner_hotkey="hotkey_1",
+                status=AgentRunStatus.SUCCESS,
+                exported=True,
+            )
+            await db_operations.upsert_agent_runs([run])
+
+        await db_operations.insert_agent_run_log(run_id_with_log, "Log content")
+
+        await db_client.update(
+            "UPDATE agent_runs SET created_at = datetime('now', '-8 day')",
+            [],
+        )
+
+        deleted = await db_operations.delete_agent_runs(batch_size=10)
+        deleted_rowids = [row[0] for row in deleted]
+
+        assert len(deleted_rowids) == 1
+
+        remaining = await db_client.many("SELECT run_id FROM agent_runs", [])
+        assert len(remaining) == 1
+        assert remaining[0][0] == run_id_with_log
+
+    async def test_delete_agent_runs_coordination_with_logs(
+        self, db_operations: DatabaseOperations, db_client: DatabaseClient
+    ):
+        """Test deletion coordination: logs deleted first, then runs"""
+        await self._create_event(db_operations, "event_1")
+        await self._create_miner_agent(db_operations, "agent_v1", miner_uid=1)
+
+        run_id = str(uuid4())
+        run = AgentRunsModel(
+            run_id=run_id,
+            unique_event_id="event_1",
+            agent_version_id="agent_v1",
+            miner_uid=1,
+            miner_hotkey="hotkey_1",
+            status=AgentRunStatus.SUCCESS,
+            exported=True,
+        )
+        await db_operations.upsert_agent_runs([run])
+        await db_operations.insert_agent_run_log(run_id, "Log content")
+        await db_operations.mark_agent_run_logs_as_exported([run_id])
+
+        await db_client.update(
+            "UPDATE agent_runs SET created_at = datetime('now', '-8 day') WHERE run_id = ?",
+            [run_id],
+        )
+        await db_client.update(
+            "UPDATE agent_run_logs SET created_at = datetime('now', '-8 day') WHERE run_id = ?",
+            [run_id],
+        )
+
+        deleted_runs = await db_operations.delete_agent_runs(batch_size=10)
+        assert len(deleted_runs) == 0
+
+        deleted_logs = await db_operations.delete_agent_run_logs(batch_size=10)
+        assert len(deleted_logs) == 1
+
+        deleted_runs_after = await db_operations.delete_agent_runs(batch_size=10)
+        assert len(deleted_runs_after) == 1
+
+        remaining_runs = await db_client.many("SELECT run_id FROM agent_runs", [])
+        assert len(remaining_runs) == 0

@@ -10,7 +10,10 @@ from pydantic import ValidationError
 from neurons.validator.models.chutes import ChutesCompletion
 from neurons.validator.models.desearch import AISearchResponse
 from neurons.validator.models.numinous_client import (
+    BatchUpdateAgentRunsRequest,
     ChutesInferenceRequest,
+    CreateAgentRunRequest,
+    CreateAgentRunResponse,
     DesearchAISearchRequest,
     GetAgentsResponse,
     GetEventsDeletedResponse,
@@ -131,13 +134,23 @@ class NuminousClient:
             "Validator": hot_key.ss58_address,
         }
 
+    def make_get_auth_headers(self) -> dict[str, str]:
+        timestamp = str(int(time.time()))
+        payload = f"{self.__bt_wallet.hotkey.ss58_address}:{timestamp}"
+        return {
+            **self.make_auth_headers(data=payload),
+            "X-Payload": payload,
+        }
+
     async def get_events(self, from_date: int, offset: int, limit: int):
         # Check that all parameters are provided
         if from_date is None or offset is None or limit is None:
             raise ValueError("Invalid parameters")
 
-        async with self.create_session() as session:
-            path = f"/api/v2/events?from_date={from_date}&offset={offset}&limit={limit}"
+        auth_headers = self.make_get_auth_headers()
+
+        async with self.create_session(other_headers=auth_headers) as session:
+            path = f"/api/v1/validators/events?from_date={from_date}&offset={offset}&limit={limit}"
 
             async with session.get(path) as response:
                 response.raise_for_status()
@@ -253,11 +266,46 @@ class NuminousClient:
 
                 return await response.json()
 
+    async def create_agent_run(self, body: CreateAgentRunRequest) -> CreateAgentRunResponse:
+        if not isinstance(body, CreateAgentRunRequest):
+            raise ValueError("Invalid parameter")
+
+        data = body.model_dump_json()
+        auth_headers = self.make_auth_headers(data=data)
+
+        async with self.create_session(
+            other_headers={**auth_headers, "Content-Type": "application/json"}
+        ) as session:
+            path = "/api/v1/validators/agents/runs/create"
+
+            async with session.post(path, data=data) as response:
+                response.raise_for_status()
+
+                response_data = await response.json()
+                return CreateAgentRunResponse.model_validate(response_data)
+
+    async def put_agent_runs(self, body: BatchUpdateAgentRunsRequest) -> None:
+        if not isinstance(body, BatchUpdateAgentRunsRequest):
+            raise ValueError("Invalid parameter")
+
+        assert len(body.runs) > 0
+
+        data = body.model_dump_json()
+        auth_headers = self.make_auth_headers(data=data)
+
+        async with self.create_session(
+            other_headers={**auth_headers, "Content-Type": "application/json"}
+        ) as session:
+            path = "/api/v1/validators/agents/runs"
+
+            async with session.put(path, data=data) as response:
+                response.raise_for_status()
+
     async def get_agents(self, offset: int, limit: int):
         if offset is None or limit is None:
             raise ValueError("Invalid parameters")
 
-        auth_headers = self.make_auth_headers(data="")
+        auth_headers = self.make_get_auth_headers()
 
         async with self.create_session(other_headers=auth_headers) as session:
             path = f"/api/v1/validators/agents?offset={offset}&limit={limit}"
@@ -312,7 +360,7 @@ class NuminousClient:
                 return AISearchResponse.model_validate(data)
 
     async def get_weights(self):
-        auth_headers = self.make_auth_headers(data="")
+        auth_headers = self.make_get_auth_headers()
 
         async with self.create_session(other_headers=auth_headers) as session:
             path = "/api/v1/validators/weights"

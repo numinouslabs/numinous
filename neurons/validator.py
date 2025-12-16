@@ -3,9 +3,6 @@
 import os
 import sys
 
-# Force torch - must be set before importing bittensor
-os.environ["USE_TORCH"] = "1"
-
 # Add the parent directory of the script to PYTHONPATH
 script_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(script_dir)

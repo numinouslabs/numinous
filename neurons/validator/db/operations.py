@@ -1281,14 +1281,17 @@ class DatabaseOperations:
             """
                 WITH runs_to_delete AS (
                     SELECT
-                        ROWID
+                        ar.ROWID
                     FROM
-                        agent_runs
+                        agent_runs ar
+                    LEFT JOIN
+                        agent_run_logs arl ON ar.run_id = arl.run_id
                     WHERE
-                        exported = ?
-                        AND datetime(created_at) < datetime(CURRENT_TIMESTAMP, '-7 day')
+                        ar.exported = ?
+                        AND datetime(ar.created_at) < datetime(CURRENT_TIMESTAMP, '-7 day')
+                        AND arl.run_id IS NULL
                     ORDER BY
-                        ROWID ASC
+                        ar.ROWID ASC
                     LIMIT ?
                 )
                 DELETE FROM

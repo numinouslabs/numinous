@@ -10,7 +10,10 @@ from neurons.validator.db.operations import DatabaseOperations
 from neurons.validator.models.agent_runs import AgentRunsModel, AgentRunStatus
 from neurons.validator.models.event import EventsModel, EventStatus
 from neurons.validator.models.miner_agent import MinerAgentsModel
-from neurons.validator.models.numinous_client import AgentRunSubmission, PostAgentRunsRequestBody
+from neurons.validator.models.numinous_client import (
+    BatchUpdateAgentRunsRequest,
+    UpdateAgentRunRequest,
+)
 from neurons.validator.numinous_client.client import NuminousClient
 from neurons.validator.tasks.export_agent_runs import ExportAgentRuns
 from neurons.validator.utils.logger.logger import NuminousLogger
@@ -115,19 +118,13 @@ class TestExportAgentRuns:
 
         payload = export_agent_runs_task.prepare_runs_payload(db_runs)
 
-        assert isinstance(payload, PostAgentRunsRequestBody)
+        assert isinstance(payload, BatchUpdateAgentRunsRequest)
         assert len(payload.runs) == 1
 
         run = payload.runs[0]
-        assert isinstance(run, AgentRunSubmission)
+        assert isinstance(run, UpdateAgentRunRequest)
         assert run.run_id == UUID("123e4567-e89b-12d3-a456-426614174000")
-        assert run.miner_uid == 10
-        assert run.miner_hotkey == "miner_hotkey_1"
-        assert run.vali_uid == 5
-        assert run.vali_hotkey == "validator_hotkey_test"
         assert run.status == "SUCCESS"
-        assert run.event_id == "event_123"
-        assert run.version_id == UUID("223e4567-e89b-12d3-a456-426614174001")
         assert run.is_final is True
 
     def test_prepare_runs_payload_multiple_runs(self, export_agent_runs_task: ExportAgentRuns):
@@ -179,19 +176,13 @@ class TestExportAgentRuns:
 
     async def test_export_runs_to_backend(self, export_agent_runs_task: ExportAgentRuns):
         unit = export_agent_runs_task
-        unit.api_client.post_agent_runs = AsyncMock(return_value=True)
+        unit.api_client.put_agent_runs = AsyncMock(return_value=None)
 
-        dummy_payload = PostAgentRunsRequestBody(
+        dummy_payload = BatchUpdateAgentRunsRequest(
             runs=[
-                AgentRunSubmission(
+                UpdateAgentRunRequest(
                     run_id=UUID("923e4567-e89b-12d3-a456-426614174008"),
-                    miner_uid=1,
-                    miner_hotkey="miner_hotkey",
-                    vali_uid=5,
-                    vali_hotkey="validator_hotkey_test",
                     status="SUCCESS",
-                    event_id="event_export",
-                    version_id=UUID("a23e4567-e89b-12d3-a456-426614174009"),
                     is_final=True,
                 )
             ]
@@ -203,8 +194,8 @@ class TestExportAgentRuns:
             extra={"n_runs": 1},
         )
 
-        assert unit.api_client.post_agent_runs.call_count == 1
-        assert unit.api_client.post_agent_runs.call_args.kwargs["body"] == dummy_payload
+        assert unit.api_client.put_agent_runs.call_count == 1
+        assert unit.api_client.put_agent_runs.call_args.kwargs["body"] == dummy_payload
 
     async def test_run_no_unexported_runs(self, export_agent_runs_task: ExportAgentRuns):
         export_agent_runs_task.api_client = AsyncMock(spec=NuminousClient)
@@ -212,7 +203,7 @@ class TestExportAgentRuns:
         await export_agent_runs_task.run()
 
         export_agent_runs_task.logger.debug.assert_any_call("No unexported runs to export")
-        export_agent_runs_task.api_client.post_agent_runs.assert_not_called()
+        export_agent_runs_task.api_client.put_agent_runs.assert_not_called()
 
     async def test_run_with_unexported_runs(
         self,
@@ -221,7 +212,7 @@ class TestExportAgentRuns:
         db_client: DatabaseClient,
     ):
         unit = export_agent_runs_task
-        unit.api_client.post_agent_runs = AsyncMock(return_value=True)
+        unit.api_client.put_agent_runs = AsyncMock(return_value=None)
 
         await self._create_event(db_operations, "event_1")
         await self._create_event(db_operations, "event_2")
@@ -259,17 +250,15 @@ class TestExportAgentRuns:
 
         await unit.run()
 
-        unit.api_client.post_agent_runs.assert_called_once()
-        call_args = unit.api_client.post_agent_runs.call_args.kwargs
+        unit.api_client.put_agent_runs.assert_called_once()
+        call_args = unit.api_client.put_agent_runs.call_args.kwargs
         payload = call_args["body"]
 
         assert len(payload.runs) == 2
         assert payload.runs[0].run_id == UUID("b23e4567-e89b-12d3-a456-42661417400a")
-        assert payload.runs[0].miner_uid == 10
         assert payload.runs[0].status == "SUCCESS"
         assert payload.runs[0].is_final is True
         assert payload.runs[1].run_id == UUID("d23e4567-e89b-12d3-a456-42661417400c")
-        assert payload.runs[1].miner_uid == 20
         assert payload.runs[1].status == "SANDBOX_TIMEOUT"
         assert payload.runs[1].is_final is False
 
@@ -285,7 +274,7 @@ class TestExportAgentRuns:
         db_client: DatabaseClient,
     ):
         unit = export_agent_runs_task
-        unit.api_client.post_agent_runs = AsyncMock(side_effect=Exception("Simulated failure"))
+        unit.api_client.put_agent_runs = AsyncMock(side_effect=Exception("Simulated failure"))
 
         await self._create_event(db_operations, "event_error")
         await self._create_miner_agent(

@@ -1,5 +1,9 @@
 # Release Notes
 
+## [2.0.5] - 2025-12-16
+- **Weights**: SetWeights to handle SubstrateRequestException - open subscriptions
+- **Events**: Pull events from validator protected endpoint
+
 ## [2.0.4] - 2025-12-08
 - **Weights**: SetWeights task now fetches latest weights from backend API
 - **Database**: Migration to backfill agent runs from validator predictions

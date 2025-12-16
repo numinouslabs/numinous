@@ -132,6 +132,8 @@ async def main():
         max_concurrent_sandboxes=config.get("sandbox", {}).get("max_concurrent", 50),
         timeout_seconds=config.get("sandbox", {}).get("timeout_seconds", 180),
         sync_hour=validator_sync_hour,
+        validator_uid=validator_uid,
+        validator_hotkey=validator_hotkey,
     )
 
     export_predictions_task = ExportPredictions(

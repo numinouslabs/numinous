@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import numpy as np
 import pandas as pd
 import pytest
-import torch
 from freezegun import freeze_time
 
 from neurons.validator.db.client import DatabaseClient
@@ -46,7 +45,7 @@ class TestScoring:
         metagraph.sync = AsyncMock()
 
         # Mock metagraph attributes
-        metagraph.uids = torch.tensor([1, 2, 3], dtype=torch.int32).to("cpu")
+        metagraph.uids = np.array([1, 2, 3], dtype=np.int64)
         metagraph.hotkeys = ["hotkey1", "hotkey2", "hotkey3"]
 
         logger = MagicMock(spec=NuminousLogger)
@@ -62,7 +61,7 @@ class TestScoring:
     async def test_metagraph_lite_sync(self, scoring_task: Scoring):
         unit = scoring_task
 
-        unit.metagraph.uids = torch.tensor([1, 2, 3, 4], dtype=torch.int32)
+        unit.metagraph.uids = np.array([1, 2, 3, 4], dtype=np.int64)
         unit.metagraph.hotkeys = ["hotkey1", "hotkey2", "hotkey3", "hotkey4"]
 
         await unit.metagraph_lite_sync()
@@ -1086,7 +1085,7 @@ class TestScoring:
         await unit.run()
 
         # Assert sync metagraph loads the data
-        assert torch.equal(unit.current_uids, torch.tensor([1, 2, 3], dtype=torch.int32))
+        np.testing.assert_array_equal(unit.current_uids, np.array([1, 2, 3], dtype=np.int64))
         assert unit.current_hotkeys == ["hotkey1", "hotkey2", "hotkey3"]
         assert unit.n_hotkeys == 3
         assert unit.interval_seconds == 60.0

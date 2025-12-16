@@ -221,19 +221,19 @@ class TestPullEventsTask:
         # Mock API response
         with aioresponses() as mocked:
             mocked.get(
-                "/api/v2/events?from_date=0&offset=0&limit=1",
+                "/api/v1/validators/events?from_date=0&offset=0&limit=1",
                 status=200,
                 body=json.dumps(mock_response_data_1).encode("utf-8"),
             )
 
             mocked.get(
-                "/api/v2/events?from_date=0&offset=1&limit=1",
+                "/api/v1/validators/events?from_date=0&offset=1&limit=1",
                 status=200,
                 body=json.dumps(mock_response_data_2).encode("utf-8"),
             )
 
             mocked.get(
-                "/api/v2/events?from_date=0&offset=2&limit=1",
+                "/api/v1/validators/events?from_date=0&offset=2&limit=1",
                 status=200,
                 body=json.dumps(mock_response_data_3).encode("utf-8"),
             )
@@ -314,25 +314,25 @@ class TestPullEventsTask:
         # Mock API response
         with aioresponses() as mocked:
             mocked.get(
-                "/api/v2/events?from_date=0&offset=0&limit=1",
+                "/api/v1/validators/events?from_date=0&offset=0&limit=1",
                 status=200,
                 body=json.dumps(mock_response_data_1).encode("utf-8"),
             )
 
             mocked.get(
-                "/api/v2/events?from_date=0&offset=1&limit=1",
+                "/api/v1/validators/events?from_date=0&offset=1&limit=1",
                 status=200,
                 body=json.dumps(mock_response_data_2).encode("utf-8"),
             )
 
             mocked.get(
-                f"/api/v2/events?from_date={from_last}&offset=0&limit=1",
+                f"/api/v1/validators/events?from_date={from_last}&offset=0&limit=1",
                 status=200,
                 body=json.dumps(mock_response_data_3).encode("utf-8"),
             )
 
             mocked.get(
-                f"/api/v2/events?from_date={from_last}&offset=1&limit=1",
+                f"/api/v1/validators/events?from_date={from_last}&offset=1&limit=1",
                 status=200,
                 body=json.dumps(mock_response_data_4).encode("utf-8"),
             )
