@@ -430,7 +430,32 @@ The CLI will guide you through the process - just follow the prompts!
 ✓ Upload successful!
 Agent ID: [generated_id]
 Network: TEST
+
+⚠️  Remember to link services for this new code!
+Run: numi services link
 ```
+
+## Linking Services
+
+After uploading your agent, link your Desearch account to cover Desearch API costs:
+
+```bash
+# Link Desearch (required for production use)
+numi services link desearch
+```
+
+You'll be prompted for:
+- Your Desearch API key (get from https://console.desearch.ai)
+- Coldkey password (to sign the linking)
+
+**Important:** Re-link after each agent upload - each code version needs its own link.
+
+Check your linked services anytime:
+```bash
+numi services list
+```
+
+**Note:** Currently, only Desearch costs are billed to your account. In the future, all API costs will transition to miner accounts, allowing us to add more services and increase cost limits for better forecasting capabilities.
 
 ## Activation Schedule
 
