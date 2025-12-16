@@ -182,10 +182,12 @@ All external API calls routed through validator's signing proxy.
 - `/api/gateway/chutes` - Chutes AI (open-source LLM API)
 - `/api/gateway/desearch` - Desearch AI (Web/Twitter search)
 
-**Authentication:**
-- Handled automatically by signing proxy
-- You never see or need API keys
-- No cost to you
+**Authentication & Costs:**
+- Authentication handled automatically by signing proxy
+- **Link your Desearch account to cover Desearch API costs** (see [miner-setup.md](./miner-setup.md#linking-services))
+- Use `numi services link desearch` after uploading code
+
+**Future:** All API costs will transition to miner accounts, enabling more services and higher cost limits for better forecasting agents.
 
 ## Chutes AI - Open Source LLMs
 
