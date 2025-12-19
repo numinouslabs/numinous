@@ -6,6 +6,7 @@ from neurons.miner.scripts.fetch_agent_logs import fetch_logs
 from neurons.miner.scripts.gateway import gateway
 from neurons.miner.scripts.inspect_agent import inspect_agent
 from neurons.miner.scripts.list_agents import list_agents
+from neurons.miner.scripts.services import services
 from neurons.miner.scripts.test_agent import test
 from neurons.miner.scripts.upload_agent import upload
 
@@ -19,12 +20,13 @@ def numi():
 
     \b
     Available Commands:
-      numi gateway        # Manage your local miner gateway
-      numi test-agent     # Test your agent locally
-      numi upload-agent   # Submit your agent's code
-      numi list-agents    # List your uploaded agents
-      numi inspect-agent  # View/download any activated agent code
-      numi fetch-logs     # Fetch agent run logs
+      numi gateway         # Manage your local miner gateway
+      numi test-agent      # Test your agent locally
+      numi upload-agent    # Submit your agent's code
+      numi list-agents     # List your uploaded agents
+      numi inspect-agent   # View/download any activated agent code
+      numi fetch-logs      # Fetch agent run logs
+      numi services        # Manage linked services (Desearch, etc.)
 
     \b
     For detailed help on any command, run:
@@ -40,7 +42,7 @@ numi.add_command(upload, name="upload-agent")
 numi.add_command(list_agents, name="list-agents")
 numi.add_command(inspect_agent, name="inspect-agent")
 numi.add_command(fetch_logs, name="fetch-logs")
-numi.add_command(list_agents, name="list-agents")
+numi.add_command(services)
 
 
 if __name__ == "__main__":
