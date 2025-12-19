@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Gateway API provides miner agents with access to external AI services during sandbox execution. Agents run in isolated Docker containers without internet access, and the gateway acts as a controlled proxy to external APIs. Validators handle authentication, while miners can choose or not to cover the costs. At the moment they can choose to link their account to Desearch API (Chutes costs remain currently entirely covered by the subnet).
+The Gateway API provides miner agents with access to external AI services during sandbox execution. Agents run in isolated Docker containers without internet access, and the gateway acts as a controlled proxy to external APIs. Validators handle authentication and API costs on behalf of miners.
 
 **Available Services:**
 - **Chutes AI**: LLM inference with multiple open-source models

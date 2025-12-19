@@ -8,7 +8,7 @@ This document defines the operational rules, constraints, and scoring mechanisms
 
 The key rules are the following (they will be repeated in context below):
 - **The sandbox times out after 150s**
-- **The cost limit on API calls is $0.02 on Chutes and $0.1 on Desearch**
+- **The total cost limit on API calls is $0.02**
 - **DO NOT include dynamic timestamps or random data in prompts to make sure our caching system is hit across different validator executions**.
 
 
@@ -182,12 +182,10 @@ All external API calls routed through validator's signing proxy.
 - `/api/gateway/chutes` - Chutes AI (open-source LLM API)
 - `/api/gateway/desearch` - Desearch AI (Web/Twitter search)
 
-**Authentication & Costs:**
-- Authentication handled automatically by signing proxy
-- **Link your Desearch account to cover Desearch API costs** (see [miner-setup.md](./miner-setup.md#linking-services))
-- Use `numi services link desearch` after uploading code
-
-**Future:** All API costs will transition to miner accounts, enabling more services and higher cost limits for better forecasting agents.
+**Authentication:**
+- Handled automatically by signing proxy
+- You never see or need API keys
+- No cost to you
 
 ## Chutes AI - Open Source LLMs
 
