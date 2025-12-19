@@ -1,5 +1,6 @@
 import json
 import typing
+from getpass import getpass
 from pathlib import Path
 
 import click
@@ -69,6 +70,27 @@ def load_keypair(wallet_name: str, hotkey_name: str, wallet_path: typing.Optiona
                 continue
 
     return None
+
+
+def load_coldkey(wallet_name: str, wallet_path: typing.Optional[Path] = None):
+    from bittensor_wallet import Wallet
+
+    if wallet_path is None:
+        wallet_dir = Path.home() / ".bittensor" / "wallets"
+    else:
+        wallet_dir = wallet_path
+
+    wallet = Wallet(name=wallet_name, path=str(wallet_dir))
+    console.print()
+    password = getpass("Enter coldkey password: ")
+    console.print()
+
+    try:
+        keypair = wallet.get_coldkey(password)
+        return keypair
+    except Exception as e:
+        console.print(f"[red]✗[/red] Failed to load coldkey: {e}")
+        return None
 
 
 def prompt_wallet_selection(wallet_path: typing.Optional[Path] = None) -> tuple[str, str]:

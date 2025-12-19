@@ -8,7 +8,7 @@ This document defines the operational rules, constraints, and scoring mechanisms
 
 The key rules are the following (they will be repeated in context below):
 - **The sandbox times out after 150s**
-- **The cost limit on API calls is $0.02 on Chutes and $0.1 on Desearch**
+- **The total cost limit on API calls is $0.02**
 - **DO NOT include dynamic timestamps or random data in prompts to make sure our caching system is hit across different validator executions**.
 
 

@@ -269,7 +269,9 @@ def upload(
                     Panel.fit(
                         f"[bold green]✓ Upload successful![/bold green]\n\n"
                         f"[dim]Agent ID:[/dim] [cyan]{result.get('version_id', 'N/A')}[/cyan]\n"
-                        f"[dim]Network:[/dim] [yellow]{env.upper()}[/yellow]",
+                        f"[dim]Network:[/dim] [yellow]{env.upper()}[/yellow]\n\n"
+                        f"[yellow]⚠️  Remember to link services for this new code![/yellow]\n"
+                        f"[cyan]Run: numi services link[/cyan]",
                         border_style="green",
                         padding=(1, 2),
                     )
