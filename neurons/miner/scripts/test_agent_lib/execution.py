@@ -2,6 +2,8 @@ import asyncio
 import time
 import uuid
 from pathlib import Path
+import os
+import platform
 
 from bittensor_wallet import Wallet
 from rich.console import Console
@@ -13,9 +15,25 @@ from neurons.validator.utils.logger.logger import NuminousLogger
 
 console = Console()
 
+def is_wsl() -> bool:
+    return (
+        "WSL_DISTRO_NAME" in os.environ
+        or "microsoft" in platform.release().lower()
+        or "microsoft" in open("/proc/version", "r").read().lower()
+    )
 
 def get_gateway_url() -> str:
-    return "http://host.docker.internal:8000"
+    if is_wsl():
+        # WSL + Docker Desktop
+        return "http://host.docker.internal:8000/"
+    
+    system = platform.system()
+    if system == "Linux":
+        # Native Linux Docker
+        return "http://172.17.0.1:8000/"
+    
+    # Windows / macOS Docker Desktop
+    return "http://host.docker.internal:8000/"
 
 
 GATEWAY_URL = get_gateway_url()
