@@ -18,7 +18,6 @@ from neurons.validator.tasks.export_agent_run_logs import ExportAgentRunLogs
 from neurons.validator.tasks.export_agent_runs import ExportAgentRuns
 from neurons.validator.tasks.export_predictions import ExportPredictions
 from neurons.validator.tasks.export_scores import ExportScores
-from neurons.validator.tasks.metagraph_scoring import MetagraphScoring
 from neurons.validator.tasks.pull_agents import PullAgents
 from neurons.validator.tasks.pull_events import PullEvents
 from neurons.validator.tasks.resolve_events import ResolveEvents
@@ -54,8 +53,9 @@ async def main():
     bt_netuid = config.get("netuid")
     bt_network = config.get("subtensor").get("network")
     bt_wallet = Wallet(config=config)
-    bt_subtensor = AsyncSubtensor(config=config)
-    bt_metagraph = IfMetagraph(netuid=bt_netuid, network=bt_network)
+    bt_metagraph = IfMetagraph(
+        netuid=bt_netuid, network=bt_network, subtensor=AsyncSubtensor(config=config)
+    )
 
     # Sync metagraph for reading validator info
     await bt_metagraph.sync()
@@ -154,14 +154,6 @@ async def main():
         page_size=100,
     )
 
-    metagraph_scoring_task = MetagraphScoring(
-        interval_seconds=347.0,
-        db_operations=db_operations,
-        page_size=1000,
-        logger=logger,
-        metagraph=bt_metagraph,
-    )
-
     export_scores_task = ExportScores(
         interval_seconds=373.0,
         page_size=500,
@@ -196,7 +188,8 @@ async def main():
         logger=logger,
         metagraph=bt_metagraph,
         netuid=bt_netuid,
-        subtensor=bt_subtensor,
+        # Create own subtensor instance
+        subtensor=AsyncSubtensor(config=config),
         wallet=bt_wallet,
         api_client=numinous_api_client,
     )
@@ -225,7 +218,6 @@ async def main():
     scheduler.add(task=export_agent_runs_task)
     scheduler.add(task=export_agent_run_logs_task)
     scheduler.add(task=scoring_task)
-    scheduler.add(task=metagraph_scoring_task)
     scheduler.add(task=export_scores_task)
     scheduler.add(task=set_weights_task)
     scheduler.add(task=db_cleaner_task)

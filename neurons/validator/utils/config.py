@@ -1,5 +1,6 @@
 import argparse
 import logging
+import platform
 from pathlib import Path
 from typing import Literal
 from unittest.mock import ANY
@@ -107,9 +108,14 @@ def get_config():
 
     gateway_url = config.get("backend", {}).get("gateway_url")
     if not gateway_url:
-        gateway_url = (
-            "https://numinous.earth" if env == "prod" else "http://host.docker.internal:8000"
-        )
+        if env == "prod":
+            gateway_url = "https://numinous.earth"
+        else:
+            gateway_url = (
+                "http://172.17.0.1:8000"
+                if platform.system() == "Linux"
+                else "http://host.docker.internal:8000"
+            )
 
     logging_level: int = logging.WARNING
     if logging_trace or logging_debug:

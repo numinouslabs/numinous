@@ -1,4 +1,5 @@
 import asyncio
+import platform
 import time
 import uuid
 from pathlib import Path
@@ -15,7 +16,11 @@ console = Console()
 
 
 def get_gateway_url() -> str:
-    return "http://host.docker.internal:8000"
+    return (
+        "http://172.17.0.1:8000"
+        if platform.system() == "Linux"
+        else "http://host.docker.internal:8000"
+    )
 
 
 GATEWAY_URL = get_gateway_url()

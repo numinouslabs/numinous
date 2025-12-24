@@ -42,7 +42,7 @@ class TestDbCleanerTask:
             db_operations_mock.delete_reasonings.assert_awaited_once_with(batch_size)
             db_operations_mock.delete_agent_run_logs.assert_awaited_once_with(batch_size)
             db_operations_mock.delete_agent_runs.assert_awaited_once_with(batch_size)
-            db_operations_mock.delete_events_hard_delete.assert_awaited_once_with(batch_size)
+            db_operations_mock.delete_events_hard_delete.assert_not_awaited()
 
             logger_mock.debug.assert_has_calls(
                 [
@@ -51,7 +51,7 @@ class TestDbCleanerTask:
                     call("Reasonings deleted", extra={"deleted_count": 3}),
                     call("Agent run logs deleted", extra={"deleted_count": 2}),
                     call("Agent runs deleted", extra={"deleted_count": 3}),
-                    call("Events hard deleted", extra={"deleted_count": 5}),
+                    # call("Events hard deleted", extra={"deleted_count": 5}),
                 ]
             )
 
@@ -85,7 +85,7 @@ class TestDbCleanerTask:
             db_operations_mock.delete_reasonings.assert_awaited_once_with(batch_size)
             db_operations_mock.delete_agent_run_logs.assert_awaited_once_with(batch_size)
             db_operations_mock.delete_agent_runs.assert_awaited_once_with(batch_size)
-            db_operations_mock.delete_events_hard_delete.assert_awaited_once_with(batch_size)
+            db_operations_mock.delete_events_hard_delete.assert_not_awaited()
             logger_mock.debug.assert_not_called()
 
             # Sleep called between each delete

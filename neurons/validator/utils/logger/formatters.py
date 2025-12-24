@@ -1,5 +1,6 @@
 import json
 import logging
+import traceback
 
 from colorama import Back, Fore, Style
 
@@ -47,11 +48,23 @@ class JSONFormatter(logging.Formatter):
         if record.exc_info:
             log_record["exception"] = self.formatException(record.exc_info)
 
-        # If inline logs, return the JSON string, un-indented and without colors
-        if ENVIRONMENT_VARIABLES.INLINE_LOGS:
-            return json.dumps(log_record)
+        indent = None if ENVIRONMENT_VARIABLES.INLINE_LOGS else 2
 
-        json_str = json.dumps(log_record, indent=2)
+        try:
+            json_str = json.dumps(log_record, indent=indent)
+        except BaseException:
+            log_record.pop("data", None)
+
+            log_record["level"] = "ERROR"
+            log_record["original_message"] = log_record["message"]
+            log_record["message"] = "Log serialization failed"
+            log_record["serialization_error"] = traceback.format_exc()
+
+            json_str = json.dumps(log_record, indent=indent)
+
+        if ENVIRONMENT_VARIABLES.INLINE_LOGS:
+            # If inline logs, return the JSON string, un-indented and without colors
+            return json_str
 
         # Add level color format
         level_color = self.COLORS.get(record.levelname, Fore.BLACK)

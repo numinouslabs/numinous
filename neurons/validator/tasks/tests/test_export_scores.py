@@ -97,9 +97,6 @@ class TestExportScores:
             miner_hotkey="hk1",
             prediction=0.95,
             event_score=0.90,
-            alternative_metagraph_score=0.7,
-            metagraph_score=1.0,
-            other_data='{"extra": "data"}',
             spec_version=1,
             created_at=now,
         )
@@ -121,7 +118,6 @@ class TestExportScores:
             miner_hotkey=score.miner_hotkey,
             miner_uid=score.miner_uid,
             miner_score=score.event_score,
-            miner_effective_score=score.metagraph_score,
             validator_hotkey=export_scores_task.validator_hotkey,
             validator_uid=export_scores_task.validator_uid,
             spec_version="1039",
@@ -129,8 +125,6 @@ class TestExportScores:
             scored_at=score.created_at,
         )
 
-        # score.other_data is not included in the payload; also dates nullified
-        score.other_data = None
         score.spec_version = 1040
 
         payload = export_scores_task.prepare_scores_payload(event, [score])
@@ -152,7 +146,6 @@ class TestExportScores:
                         "miner_hotkey": "miner_hotkey",
                         "miner_uid": 1,
                         "miner_score": 1,
-                        "miner_effective_score": 1,
                         "validator_hotkey": "validator_hotkey",
                         "validator_uid": 2,
                         "spec_version": "1.3.3",
@@ -214,12 +207,6 @@ class TestExportScores:
         )
 
         await db_operations.insert_scores([score])
-        await db_client.update(
-            "UPDATE scores SET processed = ?",
-            [
-                1,
-            ],
-        )
         unit.db_operations.get_scores_for_export = AsyncMock(return_value=[])
 
         await unit.run()
@@ -254,13 +241,6 @@ class TestExportScores:
         )
 
         await db_operations.insert_scores([score])
-
-        await db_client.update(
-            "UPDATE scores SET processed = ?",
-            [
-                1,
-            ],
-        )
         unit.prepare_scores_payload = MagicMock(return_value=None)
 
         await unit.run()
@@ -297,13 +277,6 @@ class TestExportScores:
         )
 
         await db_operations.insert_scores([score])
-        await db_client.update(
-            "UPDATE scores SET processed = ?, metagraph_score = ?",
-            [
-                1,
-                1.0,
-            ],
-        )
 
         await unit.run()
         unit.logger.exception.assert_called_with(
@@ -351,13 +324,6 @@ class TestExportScores:
         score_3.event_id = event_2.event_id
 
         await db_operations.insert_scores([score_1, score_2, score_3])
-        await db_client.update(
-            "UPDATE scores SET  processed = ?, metagraph_score = ?",
-            [
-                1,
-                1.0,
-            ],
-        )
 
         await unit.run()
         updated_scores = await db_client.many(

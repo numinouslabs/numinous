@@ -103,7 +103,6 @@ class MinerScore(BaseModel):
     miner_hotkey: str
     miner_uid: int
     miner_score: float
-    miner_effective_score: float
     validator_hotkey: str
     validator_uid: int
     spec_version: typing.Optional[str] = "0.0.0"

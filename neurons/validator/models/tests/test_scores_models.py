@@ -22,10 +22,7 @@ class TestScoresModel:
         assert model.prediction == 0.75
         assert model.event_score == 0.85
         # Defaults
-        assert model.metagraph_score is None
-        assert model.other_data is None
         assert model.created_at is None
-        assert model.processed is False
         assert model.exported is False
 
     def test_create_full(self):
@@ -36,11 +33,8 @@ class TestScoresModel:
             miner_hotkey="hk2",
             prediction=0.95,
             event_score=0.90,
-            metagraph_score=0.88,
-            other_data="extra",
             created_at=dt,
             spec_version=2,
-            processed=True,
             exported=True,
         )
         assert model.event_id == "evt002"
@@ -48,31 +42,9 @@ class TestScoresModel:
         assert model.miner_hotkey == "hk2"
         assert model.prediction == 0.95
         assert model.event_score == 0.90
-        assert model.metagraph_score == 0.88
-        assert model.other_data == "extra"
         assert model.created_at == dt
         assert model.spec_version == 2
-        assert model.processed is True
         assert model.exported is True
-
-    @pytest.mark.parametrize(
-        "processed_input, expected",
-        [
-            (1, True),
-            (0, False),
-        ],
-    )
-    def test_processed_int_to_bool(self, processed_input, expected):
-        model = ScoresModel(
-            event_id="evt003",
-            miner_uid=3,
-            miner_hotkey="hk3",
-            prediction=0.80,
-            event_score=0.82,
-            spec_version=1,
-            processed=processed_input,
-        )
-        assert model.processed is expected
 
     @pytest.mark.parametrize(
         "exported_input, expected",

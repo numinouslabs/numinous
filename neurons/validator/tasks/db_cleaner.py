@@ -99,6 +99,9 @@ class DbCleaner(AbstractTask):
 
         await asyncio.sleep(1)
 
+        if 2 > 1:
+            return  # Temporarily disable event hard deletion
+
         # Delete events
         deleted_events = await self.db_operations.delete_events_hard_delete(self.batch_size)
 

@@ -10,7 +10,6 @@ from neurons.validator.main import main
 @patch("neurons.validator.main.PullAgents", spec=True)
 @patch("neurons.validator.main.SetWeights", spec=True)
 @patch("neurons.validator.main.ExportScores", spec=True)
-@patch("neurons.validator.main.MetagraphScoring", spec=True)
 @patch("neurons.validator.main.Scoring", spec=True)
 @patch("neurons.validator.main.ExportAgentRunLogs", spec=True)
 @patch("neurons.validator.main.ExportAgentRuns", spec=True)
@@ -29,7 +28,6 @@ class TestValidatorMain:
         mock_export_agent_runs,
         mock_export_agent_run_logs,
         mock_peer_scoring,
-        mock_metagraph_scoring,
         mock_export_scores,
         mock_set_weights,
         mock_pull_agents,
@@ -118,7 +116,7 @@ class TestValidatorMain:
             mock_measure_event_loop_lag.assert_awaited_once()
 
             # Verify tasks added count
-            assert mock_scheduler.add.call_count == 15
+            assert mock_scheduler.add.call_count == 14
 
             # Verify logging
             mock_logger.info.assert_called_with(

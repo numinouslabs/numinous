@@ -16,15 +16,9 @@ class ScoresModel(BaseModel):
     miner_hotkey: str
     prediction: float
     event_score: float
-    metagraph_score: Optional[float] = None
-    other_data: Optional[str] = None
     created_at: Optional[datetime] = None
     spec_version: int
-    processed: Optional[bool] = False
     exported: Optional[bool] = False
-    alternative_metagraph_score: Optional[float] = None
-    alternative_other_data: Optional[str] = None
-    alternative_processed: Optional[bool] = False
 
     @property
     def primary_key(self):
@@ -33,13 +27,6 @@ class ScoresModel(BaseModel):
             "miner_uid",
             "miner_hotkey",
         ]
-
-    @field_validator("processed", mode="before")
-    def parse_processed_as_bool(cls, v: Any) -> bool:
-        # If the DB returns an integer, convert it to boolean
-        if isinstance(v, int):
-            return bool(v)
-        return v
 
     @field_validator("exported", mode="before")
     def parse_exported_as_bool(cls, v: Any) -> bool:

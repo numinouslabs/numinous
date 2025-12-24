@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import Iterable, Optional, Type, TypeVar
 
 from pydantic import BaseModel
@@ -26,9 +25,6 @@ from neurons.validator.models.prediction import (
 from neurons.validator.models.reasoning import REASONING_FIELDS, ReasoningModel
 from neurons.validator.models.score import SCORE_FIELDS, ScoresExportedStatus, ScoresModel
 from neurons.validator.utils.logger.logger import NuminousLogger
-
-SQL_FOLDER = Path(Path(__file__).parent, "sql")
-
 
 GenericModel = TypeVar("GenericModel", bound=BaseModel)
 
@@ -59,9 +55,7 @@ class DatabaseOperations:
                 if throw_on_error:
                     raise e
 
-                self.logger.exception(
-                    "Error parsing model", extra={"row": row, "model": model.__name__}
-                )
+                self.logger.exception("Error parsing model", extra={"model": model.__name__})
 
         return parsed_rows
 
@@ -836,65 +830,6 @@ class DatabaseOperations:
             parameters=score_tuples,
         )
 
-    async def get_events_for_metagraph_scoring(self, max_events: int = 1000) -> list[dict]:
-        """
-        Returns all events that were recently peer scored and not processed.
-        These events need to be ordered by row_id for the moving average calculation.
-        """
-
-        rows = await self.__db_client.many(
-            """
-                SELECT
-                    event_id,
-                    MIN(ROWID) AS min_row_id
-                FROM scores
-                WHERE processed = false
-                GROUP BY event_id
-                ORDER BY min_row_id ASC
-                LIMIT ?
-            """,
-            use_row_factory=True,
-            parameters=[
-                max_events,
-            ],
-        )
-
-        events = []
-        for row in rows:
-            try:
-                event = dict(row)
-                events.append(event)
-            except Exception:
-                self.logger.exception("Error parsing event", extra={"row": row})
-        return events
-
-    async def set_metagraph_scores(
-        self,
-        event_id: str,
-        n_events: int,
-        burn_weight: float,
-        winner_weight: float,
-        decay_power: float,
-        burn_uid: int,
-    ) -> list:
-        """
-        Calculate the moving average of metagraph scores for a given event
-        """
-        raw_sql = Path(SQL_FOLDER, "metagraph_score.sql").read_text()
-        updated = await self.__db_client.update(
-            raw_sql,
-            parameters={
-                "event_id": event_id,
-                "n_events": n_events,
-                "burn_weight": burn_weight,
-                "winner_weight": winner_weight,
-                "decay_power": decay_power,
-                "burn_uid": burn_uid,
-            },
-        )
-
-        return updated
-
     async def get_scored_events_for_export(self, max_events: int = 1000) -> list[EventsModel]:
         """
         Get scored events that have not been exported
@@ -907,8 +842,7 @@ class DatabaseOperations:
                         event_id,
                         MIN(ROWID) AS min_row_id
                     FROM scores
-                    WHERE processed = 1
-                        AND exported = ?
+                    WHERE exported = ?
                     GROUP BY event_id
                     ORDER BY min_row_id ASC
                     LIMIT ?
@@ -933,7 +867,6 @@ class DatabaseOperations:
     async def get_scores_for_export(self, event_id: str) -> list:
         """
         Get scores for a given event
-        Processed has to be true, to guarantee that metagraph score is set
         """
         rows = await self.__db_client.many(
             f"""
@@ -941,7 +874,7 @@ class DatabaseOperations:
                     {', '.join(SCORE_FIELDS)}
                 FROM scores
                 WHERE event_id = ?
-                    AND processed = 1
+                    AND exported = 0
             """,
             parameters=[event_id],
             use_row_factory=True,
@@ -967,65 +900,8 @@ class DatabaseOperations:
             ),
         )
 
-    async def get_last_metagraph_scores(self) -> list:
-        """
-        Returns metagraph_scores for all miners from the SINGLE latest processed event.
-        This ensures all miners are scored from the same ranking, preserving winner-take-all.
-        """
-        rows = await self.__db_client.many(
-            f"""
-                WITH latest_event AS (
-                    SELECT event_id
-                    FROM scores
-                    WHERE processed = 1
-                        AND created_at > datetime(CURRENT_TIMESTAMP, '-10 day')
-                    ORDER BY ROWID DESC
-                    LIMIT 1
-                )
-                SELECT
-                    {', '.join(SCORE_FIELDS)}
-                FROM scores s
-                WHERE s.event_id = (SELECT event_id FROM latest_event)
-            """,
-            use_row_factory=True,
-        )
-
-        scores = self._parse_rows(model=ScoresModel, rows=rows)
-
-        return scores
-
     async def vacuum_database(self, pages: int):
         await self.__db_client.script(f"PRAGMA incremental_vacuum({pages})")
-
-    async def get_wa_predictions_events(
-        self, unique_event_ids: list[str], interval_start_minutes: int
-    ) -> dict[str, None | float]:
-        """
-        Retrieve the weighted average of the latest predictions for the given events
-        """
-        raw_sql_template = Path(SQL_FOLDER, "latest_predictions_events.sql").read_text()
-
-        # Dynamically create named parameters for the IN clause
-        unique_event_params = {
-            f"unique_event_id_{i}": uid for i, uid in enumerate(unique_event_ids)
-        }
-        in_clause = ", ".join(f":unique_event_id_{i}" for i in range(len(unique_event_ids)))
-        raw_sql = raw_sql_template.replace(":unique_event_ids", in_clause)
-
-        rows = await self.__db_client.many(
-            raw_sql,
-            parameters={
-                **unique_event_params,
-                "interval_start_minutes": interval_start_minutes,
-            },
-        )
-
-        return {
-            unique_event_id: (
-                float(weighted_avg_prediction) if weighted_avg_prediction is not None else None
-            )
-            for unique_event_id, weighted_avg_prediction in rows
-        }
 
     async def get_last_agent_pulled_at(self) -> str | None:
         row = await self.__db_client.one(

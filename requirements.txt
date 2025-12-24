@@ -5,7 +5,7 @@ alembic==1.14.1
 anthropic==0.28.0
 backoff==2.2.1
 bittensor-cli==9.14.3
-bittensor==9.12.2
+bittensor==10.0.0
 docker~=7.1.0
 fastapi==0.110.3
 forecasting-tools==0.2.12

@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import os
+from datetime import datetime, timezone
 
 import httpx
 from aiohttp import web
@@ -39,6 +40,13 @@ class AsyncValidatorSigningProxy:
             forward_headers["Validator"] = self.wallet.hotkey.ss58_address
             forward_headers["Validator-Public-Key"] = self.wallet.hotkey.public_key.hex()
             forward_headers["Validator-Version"] = os.environ.get("VALIDATOR_VERSION", "unknown")
+
+            if request.path.startswith("/api/gateway/desearch/"):
+                timestamp = datetime.now(timezone.utc).isoformat()
+                timestamp_signature = self.wallet.hotkey.sign(timestamp.encode("utf-8"))
+                forward_headers["X-Validator-Hotkey"] = self.wallet.hotkey.ss58_address
+                forward_headers["X-Validator-Signature"] = timestamp_signature.hex()
+                forward_headers["X-Validator-Timestamp"] = timestamp
 
             if body:
                 forward_headers["Content-Length"] = str(len(body))

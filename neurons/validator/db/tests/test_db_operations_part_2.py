@@ -1,12 +1,9 @@
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
 from neurons.validator.db.client import DatabaseClient
 from neurons.validator.db.operations import DatabaseOperations
 from neurons.validator.db.tests.test_utils import TestDbOperationsBase
 from neurons.validator.models.event import EventsModel, EventStatus
-from neurons.validator.models.prediction import PredictionsModel
 from neurons.validator.models.score import SCORE_FIELDS, ScoresExportedStatus, ScoresModel
 
 
@@ -17,7 +14,7 @@ class TestDbOperationsPart2(TestDbOperationsBase):
 
         now = datetime.now(timezone.utc)
 
-        # For export_event, we want processed=1 and exported=0.
+        # For export_event, we want exported=0.
         score_export = ScoresModel(
             event_id=export_event_id,
             miner_uid=1,
@@ -38,12 +35,12 @@ class TestDbOperationsPart2(TestDbOperationsBase):
 
         await db_operations.insert_scores([score_export, score_non_export])
         await db_client.update(
-            "UPDATE scores SET processed = ?, exported = ?, created_at = ? WHERE event_id = ?",
-            [1, ScoresExportedStatus.NOT_EXPORTED, now.isoformat(), export_event_id],
+            "UPDATE scores SET exported = ?, created_at = ? WHERE event_id = ?",
+            [ScoresExportedStatus.NOT_EXPORTED, now.isoformat(), export_event_id],
         )
         await db_client.update(
-            "UPDATE scores SET processed = ?, exported = ?, created_at = ? WHERE event_id = ?",
-            [1, ScoresExportedStatus.EXPORTED, now.isoformat(), non_export_event_id],
+            "UPDATE scores SET exported = ?, created_at = ? WHERE event_id = ?",
+            [ScoresExportedStatus.EXPORTED, now.isoformat(), non_export_event_id],
         )
 
         # Prepare corresponding events in the events table.
@@ -73,15 +70,13 @@ class TestDbOperationsPart2(TestDbOperationsBase):
         await db_operations.upsert_events([export_event, non_export_event])
 
         raw_scores = await db_client.many(
-            "SELECT event_id, ROWID, processed, exported FROM scores ORDER BY ROWID ASC",
+            "SELECT event_id, ROWID, exported FROM scores ORDER BY ROWID ASC",
             use_row_factory=True,
         )
         assert len(raw_scores) >= 2
         assert raw_scores[0]["event_id"] == export_event_id
-        assert raw_scores[0]["processed"] == 1
         assert raw_scores[0]["exported"] == 0
         assert raw_scores[1]["event_id"] == non_export_event_id
-        assert raw_scores[1]["processed"] == 1
         assert raw_scores[1]["exported"] == 1
 
         result = await db_operations.get_scored_events_for_export(max_events=1000)
@@ -117,7 +112,6 @@ class TestDbOperationsPart2(TestDbOperationsBase):
         assert len(logged_exceptions) >= 1
         for msg, extra in logged_exceptions:
             assert "Error parsing model" in msg
-            assert "row" in extra
             assert "model" in extra
 
     async def test_get_peer_scores_for_export_basic(self, db_operations, db_client):
@@ -148,14 +142,6 @@ class TestDbOperationsPart2(TestDbOperationsBase):
             spec_version=1,
         )
         await db_operations.insert_scores([score1, score2, other_score])
-        await db_client.update(
-            "UPDATE scores SET processed = ? WHERE event_id = ?",
-            [1, event_id],
-        )
-        await db_client.update(
-            "UPDATE scores SET processed = ? WHERE event_id = ?",
-            [0, "other_event"],
-        )
 
         scores = await db_operations.get_scores_for_export(event_id)
 
@@ -163,7 +149,6 @@ class TestDbOperationsPart2(TestDbOperationsBase):
         assert len(scores) == 2
         for score in scores:
             assert score.event_id == event_id
-            assert score.processed == 1
 
     async def test_get_peer_scores_for_export_invalid_data(self, db_operations, db_client):
         # Test that the method can handle invalid data.
@@ -187,7 +172,6 @@ class TestDbOperationsPart2(TestDbOperationsBase):
         assert len(logged_exceptions) >= 1
         for msg, extra in logged_exceptions:
             assert "Error parsing model" in msg
-            assert "row" in extra
             assert "model" in extra
 
     async def test_mark_peer_scores_as_exported(self, db_operations, db_client):
@@ -229,98 +213,6 @@ class TestDbOperationsPart2(TestDbOperationsBase):
                 assert row["exported"] == 1
             else:
                 assert row["exported"] == 0
-
-    async def test_get_last_metagraph_scores(self, db_operations, db_client):
-        created_at = datetime.now(timezone.utc) - timedelta(days=1)
-
-        # Older event with some scores (should be ignored)
-        older_event_scores = [
-            ScoresModel(
-                event_id="older_event",
-                miner_uid=3,
-                miner_hotkey="hk3",
-                prediction=0.75,
-                event_score=0.80,
-                metagraph_score=0.5,  # Different score than latest
-                created_at=created_at,
-                spec_version=1,
-                processed=True,
-            ),
-        ]
-
-        # Latest event with ALL miners (this is what should be returned)
-        latest_event_scores = [
-            ScoresModel(
-                event_id="latest_event",
-                miner_uid=3,
-                miner_hotkey="hk3",
-                prediction=0.75,
-                event_score=0.10,
-                metagraph_score=0.198,  # Winner (rank 1)
-                created_at=created_at,
-                spec_version=1,
-                processed=True,
-            ),
-            ScoresModel(
-                event_id="latest_event",
-                miner_uid=4,
-                miner_hotkey="hk4",
-                prediction=0.50,
-                event_score=0.25,
-                metagraph_score=0.001,  # Rank 2
-                created_at=created_at,
-                spec_version=1,
-                processed=True,
-            ),
-            ScoresModel(
-                event_id="latest_event",
-                miner_uid=5,
-                miner_hotkey="hk5",
-                prediction=0.50,
-                event_score=0.25,
-                metagraph_score=0.001,  # Rank 3
-                created_at=created_at,
-                spec_version=1,
-                processed=True,
-            ),
-        ]
-
-        # Insert older event first, then latest event
-        scores_list = older_event_scores + latest_event_scores
-
-        sql = f"""
-            INSERT INTO scores ({', '.join(SCORE_FIELDS)})
-            VALUES ({', '.join(['?'] * len(SCORE_FIELDS))})
-        """
-        score_tuples = [
-            tuple(getattr(score, field) for field in SCORE_FIELDS) for score in scores_list
-        ]
-        await db_client.insert_many(sql, score_tuples)
-
-        inserted_scores = await db_client.many("SELECT * FROM scores")
-        assert len(inserted_scores) == len(scores_list)
-
-        # Get last metagraph scores - should return all miners from latest_event only
-        last_metagraph_scores = await db_operations.get_last_metagraph_scores()
-
-        # Should have 3 scores, all from latest_event
-        assert len(last_metagraph_scores) == 3
-
-        # All scores should be from the same (latest) event
-        for score in last_metagraph_scores:
-            assert score.event_id == "latest_event"
-
-        # Verify the miners and their scores
-        scores_by_uid = {s.miner_uid: s for s in last_metagraph_scores}
-
-        assert scores_by_uid[3].miner_hotkey == "hk3"
-        assert scores_by_uid[3].metagraph_score == 0.198  # Winner
-
-        assert scores_by_uid[4].miner_hotkey == "hk4"
-        assert scores_by_uid[4].metagraph_score == 0.001
-
-        assert scores_by_uid[5].miner_hotkey == "hk5"
-        assert scores_by_uid[5].metagraph_score == 0.001
 
     async def test_mark_event_as_discarded(self, db_operations, db_client):
         now = datetime.now(timezone.utc)
@@ -1022,189 +914,3 @@ class TestDbOperationsPart2(TestDbOperationsBase):
 
         assert len(remaining_scores) == 1
         assert remaining_scores[0][0] == "recent_event_id"  # Score for recent event should remain
-
-    async def test_get_wa_predictions_events(
-        self, db_operations: DatabaseOperations, db_client: DatabaseClient
-    ):
-        unique_event_id_1 = "unique_event_id_1"
-        unique_event_id_2 = "unique_event_id_2"
-        unique_event_ids = [unique_event_id_1, unique_event_id_2, "fake_unique_event_id"]
-
-        wa_predictions = await db_operations.get_wa_predictions_events(
-            unique_event_ids=unique_event_ids, interval_start_minutes=1
-        )
-
-        # No predictions yet
-        assert len(wa_predictions) == 0
-
-        events = [
-            EventsModel(
-                unique_event_id=unique_event_id_1,
-                event_id="event_id_1",
-                market_type="truncated_market",
-                event_type="market",
-                description="desc",
-                outcome="0",
-                status=3,
-                metadata='{"key": "value"}',
-                created_at="2024-12-02T14:30:00+00:00",
-                cutoff="2024-12-26T11:30:00+00:00",
-                resolved_at="2024-12-30T14:30:00+00:00",
-            ),
-            EventsModel(
-                unique_event_id=unique_event_id_2,
-                event_id="event_id_2",
-                market_type="truncated_market",
-                event_type="market",
-                description="desc",
-                outcome="0",
-                status=3,
-                metadata='{"key": "value"}',
-                created_at="2024-12-02T14:30:00+00:00",
-                cutoff="2024-12-26T11:30:00+00:00",
-                resolved_at="2024-12-30T14:30:00+00:00",
-            ),
-        ]
-
-        await db_operations.upsert_events(events=events)
-
-        scores = [
-            ScoresModel(
-                event_id="event_id_1",
-                miner_uid=i,
-                miner_hotkey=f"hk{i}",
-                prediction=0.5,
-                event_score=0.5,
-                spec_version=1,
-            )
-            for i in range(50)
-        ] + [
-            ScoresModel(
-                event_id="event_id_1",
-                miner_uid=i,
-                miner_hotkey=f"hk{i}",
-                prediction=0.5,
-                event_score=0.5,
-                spec_version=1,
-            )
-            for i in range(50)
-        ]
-
-        await db_operations.insert_scores(scores)
-
-        await db_client.update(
-            "UPDATE scores SET processed = 1, metagraph_score = miner_uid * 0.01",
-        )
-
-        # insert predictions like 0.0, 0.01, 0.02, 0.03, ..., 0.99 for calculations
-        predictions = [
-            PredictionsModel(
-                unique_event_id=unique_event_id_1,
-                miner_hotkey=f"hk{i}",
-                miner_uid=i,
-                latest_prediction=1.0,
-                interval_start_minutes=10,
-                interval_agg_prediction=i * 0.01,
-            )
-            for i in range(100)
-        ] + [
-            PredictionsModel(
-                unique_event_id=unique_event_id_2,
-                miner_hotkey=f"hk{i}",
-                miner_uid=i,
-                latest_prediction=1.0,
-                interval_start_minutes=10,
-                interval_agg_prediction=i * 0.01,
-            )
-            for i in range(100)
-        ]
-
-        await db_operations.upsert_predictions(predictions=predictions)
-        # validate inserted predictions
-        inserted_predictions = await db_client.many(
-            "SELECT * FROM predictions", use_row_factory=True
-        )
-        assert [int(p["miner_uid"]) for p in inserted_predictions] == list(range(100)) * 2
-        assert [p["interval_agg_prediction"] for p in inserted_predictions] == [
-            i * 0.01 for i in range(100)
-        ] * 2
-
-        # No prediction for interval
-        wa_predictions = await db_operations.get_wa_predictions_events(
-            unique_event_ids=unique_event_ids, interval_start_minutes=11
-        )
-
-        assert len(wa_predictions) == 0
-
-        wa_predictions = await db_operations.get_wa_predictions_events(
-            unique_event_ids=unique_event_ids,
-            interval_start_minutes=10,
-        )
-        # top 10 miners should be 40-49 with metagraph scores 0.4-0.49
-        # their prediction should be 0.40-0.49
-        assert len(wa_predictions) == 2
-
-        expected_wa_prediction = sum([(i * 0.01) ** 2 for i in range(40, 50)]) / sum(
-            [i * 0.01 for i in range(40, 50)]
-        )
-
-        assert wa_predictions[unique_event_id_1] == pytest.approx(expected_wa_prediction)
-        assert wa_predictions[unique_event_id_2] == pytest.approx(expected_wa_prediction)
-
-        # check for metagraph scores all 0s
-        await db_client.update(
-            "UPDATE scores SET metagraph_score = 0.0",
-        )
-
-        predictions = [
-            PredictionsModel(
-                unique_event_id=unique_event_id_1,
-                miner_hotkey=f"hk{i}",
-                miner_uid=i,
-                latest_prediction=1,
-                interval_start_minutes=12,  # interval_start_minutes
-                interval_agg_prediction=i * 0.01,
-            )
-            for i in range(10)
-        ]
-        await db_operations.upsert_predictions(predictions=predictions)
-
-        wa_predictions = await db_operations.get_wa_predictions_events(
-            unique_event_ids=[unique_event_id_1],
-            interval_start_minutes=12,
-        )
-        assert len(wa_predictions) == 1
-
-        expected_simple_avg = sum([i * 0.01 for i in range(10)]) / 10
-        assert wa_predictions[unique_event_id_1] == pytest.approx(expected_simple_avg)
-
-    async def test_get_wa_predictions_events_no_predictions(
-        self, db_operations: DatabaseOperations, db_client: DatabaseClient
-    ):
-        unique_event_id = "unique_event_id_1"
-        unique_event_ids = [unique_event_id]
-
-        scores = [
-            ScoresModel(
-                event_id="event_id_1",
-                miner_uid=i,
-                miner_hotkey=f"hk{i}",
-                prediction=0.5,
-                event_score=0.5,
-                spec_version=1,
-            )
-            for i in range(20)
-        ]
-
-        await db_operations.insert_scores(scores)
-
-        await db_client.update(
-            "UPDATE scores SET processed = 1, metagraph_score = miner_uid * 0.01",
-        )
-
-        wa_predictions = await db_operations.get_wa_predictions_events(
-            unique_event_ids=unique_event_ids,
-            interval_start_minutes=10,
-        )
-
-        assert len(wa_predictions) == 0

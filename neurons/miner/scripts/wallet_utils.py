@@ -82,7 +82,7 @@ def load_coldkey(wallet_name: str, wallet_path: typing.Optional[Path] = None):
 
     wallet = Wallet(name=wallet_name, path=str(wallet_dir))
     console.print()
-    password = getpass("Enter coldkey password: ")
+    password = getpass("Enter wallet password: ")
     console.print()
 
     try:

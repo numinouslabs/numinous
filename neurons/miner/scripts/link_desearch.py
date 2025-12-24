@@ -1,5 +1,4 @@
 import base64
-import hashlib
 import time
 import typing
 from getpass import getpass
@@ -109,9 +108,6 @@ def link_desearch_impl(
     )
     console.print(f"[dim]Version ID:[/dim] {version_id}")
 
-    version_hash = hashlib.sha256(version_id.encode()).hexdigest()
-    console.print(f"[dim]Code hash:[/dim] {version_hash[:16]}...")
-
     version_signature = hotkey_keypair.sign(version_id.encode())
     version_signature_hex = version_signature.hex()
 
@@ -191,7 +187,7 @@ def link_desearch_impl(
             env,
             hotkey_keypair,
             coldkey_keypair.ss58_address,
-            version_hash,
+            version_id,
             version_signature_hex,
         )
 
@@ -213,7 +209,7 @@ def link_desearch_impl(
         Panel.fit(
             "[bold green]✓ Successfully linked Desearch account![/bold green]\n\n"
             f"[dim]Coldkey:[/dim] {coldkey_keypair.ss58_address[:16]}...\n"
-            f"[dim]Code hash:[/dim] {version_hash[:16]}...\n\n"
+            f"[dim]Version ID:[/dim] {version_id}\n\n"
             "[yellow]⚠️  Remember to re-link after uploading new agent code![/yellow]",
             border_style="green",
             padding=(1, 2),

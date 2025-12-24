@@ -1,6 +1,7 @@
 import json
 import logging
 import sys
+from unittest.mock import ANY
 
 from colorama import Fore, Style
 
@@ -153,3 +154,39 @@ class TestJsonFormatter:
         assert "timestamp" in message_json
         assert message_json["level"] == "WARNING"
         assert message_json["message"] == "This is a JSON log message"
+
+    def test_json_formatter_exception(
+        self,
+    ):
+        formatter = JSONFormatter()
+
+        # Create a log record
+        record = logging.LogRecord(
+            "test_logger",
+            logging.WARNING,
+            "test_module",
+            1,
+            "This is a JSON log message",
+            None,
+            None,
+        )
+        # Make extra non-serializable
+        record._extra = {"row": object()}
+
+        # Format the log record
+        formatted_message = formatter.format(record)
+
+        message_json = json.loads(formatted_message)
+
+        # Ensure the log contains the correct fields
+        assert message_json == {
+            "timestamp": ANY,
+            "level": "ERROR",
+            "logger": "test_logger",
+            "message": "Log serialization failed",
+            "context_key": ANY,
+            "version": ANY,
+            "commit_hash": ANY,
+            "original_message": "This is a JSON log message",
+            "serialization_error": ANY,
+        }

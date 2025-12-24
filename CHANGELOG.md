@@ -1,5 +1,10 @@
 # Release Notes
 
+## [2.0.6] - 2025-12-22
+- **Database**: Drop deprecated scores columns
+- **Validator**: Removed metagraph-based scoring pipeline
+- **Bittensor Upgrade**: Upgraded to Bittensor version 10.0.0
+
 ## [2.0.5] - 2025-12-16
 - **Weights**: SetWeights to handle SubstrateRequestException - open subscriptions
 - **Events**: Pull events from validator protected endpoint
