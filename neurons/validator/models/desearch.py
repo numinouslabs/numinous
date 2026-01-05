@@ -91,11 +91,89 @@ class WebCrawlResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class XUser(BaseModel):
+    id: str
+    url: str
+    name: str
+    username: str
+    created_at: str
+    description: str
+    favourites_count: int
+    followers_count: int
+    followings_count: typing.Optional[int] = None
+    listed_count: int
+    media_count: int
+    profile_image_url: str
+    profile_banner_url: str
+    statuses_count: int
+    verified: bool
+    is_blue_verified: bool
+    can_dm: bool
+    can_media_tag: bool
+    location: str
+    pinned_tweet_ids: typing.Optional[list[str]] = None
+
+
+class XPostSummary(BaseModel):
+    id: str
+    text: str
+    reply_count: int
+    view_count: int
+    retweet_count: int
+    like_count: int
+    quote_count: int
+    bookmark_count: int
+    url: str
+    created_at: str
+    media: list[dict[str, typing.Any]]
+    is_quote_tweet: bool
+    is_retweet: bool
+    lang: str
+    conversation_id: str
+    in_reply_to_screen_name: typing.Optional[str] = None
+    in_reply_to_status_id: typing.Optional[str] = None
+    in_reply_to_user_id: typing.Optional[str] = None
+    quoted_status_id: typing.Optional[str] = None
+    replies: typing.Optional[list[dict[str, typing.Any]]] = None
+    display_text_range: typing.Optional[list[int]] = None
+
+
+class XPostResponse(BaseModel):
+    user: XUser
+    id: str
+    text: str
+    reply_count: int
+    view_count: int
+    retweet_count: int
+    like_count: int
+    quote_count: int
+    bookmark_count: int
+    url: str
+    created_at: str
+    media: list[dict[str, typing.Any]]
+    is_quote_tweet: bool
+    is_retweet: bool
+    lang: str
+    conversation_id: str
+    in_reply_to_screen_name: typing.Optional[str] = None
+    in_reply_to_status_id: typing.Optional[str] = None
+    in_reply_to_user_id: typing.Optional[str] = None
+    quoted_status_id: typing.Optional[str] = None
+    quote: typing.Optional[XPostSummary] = None
+    replies: typing.Optional[list[XPostSummary]] = None
+    display_text_range: typing.Optional[list[int]] = None
+    entities: typing.Optional[dict[str, typing.Any]] = None
+    extended_entities: typing.Optional[dict[str, typing.Any]] = None
+    retweet: typing.Optional[XPostSummary] = None
+
+
 class DesearchEndpoint(StrEnum):
     AI_SEARCH = "ai_search"
     AI_WEB_SEARCH = "ai_web_search"
     WEB_SEARCH = "web_search"
     WEB_CRAWL = "web_crawl"
+    X_SEARCH = "x_search"
+    FETCH_X_POST = "fetch_x_post"
 
 
 # Cost per 100 searches
@@ -112,6 +190,8 @@ DESEARCH_PRICING: typing.Dict[DesearchEndpoint, typing.Any] = {
     },
     DesearchEndpoint.WEB_SEARCH: 0.25,
     DesearchEndpoint.WEB_CRAWL: 0.05,
+    DesearchEndpoint.X_SEARCH: 0.30,
+    DesearchEndpoint.FETCH_X_POST: 0.03,
 }
 
 

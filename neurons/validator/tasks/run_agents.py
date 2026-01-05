@@ -1,8 +1,10 @@
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
+
+from bittensor import AsyncSubtensor
 
 from neurons.validator.db.operations import DatabaseOperations
 from neurons.validator.models.agent_runs import AgentRunsModel, AgentRunStatus
@@ -17,7 +19,6 @@ from neurons.validator.utils.common.interval import (
     SCORING_WINDOW_INTERVALS,
     get_interval_start_minutes,
 )
-from neurons.validator.utils.if_metagraph import IfMetagraph
 from neurons.validator.utils.logger.logger import NuminousLogger
 
 TITLE_SEPARATOR = " ==Further Information==: "
@@ -29,7 +30,7 @@ class RunAgents(AbstractTask):
     interval: float
     db_operations: DatabaseOperations
     sandbox_manager: SandboxManager
-    metagraph: IfMetagraph
+    subtensor_cm: AsyncSubtensor
     api_client: NuminousClient
     logger: NuminousLogger
     max_concurrent_sandboxes: int
@@ -43,7 +44,8 @@ class RunAgents(AbstractTask):
         interval_seconds: float,
         db_operations: DatabaseOperations,
         sandbox_manager: SandboxManager,
-        metagraph: IfMetagraph,
+        netuid: int,
+        subtensor: AsyncSubtensor,
         api_client: NuminousClient,
         logger: NuminousLogger,
         max_concurrent_sandboxes: int = 5,
@@ -61,9 +63,11 @@ class RunAgents(AbstractTask):
         if not isinstance(sandbox_manager, SandboxManager):
             raise TypeError("sandbox_manager must be an instance of SandboxManager.")
 
-        if not isinstance(metagraph, IfMetagraph):
-            raise TypeError("metagraph must be an instance of IfMetagraph.")
+        if not isinstance(netuid, int) or netuid < 0:
+            raise ValueError("netuid must be a non-negative integer.")
 
+        if not isinstance(subtensor, AsyncSubtensor):
+            raise TypeError("subtensor must be an instance of AsyncSubtensor.")
         if not isinstance(api_client, NuminousClient):
             raise TypeError("api_client must be an instance of NuminousClient.")
 
@@ -85,7 +89,8 @@ class RunAgents(AbstractTask):
         self.interval = interval_seconds
         self.db_operations = db_operations
         self.sandbox_manager = sandbox_manager
-        self.metagraph = metagraph
+        self.netuid = netuid
+        self.subtensor_cm = subtensor
         self.api_client = api_client
         self.logger = logger
         self.max_concurrent_sandboxes = max_concurrent_sandboxes
@@ -94,7 +99,7 @@ class RunAgents(AbstractTask):
         self.validator_uid = validator_uid
         self.validator_hotkey = validator_hotkey
 
-        self.logger.info(
+        self.logger.debug(
             "RunAgents task initialized",
             extra={
                 "max_concurrent": self.max_concurrent_sandboxes,
@@ -111,7 +116,10 @@ class RunAgents(AbstractTask):
         return self.interval
 
     async def run(self) -> None:
-        current_hour_utc = datetime.utcnow().hour
+        async with self.subtensor_cm as subtensor:
+            self.metagraph = await subtensor.metagraph(netuid=self.netuid, lite=True)
+
+        current_hour_utc = datetime.now(timezone.utc).hour
 
         if current_hour_utc < self.sync_hour:
             self.logger.debug(
@@ -119,8 +127,6 @@ class RunAgents(AbstractTask):
                 extra={"current_hour": current_hour_utc, "sync_hour": self.sync_hour},
             )
             return
-
-        await self.metagraph.sync()
 
         block = self.metagraph.block.item()
         self.logger.debug(
@@ -191,7 +197,7 @@ class RunAgents(AbstractTask):
 
             valid_agents.append(agent)
 
-        self.logger.info(
+        self.logger.debug(
             "Filtered agents by metagraph",
             extra={
                 "total_agents": len(agents),
@@ -245,7 +251,7 @@ class RunAgents(AbstractTask):
             result = await asyncio.wait_for(result_future, timeout=self.timeout_seconds + 5)
             return result
         except asyncio.TimeoutError:
-            self.logger.error(
+            self.logger.warning(
                 "Sandbox execution timeout",
                 extra={"run_id": run_id, "timeout": self.timeout_seconds},
             )
@@ -275,7 +281,7 @@ class RunAgents(AbstractTask):
 
             await self.db_operations.upsert_predictions([prediction])
 
-            self.logger.info(
+            self.logger.debug(
                 "Stored prediction",
                 extra={
                     "event_id": event_id,
@@ -311,7 +317,7 @@ class RunAgents(AbstractTask):
             return (AgentRunStatus.SANDBOX_TIMEOUT, None)
 
         if not isinstance(result, dict):
-            self.logger.error(
+            self.logger.warning(
                 "Invalid result type from sandbox",
                 extra={
                     "event_id": event_id,
@@ -324,7 +330,7 @@ class RunAgents(AbstractTask):
         # Handle error status from sandbox
         if result.get("status") == "error":
             error_type = result.get("error_type")
-            self.logger.error(
+            self.logger.warning(
                 "Agent execution failed",
                 extra={
                     "event_id": event_id,
@@ -344,7 +350,7 @@ class RunAgents(AbstractTask):
             elif error_type == SandboxErrorType.AGENT_ERROR:
                 return (AgentRunStatus.INTERNAL_AGENT_ERROR, None)
             else:
-                self.logger.warning(
+                self.logger.error(
                     "Unknown error_type from sandbox, defaulting to INTERNAL_AGENT_ERROR",
                     extra={"error_type": error_type, "error": result.get("error")},
                 )
@@ -353,7 +359,7 @@ class RunAgents(AbstractTask):
         # Handle success status - validate output structure
         output = result.get("output")
         if not isinstance(output, dict):
-            self.logger.error(
+            self.logger.warning(
                 "Invalid output format from sandbox",
                 extra={
                     "event_id": event_id,
@@ -364,7 +370,7 @@ class RunAgents(AbstractTask):
             return (AgentRunStatus.INVALID_SANDBOX_OUTPUT, None)
 
         if "prediction" not in output:
-            self.logger.error(
+            self.logger.warning(
                 "Missing prediction field in output",
                 extra={
                     "event_id": event_id,
@@ -376,7 +382,7 @@ class RunAgents(AbstractTask):
 
         prediction_value = output["prediction"]
         if not isinstance(prediction_value, (int, float)):
-            self.logger.error(
+            self.logger.warning(
                 "Invalid prediction value type",
                 extra={
                     "event_id": event_id,
@@ -449,7 +455,7 @@ class RunAgents(AbstractTask):
             create_run_response = await self.api_client.create_agent_run(create_run_request)
             run_id = str(create_run_response.run_id)
 
-            self.logger.info(
+            self.logger.debug(
                 "Created agent run via API",
                 extra={
                     "event_id": event_id,
@@ -536,7 +542,7 @@ class RunAgents(AbstractTask):
                 event_id, agent, prediction_value, run_id, interval_start_minutes
             )
         else:
-            self.logger.info(
+            self.logger.debug(
                 "Agent execution completed with non-success status",
                 extra={
                     "event_id": event_id,
@@ -615,7 +621,7 @@ class RunAgents(AbstractTask):
                     existing_prediction=existing_prediction,
                     interval_start_minutes=interval_start_minutes,
                 )
-                self.logger.info(
+                self.logger.debug(
                     "Replicated existing prediction to new interval",
                     extra={
                         "event_id": event_id,

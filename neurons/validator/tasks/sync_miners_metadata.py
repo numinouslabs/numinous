@@ -1,8 +1,9 @@
 from datetime import datetime, timezone
 
+from bittensor import AsyncSubtensor
+
 from neurons.validator.db.operations import DatabaseOperations
 from neurons.validator.scheduler.task import AbstractTask
-from neurons.validator.utils.if_metagraph import IfMetagraph
 from neurons.validator.utils.logger.logger import NuminousLogger
 
 
@@ -11,14 +12,16 @@ class SyncMinersMetadata(AbstractTask):
 
     interval: float
     db_operations: DatabaseOperations
-    metagraph: IfMetagraph
+    subtensor: AsyncSubtensor
+    netuid: int
     logger: NuminousLogger
 
     def __init__(
         self,
         interval_seconds: float,
         db_operations: DatabaseOperations,
-        metagraph: IfMetagraph,
+        netuid: int,
+        subtensor: AsyncSubtensor,
         logger: NuminousLogger,
     ):
         if not isinstance(interval_seconds, float) or interval_seconds <= 0:
@@ -27,15 +30,19 @@ class SyncMinersMetadata(AbstractTask):
         if not isinstance(db_operations, DatabaseOperations):
             raise TypeError("db_operations must be an instance of DatabaseOperations.")
 
-        if not isinstance(metagraph, IfMetagraph):
-            raise TypeError("metagraph must be an instance of IfMetagraph.")
+        if not isinstance(netuid, int) or netuid < 0:
+            raise ValueError("netuid must be a non-negative integer.")
+
+        if not isinstance(subtensor, AsyncSubtensor):
+            raise TypeError("subtensor must be an instance of AsyncSubtensor.")
 
         if not isinstance(logger, NuminousLogger):
             raise TypeError("logger must be an instance of NuminousLogger.")
 
         self.interval = interval_seconds
         self.db_operations = db_operations
-        self.metagraph = metagraph
+        self.netuid = netuid
+        self.subtensor = subtensor
         self.logger = logger
 
     @property
@@ -47,9 +54,10 @@ class SyncMinersMetadata(AbstractTask):
         return self.interval
 
     async def run(self) -> None:
-        await self.metagraph.sync()
+        async with self.subtensor as subtensor:
+            metagraph = await subtensor.metagraph(netuid=self.netuid, lite=True)
 
-        block = self.metagraph.block.item()
+        block = metagraph.block.item()
         miners_count = await self.db_operations.get_miners_count()
 
         registered_date = (
@@ -59,16 +67,16 @@ class SyncMinersMetadata(AbstractTask):
         )
 
         miners = []
-        for uid in self.metagraph.uids:
+        for uid in metagraph.uids:
             int_uid = int(uid)
-            axon = self.metagraph.axons[int_uid]
+            axon = metagraph.axons[int_uid]
 
             if axon is None:
                 continue
 
-            trust_value = self.metagraph.validator_trust[int_uid]
+            trust_value = metagraph.validator_trust[int_uid]
             is_validating = bool(float(trust_value) > 0.0)
-            validator_permit = bool(int(self.metagraph.validator_permit[int_uid]) > 0)
+            validator_permit = bool(int(metagraph.validator_permit[int_uid]) > 0)
 
             miners.append(
                 (

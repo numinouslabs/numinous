@@ -11,6 +11,9 @@ from neurons.validator.models.desearch import (
     WebCrawlResponse,
     WebLinksResponse,
     WebSearchResponse,
+    XPostResponse,
+    XPostSummary,
+    XUser,
 )
 
 
@@ -30,6 +33,8 @@ class TestGatewayApp:
         assert "/api/gateway/desearch/ai/links" in routes
         assert "/api/gateway/desearch/web/search" in routes
         assert "/api/gateway/desearch/web/crawl" in routes
+        assert "/api/gateway/desearch/x/search" in routes
+        assert "/api/gateway/desearch/x/post" in routes
 
 
 class TestHealthEndpoint:
@@ -342,6 +347,233 @@ class TestDesearchEndpoints:
         }
 
         response = client.post("/api/gateway/desearch/ai/search", json=request_body)
+
+        assert response.status_code == 500
+        assert "Desearch API error" in response.json()["detail"]
+
+    @patch("neurons.miner.gateway.app.DesearchClient")
+    @patch.dict("os.environ", {"DESEARCH_API_KEY": "test-key"})
+    def test_x_search_success(self, mock_client_class, client: TestClient):
+        mock_posts = [
+            XPostSummary(
+                id="1234567890",
+                text="This is a test tweet about AI",
+                reply_count=5,
+                view_count=1000,
+                retweet_count=10,
+                like_count=50,
+                quote_count=2,
+                bookmark_count=3,
+                url="https://twitter.com/user/status/1234567890",
+                created_at="2024-01-01T12:00:00Z",
+                media=[],
+                is_quote_tweet=False,
+                is_retweet=False,
+                lang="en",
+                conversation_id="1234567890",
+            ),
+            XPostSummary(
+                id="0987654321",
+                text="Another tweet about machine learning",
+                reply_count=3,
+                view_count=500,
+                retweet_count=5,
+                like_count=25,
+                quote_count=1,
+                bookmark_count=2,
+                url="https://twitter.com/user/status/0987654321",
+                created_at="2024-01-01T11:00:00Z",
+                media=[],
+                is_quote_tweet=False,
+                is_retweet=False,
+                lang="en",
+                conversation_id="0987654321",
+            ),
+        ]
+
+        mock_instance = mock_client_class.return_value
+        mock_instance.x_search = AsyncMock(return_value=mock_posts)
+
+        request_body = {
+            "run_id": str(uuid4()),
+            "query": "AI trends",
+            "sort": "Top",
+            "count": 20,
+        }
+
+        response = client.post("/api/gateway/desearch/x/search", json=request_body)
+
+        assert response.status_code == 200
+
+        result = response.json()
+        assert "posts" in result
+        assert "cost" in result
+        assert len(result["posts"]) == 2
+        assert result["posts"][0]["id"] == "1234567890"
+        assert result["posts"][0]["text"] == "This is a test tweet about AI"
+        assert result["posts"][1]["id"] == "0987654321"
+
+    @patch("neurons.miner.gateway.app.DesearchClient")
+    @patch.dict("os.environ", {"DESEARCH_API_KEY": "test-key"})
+    def test_x_search_with_filters(self, mock_client_class, client: TestClient):
+        mock_posts = [
+            XPostSummary(
+                id="1111111111",
+                text="Filtered tweet",
+                reply_count=10,
+                view_count=2000,
+                retweet_count=20,
+                like_count=100,
+                quote_count=5,
+                bookmark_count=8,
+                url="https://twitter.com/user/status/1111111111",
+                created_at="2024-01-02T12:00:00Z",
+                media=[],
+                is_quote_tweet=False,
+                is_retweet=False,
+                lang="en",
+                conversation_id="1111111111",
+            )
+        ]
+
+        mock_instance = mock_client_class.return_value
+        mock_instance.x_search = AsyncMock(return_value=mock_posts)
+
+        request_body = {
+            "run_id": str(uuid4()),
+            "query": "blockchain",
+            "sort": "Latest",
+            "user": "elonmusk",
+            "lang": "en",
+            "min_likes": 50,
+            "count": 10,
+        }
+
+        response = client.post("/api/gateway/desearch/x/search", json=request_body)
+
+        assert response.status_code == 200
+
+        result = response.json()
+        assert "posts" in result
+        assert len(result["posts"]) == 1
+        assert result["posts"][0]["like_count"] == 100
+
+    @patch("neurons.miner.gateway.app.DesearchClient")
+    @patch.dict("os.environ", {"DESEARCH_API_KEY": "test-key"})
+    def test_fetch_x_post_success(self, mock_client_class, client: TestClient):
+        mock_user = XUser(
+            id="123456",
+            url="https://twitter.com/testuser",
+            name="Test User",
+            username="testuser",
+            created_at="2020-01-01T00:00:00Z",
+            description="Test user description",
+            favourites_count=1000,
+            followers_count=5000,
+            listed_count=50,
+            media_count=100,
+            profile_image_url="https://example.com/image.jpg",
+            profile_banner_url="https://example.com/banner.jpg",
+            statuses_count=2000,
+            verified=True,
+            is_blue_verified=False,
+            can_dm=True,
+            can_media_tag=True,
+            location="San Francisco, CA",
+        )
+
+        mock_post = XPostResponse(
+            user=mock_user,
+            id="9876543210",
+            text="This is a detailed tweet with full information",
+            reply_count=15,
+            view_count=5000,
+            retweet_count=50,
+            like_count=200,
+            quote_count=10,
+            bookmark_count=25,
+            url="https://twitter.com/testuser/status/9876543210",
+            created_at="2024-01-03T12:00:00Z",
+            media=[],
+            is_quote_tweet=False,
+            is_retweet=False,
+            lang="en",
+            conversation_id="9876543210",
+        )
+
+        mock_instance = mock_client_class.return_value
+        mock_instance.fetch_x_post = AsyncMock(return_value=mock_post)
+
+        request_body = {
+            "run_id": str(uuid4()),
+            "post_id": "9876543210",
+        }
+
+        response = client.post("/api/gateway/desearch/x/post", json=request_body)
+
+        assert response.status_code == 200
+
+        result = response.json()
+        assert "user" in result
+        assert "cost" in result
+        assert result["id"] == "9876543210"
+        assert result["text"] == "This is a detailed tweet with full information"
+        assert result["user"]["username"] == "testuser"
+        assert result["user"]["verified"] is True
+        assert result["like_count"] == 200
+
+    @patch.dict("os.environ", {"DESEARCH_API_KEY": ""})
+    def test_x_search_missing_api_key(self, client: TestClient):
+        request_body = {
+            "run_id": str(uuid4()),
+            "query": "test query",
+        }
+
+        response = client.post("/api/gateway/desearch/x/search", json=request_body)
+
+        assert response.status_code == 401
+        assert "DESEARCH_API_KEY not configured" in response.json()["detail"]
+
+    @patch.dict("os.environ", {"DESEARCH_API_KEY": ""})
+    def test_fetch_x_post_missing_api_key(self, client: TestClient):
+        request_body = {
+            "run_id": str(uuid4()),
+            "post_id": "1234567890",
+        }
+
+        response = client.post("/api/gateway/desearch/x/post", json=request_body)
+
+        assert response.status_code == 401
+        assert "DESEARCH_API_KEY not configured" in response.json()["detail"]
+
+    @patch("neurons.miner.gateway.app.DesearchClient")
+    @patch.dict("os.environ", {"DESEARCH_API_KEY": "test-key"})
+    def test_x_search_api_error(self, mock_client_class, client: TestClient):
+        mock_instance = mock_client_class.return_value
+        mock_instance.x_search = AsyncMock(side_effect=Exception("API Error"))
+
+        request_body = {
+            "run_id": str(uuid4()),
+            "query": "test query",
+        }
+
+        response = client.post("/api/gateway/desearch/x/search", json=request_body)
+
+        assert response.status_code == 500
+        assert "Desearch API error" in response.json()["detail"]
+
+    @patch("neurons.miner.gateway.app.DesearchClient")
+    @patch.dict("os.environ", {"DESEARCH_API_KEY": "test-key"})
+    def test_fetch_x_post_api_error(self, mock_client_class, client: TestClient):
+        mock_instance = mock_client_class.return_value
+        mock_instance.fetch_x_post = AsyncMock(side_effect=Exception("API Error"))
+
+        request_body = {
+            "run_id": str(uuid4()),
+            "post_id": "1234567890",
+        }
+
+        response = client.post("/api/gateway/desearch/x/post", json=request_body)
 
         assert response.status_code == 500
         assert "Desearch API error" in response.json()["detail"]

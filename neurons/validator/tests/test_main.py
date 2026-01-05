@@ -40,11 +40,13 @@ class TestValidatorMain:
             patch("neurons.validator.main.assert_requirements") as mock_assert_requirements,
             patch("neurons.validator.main.override_loggers_level") as mock_override_loggers_level,
             patch("neurons.validator.main.set_bittensor_logger") as mock_set_bittensor_logger,
+            patch(
+                "neurons.validator.main.set_async_substrate_interface_logger"
+            ) as mock_set_async_substrate_interface_logger,
             patch("neurons.validator.main.get_config", spec=True) as get_config,
-            patch("neurons.validator.main.Wallet", spec=True),
+            patch("neurons.validator.main.Wallet", spec=True) as MockWallet,
             patch("neurons.validator.main.SandboxManager", spec=True),
-            patch("neurons.validator.main.AsyncSubtensor", spec=True),
-            patch("neurons.validator.main.IfMetagraph", spec=True) as MockIfMetagraph,
+            patch("neurons.validator.main.AsyncSubtensor", spec=True) as MockAsyncSubtensor,
             patch("neurons.validator.main.NuminousClient", spec=True) as MockNuminousClient,
             patch("neurons.validator.main.DatabaseClient", spec=True) as MockDatabaseClient,
             patch("neurons.validator.main.TasksScheduler") as MockTasksScheduler,
@@ -55,8 +57,11 @@ class TestValidatorMain:
             logger_level = 99
             gateway_url = "https://test.numinous.earth"
             validator_sync_hour = 4
+            netuid = 1234
+            network = "testnet"
+
             get_config.return_value = (
-                MagicMock(),
+                {"netuid": netuid, "subtensor": {"network": network}},
                 config_env,
                 db_path,
                 logger_level,
@@ -64,9 +69,21 @@ class TestValidatorMain:
                 validator_sync_hour,
             )
 
-            # Mock IfMetagraph
-            mock_if_metagraph = MockIfMetagraph.return_value
-            mock_if_metagraph.sync = AsyncMock()
+            # Mock Wallet
+            mock_wallet = MagicMock()
+            mock_wallet.hotkey.ss58_address = "hk3"
+            MockWallet.return_value = mock_wallet
+
+            # Mock AsyncSubtensor async context manager ---
+            mock_async_subtensor = AsyncMock()
+            mock_metagraph = MagicMock()
+            mock_metagraph.hotkeys = ["hk0", "hk1", "hk2", "hk3", "hk4"]
+            mock_async_subtensor.metagraph = AsyncMock(return_value=mock_metagraph)
+
+            MockAsyncSubtensor.return_value.__aenter__ = AsyncMock(
+                return_value=mock_async_subtensor
+            )
+            MockAsyncSubtensor.return_value.__aexit__ = AsyncMock(return_value=False)
 
             # Mock Database Client
             mock_db_client = MockDatabaseClient.return_value
@@ -75,6 +92,7 @@ class TestValidatorMain:
             # Mock TasksScheduler
             mock_scheduler = MockTasksScheduler.return_value
             mock_scheduler.start = AsyncMock(return_value=None)
+            mock_scheduler.add = MagicMock(return_value=None)
 
             # Mock Logger
             mock_logger.start_session = MagicMock()
@@ -88,15 +106,13 @@ class TestValidatorMain:
             # Verify loggers set
             mock_override_loggers_level.assert_called_once_with(logger_level)
             mock_set_bittensor_logger.assert_called_once()
+            mock_set_async_substrate_interface_logger.assert_called_once()
 
             # Verify start session called
             mock_logger.start_session.assert_called_once()
 
             # Verify get_config() was called
             get_config.assert_called_once()
-
-            # Verify metagraph is synced
-            mock_if_metagraph.sync.assert_awaited_once()
 
             # Verify DatabaseClient args
             MockDatabaseClient.assert_called_once_with(db_path=db_path, logger=mock_logger)
@@ -108,6 +124,10 @@ class TestValidatorMain:
 
             # Verify migrate() was called
             mock_db_client.migrate.assert_awaited_once()
+
+            # Verify AsyncSubtensor context manager used
+            MockAsyncSubtensor.return_value.__aenter__.assert_awaited_once()
+            MockAsyncSubtensor.return_value.__aexit__.assert_awaited_once()
 
             # Verify scheduler was started
             mock_scheduler.start.assert_awaited_once()
@@ -122,10 +142,10 @@ class TestValidatorMain:
             mock_logger.info.assert_called_with(
                 "Validator started",
                 extra={
-                    "validator_uid": ANY,
-                    "validator_hotkey": ANY,
-                    "bt_network": ANY,
-                    "bt_netuid": ANY,
+                    "validator_uid": 3,
+                    "validator_hotkey": mock_wallet.hotkey.ss58_address,
+                    "bt_network": network,
+                    "bt_netuid": netuid,
                     "numinous_env": config_env,
                     "db_path": db_path,
                     "python": ANY,

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
+from bittensor import AsyncSubtensor
 
 from neurons.validator.db.operations import DatabaseOperations
 from neurons.validator.models.event import EventsModel
@@ -18,7 +19,6 @@ from neurons.validator.utils.common.interval import (
     minutes_since_epoch,
     to_utc,
 )
-from neurons.validator.utils.if_metagraph import IfMetagraph
 from neurons.validator.utils.logger.logger import NuminousLogger
 from neurons.validator.version import __spec_version__ as spec_version
 
@@ -53,13 +53,16 @@ class Scoring(AbstractTask):
     interval: float
     page_size: int
     db_operations: DatabaseOperations
+    netuid: int
+    subtensor_cm: AsyncSubtensor
     logger: NuminousLogger
 
     def __init__(
         self,
         interval_seconds: float,
         db_operations: DatabaseOperations,
-        metagraph: IfMetagraph,
+        netuid: int,
+        subtensor: AsyncSubtensor,
         logger: NuminousLogger,
         page_size: int = 100,
     ):
@@ -70,9 +73,16 @@ class Scoring(AbstractTask):
         if not isinstance(db_operations, DatabaseOperations):
             raise TypeError("db_operations must be an instance of DatabaseOperations.")
 
+        if not isinstance(netuid, int) or netuid < 0:
+            raise ValueError("netuid must be a non-negative integer.")
+
+        if not isinstance(subtensor, AsyncSubtensor):
+            raise TypeError("subtensor must be an instance of AsyncSubtensor.")
+
         # get current hotkeys and uids
         # regularly update these during and after each event scoring
-        self.metagraph = metagraph
+        self.netuid = netuid
+        self.subtensor_cm = subtensor
         self.current_hotkeys = None
         self.n_hotkeys = None
         self.current_uids = None
@@ -96,9 +106,7 @@ class Scoring(AbstractTask):
     def interval_seconds(self):
         return self.interval
 
-    async def metagraph_lite_sync(self):
-        # sync the metagraph
-        await self.metagraph.sync()
+    def copy_metagraph_state(self):
         # hotkeys is a list[str] and uids is a numpy array
         self.current_hotkeys = copy.deepcopy(self.metagraph.hotkeys)
         self.n_hotkeys = len(self.current_hotkeys)
@@ -439,7 +447,10 @@ class Scoring(AbstractTask):
         await self.db_operations.insert_scores(scores)
 
     async def run(self):
-        await self.metagraph_lite_sync()
+        async with self.subtensor_cm as subtensor:
+            self.metagraph = await subtensor.metagraph(netuid=self.netuid, lite=True)
+
+        self.copy_metagraph_state()
 
         miners_synced = await self.miners_last_reg_sync()
         if not miners_synced:

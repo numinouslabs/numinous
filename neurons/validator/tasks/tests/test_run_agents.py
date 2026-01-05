@@ -1,17 +1,23 @@
 import asyncio
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 import numpy as np
 import pytest
+from bittensor import AsyncSubtensor
 
 from neurons.validator.db.operations import DatabaseOperations
 from neurons.validator.models.agent_runs import AgentRunsModel, AgentRunStatus
 from neurons.validator.models.miner_agent import MinerAgentsModel
+from neurons.validator.models.numinous_client import CreateAgentRunRequest, CreateAgentRunResponse
+from neurons.validator.models.prediction import PredictionsModel
 from neurons.validator.numinous_client.client import NuminousClient
 from neurons.validator.sandbox import SandboxManager
 from neurons.validator.sandbox.models import SandboxErrorType
 from neurons.validator.tasks.run_agents import RunAgents
+from neurons.validator.utils.common.interval import get_interval_start_minutes
 from neurons.validator.utils.if_metagraph import IfMetagraph
 from neurons.validator.utils.logger.logger import NuminousLogger
 
@@ -33,10 +39,6 @@ def mock_sandbox_manager():
 
 @pytest.fixture
 def mock_api_client():
-    from uuid import UUID
-
-    from neurons.validator.models.numinous_client import CreateAgentRunResponse
-
     client = MagicMock(spec=NuminousClient)
     client.post_agent_logs = AsyncMock()
     client.create_agent_run = AsyncMock(
@@ -46,14 +48,21 @@ def mock_api_client():
 
 
 @pytest.fixture
-def mock_metagraph():
+def mock_subtensor_cm():
     metagraph = MagicMock(spec=IfMetagraph)
     metagraph.sync = AsyncMock()
     metagraph.block = np.array([12345])
     metagraph.uids = []
     metagraph.axons = []
 
-    return metagraph
+    subtensor_cm = AsyncMock(spec=AsyncSubtensor)
+
+    subtensor_cm.metagraph = AsyncMock(return_value=metagraph)
+
+    subtensor_cm.__aenter__ = AsyncMock(return_value=subtensor_cm)
+    subtensor_cm.__aexit__ = AsyncMock(return_value=False)
+
+    return subtensor_cm
 
 
 @pytest.fixture
@@ -86,216 +95,303 @@ def sample_agent():
 
 class TestRunAgentsInit:
     def test_valid_initialization(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
         task = RunAgents(
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
         assert task.name == "run-agents"
         assert task.interval_seconds == 600.0
+        assert task.netuid == 99
+        assert task.subtensor_cm == mock_subtensor_cm
 
     def test_invalid_interval_negative(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
         with pytest.raises(ValueError, match="interval_seconds must be a positive"):
             RunAgents(
                 interval_seconds=-1.0,
                 db_operations=mock_db_operations,
                 sandbox_manager=mock_sandbox_manager,
-                metagraph=mock_metagraph,
+                netuid=99,
+                subtensor=mock_subtensor_cm,
                 api_client=mock_api_client,
                 logger=mock_logger,
             )
 
     def test_invalid_interval_zero(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
         with pytest.raises(ValueError, match="interval_seconds must be a positive"):
             RunAgents(
                 interval_seconds=0.0,
                 db_operations=mock_db_operations,
                 sandbox_manager=mock_sandbox_manager,
-                metagraph=mock_metagraph,
+                netuid=99,
+                subtensor=mock_subtensor_cm,
                 api_client=mock_api_client,
                 logger=mock_logger,
             )
 
     def test_invalid_db_operations_type(
-        self, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self, mock_sandbox_manager, mock_subtensor_cm, mock_api_client, mock_logger
     ):
         with pytest.raises(TypeError, match="db_operations must be an instance"):
             RunAgents(
                 interval_seconds=600.0,
                 db_operations="not_db_ops",
                 sandbox_manager=mock_sandbox_manager,
-                metagraph=mock_metagraph,
+                netuid=99,
+                subtensor=mock_subtensor_cm,
                 api_client=mock_api_client,
                 logger=mock_logger,
             )
 
     def test_invalid_sandbox_manager_type(
-        self, mock_db_operations, mock_metagraph, mock_api_client, mock_logger
+        self, mock_db_operations, mock_subtensor_cm, mock_api_client, mock_logger
     ):
         with pytest.raises(TypeError, match="sandbox_manager must be an instance"):
             RunAgents(
                 interval_seconds=600.0,
                 db_operations=mock_db_operations,
                 sandbox_manager="not_sandbox",
-                metagraph=mock_metagraph,
+                netuid=99,
+                subtensor=mock_subtensor_cm,
                 api_client=mock_api_client,
                 logger=mock_logger,
             )
 
-    def test_invalid_metagraph_type(
+    def test_invalid_netuid_type(
         self, mock_db_operations, mock_sandbox_manager, mock_api_client, mock_logger
     ):
-        with pytest.raises(TypeError, match="metagraph must be an instance"):
+        with pytest.raises(ValueError, match="netuid must be a non-negative integer."):
             RunAgents(
                 interval_seconds=600.0,
                 db_operations=mock_db_operations,
                 sandbox_manager=mock_sandbox_manager,
-                metagraph="not_metagraph",
+                netuid=-1,
+                subtensor="not_subtensor",
+                api_client=mock_api_client,
+                logger=mock_logger,
+            )
+
+    def test_invalid_subtensor_type(
+        self, mock_db_operations, mock_sandbox_manager, mock_api_client, mock_logger
+    ):
+        with pytest.raises(TypeError, match="subtensor must be an instance of AsyncSubtensor."):
+            RunAgents(
+                interval_seconds=600.0,
+                db_operations=mock_db_operations,
+                sandbox_manager=mock_sandbox_manager,
+                netuid=99,
+                subtensor="not_subtensor",
                 api_client=mock_api_client,
                 logger=mock_logger,
             )
 
     def test_invalid_api_client_type(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_logger
+        self, mock_db_operations, mock_sandbox_manager, mock_subtensor_cm, mock_logger
     ):
         with pytest.raises(TypeError, match="api_client must be an instance"):
             RunAgents(
                 interval_seconds=600.0,
                 db_operations=mock_db_operations,
                 sandbox_manager=mock_sandbox_manager,
-                metagraph=mock_metagraph,
+                netuid=99,
+                subtensor=mock_subtensor_cm,
                 api_client="not_api_client",
                 logger=mock_logger,
             )
 
     def test_invalid_logger_type(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client
+        self, mock_db_operations, mock_sandbox_manager, mock_subtensor_cm, mock_api_client
     ):
         with pytest.raises(TypeError, match="logger must be an instance"):
             RunAgents(
                 interval_seconds=600.0,
                 db_operations=mock_db_operations,
                 sandbox_manager=mock_sandbox_manager,
-                metagraph=mock_metagraph,
+                netuid=99,
+                subtensor=mock_subtensor_cm,
                 api_client=mock_api_client,
                 logger="not_logger",
             )
 
     def test_invalid_max_concurrent_negative(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
         with pytest.raises(ValueError, match="max_concurrent_sandboxes must be"):
             RunAgents(
                 interval_seconds=600.0,
                 db_operations=mock_db_operations,
                 sandbox_manager=mock_sandbox_manager,
-                metagraph=mock_metagraph,
+                netuid=99,
+                subtensor=mock_subtensor_cm,
                 api_client=mock_api_client,
                 logger=mock_logger,
                 max_concurrent_sandboxes=-1,
             )
 
     def test_invalid_max_concurrent_zero(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
         with pytest.raises(ValueError, match="max_concurrent_sandboxes must be"):
             RunAgents(
                 interval_seconds=600.0,
                 db_operations=mock_db_operations,
                 sandbox_manager=mock_sandbox_manager,
-                metagraph=mock_metagraph,
+                netuid=99,
+                subtensor=mock_subtensor_cm,
                 api_client=mock_api_client,
                 logger=mock_logger,
                 max_concurrent_sandboxes=0,
             )
 
     def test_invalid_timeout_negative(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
         with pytest.raises(ValueError, match="timeout_seconds must be"):
             RunAgents(
                 interval_seconds=600.0,
                 db_operations=mock_db_operations,
                 sandbox_manager=mock_sandbox_manager,
-                metagraph=mock_metagraph,
+                netuid=99,
+                subtensor=mock_subtensor_cm,
                 api_client=mock_api_client,
                 logger=mock_logger,
                 timeout_seconds=-1,
             )
 
     def test_invalid_timeout_zero(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
         with pytest.raises(ValueError, match="timeout_seconds must be"):
             RunAgents(
                 interval_seconds=600.0,
                 db_operations=mock_db_operations,
                 sandbox_manager=mock_sandbox_manager,
-                metagraph=mock_metagraph,
+                netuid=99,
+                subtensor=mock_subtensor_cm,
                 api_client=mock_api_client,
                 logger=mock_logger,
                 timeout_seconds=0,
             )
 
     def test_invalid_validator_uid_negative(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
         with pytest.raises(ValueError, match="validator_uid must be"):
             RunAgents(
                 interval_seconds=600.0,
                 db_operations=mock_db_operations,
                 sandbox_manager=mock_sandbox_manager,
-                metagraph=mock_metagraph,
+                netuid=99,
+                subtensor=mock_subtensor_cm,
                 api_client=mock_api_client,
                 logger=mock_logger,
                 validator_uid=-1,
             )
 
     def test_invalid_validator_uid_too_large(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
         with pytest.raises(ValueError, match="validator_uid must be"):
             RunAgents(
                 interval_seconds=600.0,
                 db_operations=mock_db_operations,
                 sandbox_manager=mock_sandbox_manager,
-                metagraph=mock_metagraph,
+                netuid=99,
+                subtensor=mock_subtensor_cm,
                 api_client=mock_api_client,
                 logger=mock_logger,
                 validator_uid=257,
             )
 
     def test_invalid_validator_hotkey_type(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
         with pytest.raises(TypeError, match="validator_hotkey must be"):
             RunAgents(
                 interval_seconds=600.0,
                 db_operations=mock_db_operations,
                 sandbox_manager=mock_sandbox_manager,
-                metagraph=mock_metagraph,
+                netuid=99,
+                subtensor=mock_subtensor_cm,
                 api_client=mock_api_client,
                 logger=mock_logger,
                 validator_hotkey=123,
             )
 
     def test_valid_initialization_with_validator_params(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
         task = RunAgents(
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
             validator_uid=42,
@@ -305,7 +401,6 @@ class TestRunAgentsInit:
         assert task.validator_hotkey == "5ValidatorHotkey123"
 
 
-@pytest.mark.asyncio
 class TestRunAgentsRun:
     @patch("neurons.validator.tasks.run_agents.datetime")
     async def test_no_events(
@@ -313,12 +408,12 @@ class TestRunAgentsRun:
         mock_datetime,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
     ):
-        # Mock datetime.utcnow() to return hour >= 4 to pass sync_hour check
-        mock_datetime.utcnow.return_value = datetime(2025, 12, 3, 10, 0, 0)
+        # Mock datetime.now() to return hour >= 4 to pass sync_hour check
+        mock_datetime.now.return_value = datetime(2025, 12, 3, 10, 0, 0)
 
         mock_db_operations.get_events_to_predict.return_value = []
 
@@ -326,14 +421,18 @@ class TestRunAgentsRun:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
 
         await task.run()
 
-        mock_metagraph.sync.assert_called_once_with()
+        mock_subtensor_cm.__aenter__.assert_awaited_once()
+        mock_subtensor_cm.__aexit__.assert_awaited_once()
+        mock_subtensor_cm.metagraph.assert_awaited_once_with(netuid=task.netuid, lite=True)
+
         mock_logger.debug.assert_called_with("No events to predict")
         mock_db_operations.get_active_agents.assert_not_called()
 
@@ -343,12 +442,12 @@ class TestRunAgentsRun:
         mock_datetime,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
     ):
-        # Mock datetime.utcnow() to return hour >= 4 to pass sync_hour check
-        mock_datetime.utcnow.return_value = datetime(2025, 12, 3, 10, 0, 0)
+        # Mock datetime.now() to return hour >= 4 to pass sync_hour check
+        mock_datetime.now.return_value = datetime(2025, 12, 3, 10, 0, 0)
 
         mock_db_operations.get_events_to_predict.return_value = [
             (
@@ -368,39 +467,69 @@ class TestRunAgentsRun:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
 
         await task.run()
 
+        mock_subtensor_cm.__aenter__.assert_awaited_once()
+        mock_subtensor_cm.__aexit__.assert_awaited_once()
+        mock_subtensor_cm.metagraph.assert_awaited_once_with(netuid=task.netuid, lite=True)
+
         mock_logger.warning.assert_called_with("No agents available for execution")
 
 
 class TestRunAgentsFiltering:
     def test_filter_agent_uid_not_in_metagraph(
-        self, mock_db_operations, mock_sandbox_manager, mock_api_client, mock_logger, sample_agent
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
     ):
-        metagraph = MagicMock(spec=IfMetagraph)
-        metagraph.uids = []
-
         task = RunAgents(
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
+
+        metagraph = MagicMock(spec=IfMetagraph)
+        metagraph.uids = []
+
+        task.metagraph = metagraph
 
         result = task.filter_agents_by_metagraph([sample_agent])
 
         assert len(result) == 0
 
     def test_filter_agent_hotkey_mismatch(
-        self, mock_db_operations, mock_sandbox_manager, mock_api_client, mock_logger, sample_agent
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
     ):
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
+            api_client=mock_api_client,
+            logger=mock_logger,
+        )
+
         metagraph = MagicMock(spec=IfMetagraph)
         metagraph.uids = np.array([42], dtype=np.int64)
 
@@ -408,42 +537,60 @@ class TestRunAgentsFiltering:
         axon.hotkey = "different_hotkey"
         metagraph.axons = {42: axon}
 
-        task = RunAgents(
-            interval_seconds=600.0,
-            db_operations=mock_db_operations,
-            sandbox_manager=mock_sandbox_manager,
-            metagraph=metagraph,
-            api_client=mock_api_client,
-            logger=mock_logger,
-        )
+        task.metagraph = metagraph
 
         result = task.filter_agents_by_metagraph([sample_agent])
 
         assert len(result) == 0
 
     def test_filter_agent_no_axon(
-        self, mock_db_operations, mock_sandbox_manager, mock_api_client, mock_logger, sample_agent
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
     ):
-        metagraph = MagicMock(spec=IfMetagraph)
-        metagraph.uids = np.array([42], dtype=np.int64)
-        metagraph.axons = {42: None}
-
         task = RunAgents(
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
+
+        metagraph = MagicMock(spec=IfMetagraph)
+        metagraph.uids = np.array([42], dtype=np.int64)
+        metagraph.axons = {42: None}
+
+        task.metagraph = metagraph
 
         result = task.filter_agents_by_metagraph([sample_agent])
 
         assert len(result) == 0
 
     def test_keep_valid_agent(
-        self, mock_db_operations, mock_sandbox_manager, mock_api_client, mock_logger, sample_agent
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
     ):
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
+            api_client=mock_api_client,
+            logger=mock_logger,
+        )
+
         metagraph = MagicMock(spec=IfMetagraph)
         metagraph.uids = np.array([42], dtype=np.int64)
 
@@ -451,14 +598,7 @@ class TestRunAgentsFiltering:
         axon.hotkey = "5HotKey123"
         metagraph.axons = {42: axon}
 
-        task = RunAgents(
-            interval_seconds=600.0,
-            db_operations=mock_db_operations,
-            sandbox_manager=mock_sandbox_manager,
-            metagraph=metagraph,
-            api_client=mock_api_client,
-            logger=mock_logger,
-        )
+        task.metagraph = metagraph
 
         result = task.filter_agents_by_metagraph([sample_agent])
 
@@ -466,7 +606,12 @@ class TestRunAgentsFiltering:
         assert result[0] == sample_agent
 
     def test_mixed_filtering(
-        self, mock_db_operations, mock_sandbox_manager, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
         agent1 = MinerAgentsModel(
             version_id="v1",
@@ -499,6 +644,16 @@ class TestRunAgentsFiltering:
             created_at=datetime.now(timezone.utc),
         )
 
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
+            api_client=mock_api_client,
+            logger=mock_logger,
+        )
+
         metagraph = MagicMock(spec=IfMetagraph)
         metagraph.uids = np.array([42, 100], dtype=np.int64)
 
@@ -508,14 +663,7 @@ class TestRunAgentsFiltering:
         axon3.hotkey = "hotkey3"
         metagraph.axons = {42: axon1, 100: axon3}
 
-        task = RunAgents(
-            interval_seconds=600.0,
-            db_operations=mock_db_operations,
-            sandbox_manager=mock_sandbox_manager,
-            metagraph=metagraph,
-            api_client=mock_api_client,
-            logger=mock_logger,
-        )
+        task.metagraph = metagraph
 
         result = task.filter_agents_by_metagraph([agent1, agent2, agent3])
 
@@ -526,13 +674,19 @@ class TestRunAgentsFiltering:
 
 class TestRunAgentsParsing:
     def test_parse_event_description_with_separator(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
         task = RunAgents(
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
@@ -544,13 +698,19 @@ class TestRunAgentsParsing:
         assert description == "Weather forecast unclear"
 
     def test_parse_event_description_without_separator(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
         task = RunAgents(
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
@@ -562,7 +722,6 @@ class TestRunAgentsParsing:
         assert description == "Will it rain tomorrow?"
 
 
-@pytest.mark.asyncio
 class TestRunAgentsIdempotency:
     @patch("neurons.validator.tasks.run_agents.datetime")
     async def test_skip_when_prediction_exists(
@@ -570,24 +729,23 @@ class TestRunAgentsIdempotency:
         mock_datetime,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_event_tuple,
         sample_agent,
     ):
-        # Mock datetime.utcnow() to return hour >= 4 to pass sync_hour check
-        mock_datetime.utcnow.return_value = datetime(2025, 12, 3, 10, 0, 0)
-
-        from neurons.validator.models.prediction import PredictionsModel
-        from neurons.validator.utils.common.interval import get_interval_start_minutes
+        # Mock datetime.now() to return hour >= 4 to pass sync_hour check
+        mock_datetime.now.return_value = datetime(2025, 12, 3, 10, 0, 0)
 
         mock_db_operations.get_events_to_predict.return_value = [sample_event_tuple]
         mock_db_operations.get_active_agents.return_value = [sample_agent]
 
-        mock_metagraph.uids = np.array([42], dtype=np.int64)
         axon = MagicMock()
         axon.hotkey = "5HotKey123"
+
+        mock_metagraph = mock_subtensor_cm.metagraph.return_value
+        mock_metagraph.uids = np.array([42], dtype=np.int64)
         mock_metagraph.axons = {42: axon}
 
         # Prediction already exists in current interval
@@ -608,7 +766,8 @@ class TestRunAgentsIdempotency:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
@@ -631,17 +790,19 @@ class TestRunAgentsIdempotency:
         mock_datetime,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_event_tuple,
         sample_agent,
     ):
-        # Mock datetime.utcnow() to return hour >= 4 to pass sync_hour check
-        mock_datetime.utcnow.return_value = datetime(2025, 12, 3, 10, 0, 0)
+        # Mock datetime.now() to return hour >= 4 to pass sync_hour check
+        mock_datetime.now.return_value = datetime(2025, 12, 3, 10, 0, 0)
 
         mock_db_operations.get_events_to_predict.return_value = [sample_event_tuple]
         mock_db_operations.get_active_agents.return_value = [sample_agent]
+
+        mock_metagraph = mock_subtensor_cm.metagraph.return_value
 
         mock_metagraph.uids = np.array([42], dtype=np.int64)
         axon = MagicMock()
@@ -657,7 +818,8 @@ class TestRunAgentsIdempotency:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
@@ -679,23 +841,24 @@ class TestRunAgentsIdempotency:
         mock_datetime,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_event_tuple,
         sample_agent,
     ):
-        # Mock datetime.utcnow() to return hour >= 4 to pass sync_hour check
-        mock_datetime.utcnow.return_value = datetime(2025, 12, 3, 10, 0, 0)
-
-        from neurons.validator.models.prediction import PredictionsModel
+        # Mock datetime.now() to return hour >= 4 to pass sync_hour check
+        mock_datetime.now.return_value = datetime(2025, 12, 3, 10, 0, 0)
 
         mock_db_operations.get_events_to_predict.return_value = [sample_event_tuple]
         mock_db_operations.get_active_agents.return_value = [sample_agent]
 
-        mock_metagraph.uids = np.array([42], dtype=np.int64)
         axon = MagicMock()
         axon.hotkey = "5HotKey123"
+
+        mock_metagraph = mock_subtensor_cm.metagraph.return_value
+        mock_metagraph.uids = np.array([42], dtype=np.int64)
+
         mock_metagraph.axons = {42: axon}
 
         # Existing prediction in interval 100
@@ -718,7 +881,8 @@ class TestRunAgentsIdempotency:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
@@ -740,14 +904,14 @@ class TestRunAgentsIdempotency:
         assert replicated.run_id == "original_run_id"
         assert replicated.version_id == "a23e4567-e89b-12d3-a456-426614174000"
 
-        # Verify info log was called with replication message
-        info_calls = [
+        # Verify debug log was called with replication message
+        debug_calls = [
             call
-            for call in mock_logger.info.call_args_list
+            for call in mock_logger.debug.call_args_list
             if call[0][0] == "Replicated existing prediction to new interval"
         ]
-        assert len(info_calls) == 1
-        log_extra = info_calls[0][1]["extra"]
+        assert len(debug_calls) == 1
+        log_extra = debug_calls[0][1]["extra"]
         assert log_extra["event_id"] == "event_123"
         assert log_extra["agent_version_id"] == "a23e4567-e89b-12d3-a456-426614174000"
         assert log_extra["miner_uid"] == 42
@@ -756,17 +920,15 @@ class TestRunAgentsIdempotency:
         assert log_extra["to_interval"] != 100
 
 
-@pytest.mark.asyncio
 class TestRunAgentsFileLoading:
     async def test_load_agent_file_success(
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
-        sample_event_tuple,
         tmp_path,
     ):
         agent_file = tmp_path / "test_agent.py"
@@ -777,7 +939,8 @@ class TestRunAgentsFileLoading:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
@@ -789,7 +952,7 @@ class TestRunAgentsFileLoading:
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
@@ -800,7 +963,8 @@ class TestRunAgentsFileLoading:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
@@ -815,15 +979,13 @@ class TestRunAgentsFileLoading:
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
         tmp_path,
         monkeypatch,
     ):
-        from pathlib import Path
-
         agent_file = tmp_path / "restricted_agent.py"
         agent_file.write_text("def agent_main(): pass")
         sample_agent.file_path = str(agent_file)
@@ -837,7 +999,8 @@ class TestRunAgentsFileLoading:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
@@ -849,22 +1012,21 @@ class TestRunAgentsFileLoading:
         assert "Failed to load agent code" in call_args[0][0]
 
 
-@pytest.mark.asyncio
 class TestRunAgentsSandbox:
     async def test_run_sandbox_success(
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
-        sample_agent,
     ):
         task = RunAgents(
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
             timeout_seconds=120,
@@ -887,7 +1049,7 @@ class TestRunAgentsSandbox:
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
@@ -896,7 +1058,8 @@ class TestRunAgentsSandbox:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
             timeout_seconds=120,
@@ -920,7 +1083,7 @@ class TestRunAgentsSandbox:
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
@@ -929,7 +1092,8 @@ class TestRunAgentsSandbox:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
             timeout_seconds=1,
@@ -946,18 +1110,17 @@ class TestRunAgentsSandbox:
         result = await task.run_sandbox(agent_code, event_data, "run_123")
 
         assert result is None
-        mock_logger.error.assert_called()
-        call_args = mock_logger.error.call_args
+        mock_logger.warning.assert_called()
+        call_args = mock_logger.warning.call_args
         assert "timeout" in str(call_args).lower()
 
 
-@pytest.mark.asyncio
 class TestRunAgentsPredictionStorage:
     async def test_store_prediction_success(
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
@@ -968,7 +1131,8 @@ class TestRunAgentsPredictionStorage:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
@@ -997,7 +1161,7 @@ class TestRunAgentsPredictionStorage:
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
@@ -1008,7 +1172,8 @@ class TestRunAgentsPredictionStorage:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
@@ -1030,7 +1195,7 @@ class TestRunAgentsPredictionStorage:
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
@@ -1041,7 +1206,8 @@ class TestRunAgentsPredictionStorage:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
@@ -1059,13 +1225,12 @@ class TestRunAgentsPredictionStorage:
         assert "Failed to store prediction" in call_args[0][0]
 
 
-@pytest.mark.asyncio
 class TestRunAgentsErrorLogging:
     async def test_logs_exported_on_agent_execution_error(
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
@@ -1075,7 +1240,8 @@ class TestRunAgentsErrorLogging:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
             timeout_seconds=120,
@@ -1112,7 +1278,7 @@ class TestRunAgentsErrorLogging:
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
@@ -1122,7 +1288,8 @@ class TestRunAgentsErrorLogging:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
             timeout_seconds=120,
@@ -1157,7 +1324,7 @@ class TestRunAgentsErrorLogging:
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
@@ -1167,7 +1334,8 @@ class TestRunAgentsErrorLogging:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
             timeout_seconds=120,
@@ -1201,7 +1369,7 @@ class TestRunAgentsErrorLogging:
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
@@ -1213,7 +1381,8 @@ class TestRunAgentsErrorLogging:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
             timeout_seconds=120,
@@ -1238,18 +1407,21 @@ class TestRunAgentsErrorLogging:
         assert "Sandbox timeout - no logs" in logs
 
 
-@pytest.mark.asyncio
 class TestRunAgentsSyncHour:
     async def test_run_skips_when_before_sync_hour(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
-        from unittest.mock import patch
-
         task = RunAgents(
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
             sync_hour=10,
@@ -1258,29 +1430,34 @@ class TestRunAgentsSyncHour:
         with patch("neurons.validator.tasks.run_agents.datetime") as mock_datetime:
             mock_now = MagicMock()
             mock_now.hour = 5
-            mock_datetime.utcnow.return_value = mock_now
+            mock_datetime.now.return_value = mock_now
 
             await task.run()
+
+            mock_datetime.now.assert_called_once_with(timezone.utc)
 
         mock_logger.debug.assert_called_with(
             "Before execution window",
             extra={"current_hour": 5, "sync_hour": 10},
         )
-        mock_metagraph.sync.assert_not_called()
         mock_db_operations.get_events_to_predict.assert_not_called()
 
     async def test_run_executes_when_at_sync_hour(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
-        from unittest.mock import patch
-
         mock_db_operations.get_events_to_predict.return_value = []
 
         task = RunAgents(
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
             sync_hour=10,
@@ -1289,25 +1466,30 @@ class TestRunAgentsSyncHour:
         with patch("neurons.validator.tasks.run_agents.datetime") as mock_datetime:
             mock_now = MagicMock()
             mock_now.hour = 10
-            mock_datetime.utcnow.return_value = mock_now
+            mock_datetime.now.return_value = mock_now
 
             await task.run()
 
-        mock_metagraph.sync.assert_called_once()
+            mock_datetime.now.assert_called_once_with(timezone.utc)
+
         mock_db_operations.get_events_to_predict.assert_called_once()
 
     async def test_run_executes_when_after_sync_hour(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
-        from unittest.mock import patch
-
         mock_db_operations.get_events_to_predict.return_value = []
 
         task = RunAgents(
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
             sync_hour=10,
@@ -1316,23 +1498,30 @@ class TestRunAgentsSyncHour:
         with patch("neurons.validator.tasks.run_agents.datetime") as mock_datetime:
             mock_now = MagicMock()
             mock_now.hour = 15
-            mock_datetime.utcnow.return_value = mock_now
+            mock_datetime.now.return_value = mock_now
 
             await task.run()
 
-        mock_metagraph.sync.assert_called_once()
+            mock_datetime.now.assert_called_once_with(timezone.utc)
+
         mock_db_operations.get_events_to_predict.assert_called_once()
 
 
 class TestRunAgentsDetermineRunStatus:
     def test_timeout_at_run_agents_level(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
         task = RunAgents(
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
@@ -1344,13 +1533,19 @@ class TestRunAgentsDetermineRunStatus:
         assert prediction is None
 
     def test_success_with_valid_prediction(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
         task = RunAgents(
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
@@ -1363,13 +1558,19 @@ class TestRunAgentsDetermineRunStatus:
         assert prediction == 0.75
 
     def test_success_but_invalid_prediction_type(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
         task = RunAgents(
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
@@ -1382,13 +1583,19 @@ class TestRunAgentsDetermineRunStatus:
         assert prediction is None
 
     def test_success_but_missing_prediction_field(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
         task = RunAgents(
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
@@ -1401,13 +1608,19 @@ class TestRunAgentsDetermineRunStatus:
         assert prediction is None
 
     def test_success_but_invalid_output_format(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
         task = RunAgents(
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
@@ -1420,13 +1633,19 @@ class TestRunAgentsDetermineRunStatus:
         assert prediction is None
 
     def test_error_timeout(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
         task = RunAgents(
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
@@ -1443,13 +1662,19 @@ class TestRunAgentsDetermineRunStatus:
         assert prediction is None
 
     def test_error_container_error(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
         task = RunAgents(
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
@@ -1466,13 +1691,19 @@ class TestRunAgentsDetermineRunStatus:
         assert prediction is None
 
     def test_error_invalid_output(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
         task = RunAgents(
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
@@ -1489,13 +1720,19 @@ class TestRunAgentsDetermineRunStatus:
         assert prediction is None
 
     def test_error_agent_error(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
         task = RunAgents(
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
@@ -1512,13 +1749,19 @@ class TestRunAgentsDetermineRunStatus:
         assert prediction is None
 
     def test_error_unknown_type(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
         task = RunAgents(
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
@@ -1532,13 +1775,19 @@ class TestRunAgentsDetermineRunStatus:
         mock_logger.warning.assert_called_once()
 
     def test_invalid_result_type(
-        self, mock_db_operations, mock_sandbox_manager, mock_metagraph, mock_api_client, mock_logger
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
     ):
         task = RunAgents(
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
@@ -1551,13 +1800,12 @@ class TestRunAgentsDetermineRunStatus:
         assert prediction is None
 
 
-@pytest.mark.asyncio
 class TestRunAgentsCreateAgentRun:
     async def test_create_agent_run_success(
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
@@ -1566,7 +1814,8 @@ class TestRunAgentsCreateAgentRun:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
@@ -1595,7 +1844,7 @@ class TestRunAgentsCreateAgentRun:
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
@@ -1604,7 +1853,8 @@ class TestRunAgentsCreateAgentRun:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
@@ -1626,7 +1876,7 @@ class TestRunAgentsCreateAgentRun:
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
@@ -1637,7 +1887,8 @@ class TestRunAgentsCreateAgentRun:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
@@ -1656,7 +1907,7 @@ class TestRunAgentsCreateAgentRun:
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
@@ -1667,7 +1918,8 @@ class TestRunAgentsCreateAgentRun:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
@@ -1686,7 +1938,7 @@ class TestRunAgentsCreateAgentRun:
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
@@ -1695,7 +1947,8 @@ class TestRunAgentsCreateAgentRun:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
         )
@@ -1711,13 +1964,12 @@ class TestRunAgentsCreateAgentRun:
         assert run.is_final is True
 
 
-@pytest.mark.asyncio
 class TestRunAgentsRunCreation:
     async def test_creates_run_on_success(
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
@@ -1731,7 +1983,8 @@ class TestRunAgentsRunCreation:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
             timeout_seconds=120,
@@ -1770,7 +2023,7 @@ class TestRunAgentsRunCreation:
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
@@ -1783,7 +2036,8 @@ class TestRunAgentsRunCreation:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
             timeout_seconds=1,
@@ -1811,7 +2065,7 @@ class TestRunAgentsRunCreation:
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
@@ -1823,7 +2077,8 @@ class TestRunAgentsRunCreation:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
             timeout_seconds=120,
@@ -1858,7 +2113,7 @@ class TestRunAgentsRunCreation:
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
@@ -1870,7 +2125,8 @@ class TestRunAgentsRunCreation:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
             timeout_seconds=120,
@@ -1904,7 +2160,7 @@ class TestRunAgentsRunCreation:
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
@@ -1917,7 +2173,8 @@ class TestRunAgentsRunCreation:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
             timeout_seconds=120,
@@ -1956,7 +2213,7 @@ class TestRunAgentsRunCreation:
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
@@ -1969,7 +2226,8 @@ class TestRunAgentsRunCreation:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
             timeout_seconds=120,
@@ -1994,31 +2252,24 @@ class TestRunAgentsRunCreation:
         mock_db_operations.upsert_agent_runs.assert_called_once()
         mock_db_operations.upsert_predictions.assert_not_called()
 
-        info_calls = [
+        debug_calls = [
             call
-            for call in mock_logger.info.call_args_list
+            for call in mock_logger.debug.call_args_list
             if len(call[0]) > 0
             and "Agent execution completed with non-success status" in call[0][0]
         ]
-        assert len(info_calls) == 1
+        assert len(debug_calls) == 1
 
     async def test_api_create_agent_run_called_with_correct_params(
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
         sample_event_tuple,
     ):
-        from uuid import UUID
-
-        from neurons.validator.models.numinous_client import (
-            CreateAgentRunRequest,
-            CreateAgentRunResponse,
-        )
-
         mock_db_operations.upsert_predictions = AsyncMock()
         mock_db_operations.upsert_agent_runs = AsyncMock()
         mock_db_operations.insert_agent_run_log = AsyncMock()
@@ -2031,7 +2282,8 @@ class TestRunAgentsRunCreation:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
             timeout_seconds=120,
@@ -2069,7 +2321,7 @@ class TestRunAgentsRunCreation:
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
@@ -2084,7 +2336,8 @@ class TestRunAgentsRunCreation:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
             timeout_seconds=120,
@@ -2115,13 +2368,12 @@ class TestRunAgentsRunCreation:
         assert len(error_calls) == 1
 
 
-@pytest.mark.asyncio
 class TestRunAgentsMaxRetries:
     async def test_first_timeout_allows_execution(
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
@@ -2135,7 +2387,8 @@ class TestRunAgentsMaxRetries:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
             timeout_seconds=1,
@@ -2160,7 +2413,7 @@ class TestRunAgentsMaxRetries:
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
@@ -2174,7 +2427,8 @@ class TestRunAgentsMaxRetries:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
             timeout_seconds=1,
@@ -2195,7 +2449,7 @@ class TestRunAgentsMaxRetries:
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
@@ -2209,7 +2463,8 @@ class TestRunAgentsMaxRetries:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
             timeout_seconds=1,
@@ -2230,7 +2485,7 @@ class TestRunAgentsMaxRetries:
         self,
         mock_db_operations,
         mock_sandbox_manager,
-        mock_metagraph,
+        mock_subtensor_cm,
         mock_api_client,
         mock_logger,
         sample_agent,
@@ -2243,7 +2498,8 @@ class TestRunAgentsMaxRetries:
             interval_seconds=600.0,
             db_operations=mock_db_operations,
             sandbox_manager=mock_sandbox_manager,
-            metagraph=mock_metagraph,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
             api_client=mock_api_client,
             logger=mock_logger,
             timeout_seconds=1,
