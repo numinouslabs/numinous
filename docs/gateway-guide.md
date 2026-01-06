@@ -559,6 +559,179 @@ for url in urls[:3]:
     # Analyze content...
 ```
 
+### POST /api/gateway/desearch/x/search
+
+Search for posts on X (Twitter) with advanced filtering options.
+
+**URL:** `{SANDBOX_PROXY_URL}/api/gateway/desearch/x/search`
+
+**Request Body:**
+```json
+{
+  "run_id": "550e8400-e29b-41d4-a716-446655440000",
+  "query": "AI safety",
+  "sort": "Top",
+  "count": 20,
+  "min_likes": 100,
+  "verified": true
+}
+```
+
+**Parameters:**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `run_id` | string (UUID) | Yes | - | Execution tracking ID |
+| `query` | string | Yes | - | Search query for X posts |
+| `sort` | string | No | `Top` | Sort order (`Top` or `Latest`) |
+| `user` | string | No | null | Filter by username |
+| `start_date` | string (ISO 8601) | No | null | Filter posts after this date |
+| `end_date` | string (ISO 8601) | No | null | Filter posts before this date |
+| `lang` | string | No | null | Filter by language code (e.g., `en`) |
+| `verified` | boolean | No | null | Filter by verified status |
+| `blue_verified` | boolean | No | null | Filter by blue verified status |
+| `is_quote` | boolean | No | null | Filter for quote tweets |
+| `is_video` | boolean | No | null | Filter for posts with video |
+| `is_image` | boolean | No | null | Filter for posts with images |
+| `min_retweets` | integer | No | null | Minimum retweet count |
+| `min_replies` | integer | No | null | Minimum reply count |
+| `min_likes` | integer | No | null | Minimum like count |
+| `count` | integer | No | 20 | Number of posts to return |
+
+**Response:**
+```json
+{
+  "posts": [
+    {
+      "id": "1234567890",
+      "text": "Post content here...",
+      "url": "https://x.com/user/status/1234567890",
+      "created_at": "2025-01-06T12:00:00Z",
+      "reply_count": 10,
+      "retweet_count": 50,
+      "like_count": 200,
+      "view_count": 5000,
+      "quote_count": 5,
+      "bookmark_count": 15,
+      "is_quote_tweet": false,
+      "is_retweet": false,
+      "lang": "en",
+      "conversation_id": "1234567890",
+      "media": []
+    }
+  ],
+  "cost": 0.003
+}
+```
+
+**Note:** Each post may include additional optional fields such as `in_reply_to_screen_name`, `in_reply_to_status_id`, `in_reply_to_user_id`, `quoted_status_id`, `replies`, and `display_text_range`.
+
+**Example:**
+```python
+import httpx
+
+response = httpx.post(
+    f"{PROXY_URL}/api/gateway/desearch/x/search",
+    json={
+        "run_id": RUN_ID,
+        "query": "quantum computing breakthrough",
+        "sort": "Latest",
+        "min_likes": 50,
+        "count": 10,
+    },
+    timeout=30.0,
+)
+
+posts = response.json()["posts"]
+for post in posts:
+    print(f"{post['text'][:100]}... - {post['like_count']} likes")
+```
+
+### POST /api/gateway/desearch/x/post
+
+Fetch detailed information about a specific X (Twitter) post by ID.
+
+**URL:** `{SANDBOX_PROXY_URL}/api/gateway/desearch/x/post`
+
+**Request Body:**
+```json
+{
+  "run_id": "550e8400-e29b-41d4-a716-446655440000",
+  "post_id": "1234567890"
+}
+```
+
+**Parameters:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `run_id` | string (UUID) | Yes | Execution tracking ID |
+| `post_id` | string | Yes | The X post ID to fetch |
+
+**Response:**
+```json
+{
+  "user": {
+    "id": "123456",
+    "username": "exampleuser",
+    "name": "Example User",
+    "url": "https://x.com/exampleuser",
+    "created_at": "2020-01-01T00:00:00Z",
+    "description": "User bio...",
+    "followers_count": 10000,
+    "favourites_count": 5000,
+    "listed_count": 100,
+    "media_count": 200,
+    "statuses_count": 5000,
+    "verified": true,
+    "is_blue_verified": false,
+    "profile_image_url": "https://...",
+    "profile_banner_url": "https://...",
+    "location": "San Francisco, CA",
+    "can_dm": true,
+    "can_media_tag": true
+  },
+  "id": "1234567890",
+  "text": "Full post content here...",
+  "url": "https://x.com/exampleuser/status/1234567890",
+  "created_at": "2025-01-06T12:00:00Z",
+  "reply_count": 10,
+  "retweet_count": 50,
+  "like_count": 200,
+  "view_count": 5000,
+  "quote_count": 5,
+  "bookmark_count": 15,
+  "is_quote_tweet": false,
+  "is_retweet": false,
+  "lang": "en",
+  "conversation_id": "1234567890",
+  "media": [],
+  "cost": 0.0003
+}
+```
+
+**Note:** The response may include additional optional fields such as `quote` (for quote tweets), `retweet` (for retweets), `replies` (list of reply posts), `entities`, `extended_entities`, `in_reply_to_screen_name`, `in_reply_to_status_id`, `in_reply_to_user_id`, `quoted_status_id`, and `display_text_range`.
+
+**Example:**
+```python
+import httpx
+
+# Fetch a specific post
+response = httpx.post(
+    f"{PROXY_URL}/api/gateway/desearch/x/post",
+    json={
+        "run_id": RUN_ID,
+        "post_id": "1234567890",
+    },
+    timeout=30.0,
+)
+
+post = response.json()
+print(f"Author: {post['user']['username']}")
+print(f"Text: {post['text']}")
+print(f"Engagement: {post['like_count']} likes, {post['retweet_count']} retweets")
+```
+
 ---
 
 ## Caching
