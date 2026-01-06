@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import numpy as np
 import pandas as pd
 import pytest
+from bittensor import AsyncSubtensor
 from freezegun import freeze_time
 
 from neurons.validator.db.client import DatabaseClient
@@ -50,21 +51,32 @@ class TestScoring:
 
         logger = MagicMock(spec=NuminousLogger)
 
+        # Mock subtensor methods
+        subtensor_cm = AsyncMock(spec=AsyncSubtensor)
+
+        subtensor_cm.metagraph = AsyncMock(return_value=metagraph)
+
+        subtensor_cm.__aenter__ = AsyncMock(return_value=subtensor_cm)
+        subtensor_cm.__aexit__ = AsyncMock(return_value=False)
+
         with freeze_time("2024-12-27 07:00:00"):
             return Scoring(
                 interval_seconds=60.0,
                 db_operations=db_operations,
-                metagraph=metagraph,
+                netuid=99,
+                subtensor=subtensor_cm,
                 logger=logger,
             )
 
-    async def test_metagraph_lite_sync(self, scoring_task: Scoring):
+    def test_copy_metagraph_state(self, scoring_task: Scoring):
         unit = scoring_task
+
+        unit.metagraph = AsyncMock()
 
         unit.metagraph.uids = np.array([1, 2, 3, 4], dtype=np.int64)
         unit.metagraph.hotkeys = ["hotkey1", "hotkey2", "hotkey3", "hotkey4"]
 
-        await unit.metagraph_lite_sync()
+        unit.copy_metagraph_state()
         assert unit.current_miners_df.miner_uid.tolist() == [1, 2, 3, 4]
         assert unit.current_miners_df.miner_hotkey.tolist() == [
             "hotkey1",
@@ -77,7 +89,6 @@ class TestScoring:
         assert unit.current_uids.tolist() == [1, 2, 3, 4]
         assert unit.n_hotkeys == 4
 
-    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "db_rows, current_miners_df, expected_result, expected_log",
         [
@@ -1373,3 +1384,19 @@ class TestScoring:
         # Check events are marked as processed
         events_for_scoring = await db_ops.get_events_for_scoring()
         assert len(events_for_scoring) == 0
+
+    async def test_run_context_managers(self, scoring_task: Scoring):
+        scoring_task.subtensor_cm.__aenter__.assert_not_awaited()
+        scoring_task.subtensor_cm.__aexit__.assert_not_awaited()
+        scoring_task.subtensor_cm.metagraph.assert_not_awaited()
+        assert not hasattr(scoring_task, "metagraph")
+
+        await scoring_task.run()
+
+        scoring_task.subtensor_cm.__aenter__.assert_awaited_once()
+        scoring_task.subtensor_cm.__aexit__.assert_awaited_once()
+        scoring_task.subtensor_cm.metagraph.assert_awaited_once_with(
+            netuid=scoring_task.netuid, lite=True
+        )
+
+        assert isinstance(scoring_task.metagraph, IfMetagraph)

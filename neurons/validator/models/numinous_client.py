@@ -15,6 +15,8 @@ from neurons.validator.models.desearch import (
     WebLinksResponse,
     WebSearchResponse,
     WebToolEnum,
+    XPostResponse,
+    XPostSummary,
 )
 
 
@@ -243,6 +245,38 @@ class DesearchWebCrawlRequest(GatewayCall):
     url: str = Field(..., description="The URL to crawl")
 
 
+class DesearchXSearchRequest(GatewayCall):
+    query: str = Field(..., description="The search query for X posts")
+    sort: typing.Optional[typing.Literal["Top", "Latest"]] = Field(
+        default="Top", description="Sort order for results"
+    )
+    user: typing.Optional[str] = Field(default=None, description="Filter by username")
+    start_date: typing.Optional[datetime] = Field(
+        default=None, description="Filter posts after this date"
+    )
+    end_date: typing.Optional[datetime] = Field(
+        default=None, description="Filter posts before this date"
+    )
+    lang: typing.Optional[str] = Field(default=None, description="Filter by language code")
+    verified: typing.Optional[bool] = Field(default=None, description="Filter by verified status")
+    blue_verified: typing.Optional[bool] = Field(
+        default=None, description="Filter by blue verified status"
+    )
+    is_quote: typing.Optional[bool] = Field(default=None, description="Filter for quote tweets")
+    is_video: typing.Optional[bool] = Field(default=None, description="Filter for videos")
+    is_image: typing.Optional[bool] = Field(default=None, description="Filter for images")
+    min_retweets: typing.Optional[int] = Field(
+        default=None, description="Minimum retweet count", ge=0
+    )
+    min_replies: typing.Optional[int] = Field(default=None, description="Minimum reply count", ge=0)
+    min_likes: typing.Optional[int] = Field(default=None, description="Minimum like count", ge=0)
+    count: int = Field(default=20, ge=1, le=100, description="Number of results")
+
+
+class DesearchXPostRequest(GatewayCall):
+    post_id: str = Field(..., description="The X post ID to fetch")
+
+
 class GatewayCallResponse(BaseModel):
     cost: float
 
@@ -264,6 +298,14 @@ class GatewayDesearchWebSearchResponse(WebSearchResponse, GatewayCallResponse):
 
 
 class GatewayDesearchWebCrawlResponse(WebCrawlResponse, GatewayCallResponse):
+    pass
+
+
+class GatewayDesearchXSearchResponse(GatewayCallResponse):
+    posts: list[XPostSummary] = Field(..., description="List of X posts")
+
+
+class GatewayDesearchXPostResponse(XPostResponse, GatewayCallResponse):
     pass
 
 

@@ -28,10 +28,10 @@ from neurons.validator.tasks.sync_miners_metadata import SyncMinersMetadata
 from neurons.validator.utils.common.event_loop import measure_event_loop_lag
 from neurons.validator.utils.config import get_config
 from neurons.validator.utils.env import assert_requirements
-from neurons.validator.utils.if_metagraph import IfMetagraph
 from neurons.validator.utils.logger.logger import (
     logger,
     override_loggers_level,
+    set_async_substrate_interface_logger,
     set_bittensor_logger,
 )
 
@@ -48,20 +48,18 @@ async def main():
     # Loggers
     override_loggers_level(logging_level)
     set_bittensor_logger()
+    set_async_substrate_interface_logger()
 
     # Bittensor stuff
     bt_netuid = config.get("netuid")
     bt_network = config.get("subtensor").get("network")
     bt_wallet = Wallet(config=config)
-    bt_metagraph = IfMetagraph(
-        netuid=bt_netuid, network=bt_network, subtensor=AsyncSubtensor(config=config)
-    )
 
-    # Sync metagraph for reading validator info
-    await bt_metagraph.sync()
+    async with AsyncSubtensor(config=config) as subtensor:
+        metagraph = await subtensor.metagraph(netuid=bt_netuid, lite=True)
 
-    validator_hotkey = bt_wallet.hotkey.ss58_address
-    validator_uid = bt_metagraph.hotkeys.index(validator_hotkey)
+        validator_hotkey = bt_wallet.hotkey.ss58_address
+        validator_uid = metagraph.hotkeys.index(validator_hotkey)
 
     # Components
     db_client = DatabaseClient(db_path=db_path, logger=logger)
@@ -107,7 +105,8 @@ async def main():
     sync_miners_task = SyncMinersMetadata(
         interval_seconds=300.0,
         db_operations=db_operations,
-        metagraph=bt_metagraph,
+        netuid=bt_netuid,
+        subtensor=AsyncSubtensor(config=config),
         logger=logger,
     )
 
@@ -120,6 +119,7 @@ async def main():
         logger=logger,
         log_docker_to_stdout=True,
         temp_base_dir=sandbox_temp_dir,
+        force_rebuild=True,
     )
 
     run_agents_task = RunAgents(
@@ -127,7 +127,8 @@ async def main():
         db_operations=db_operations,
         api_client=numinous_api_client,
         sandbox_manager=sandbox_manager,
-        metagraph=bt_metagraph,
+        netuid=bt_netuid,
+        subtensor=AsyncSubtensor(config=config),
         logger=logger,
         max_concurrent_sandboxes=config.get("sandbox", {}).get("max_concurrent", 50),
         timeout_seconds=config.get("sandbox", {}).get("timeout_seconds", 180),
@@ -149,7 +150,8 @@ async def main():
     scoring_task = Scoring(
         interval_seconds=307.0,
         db_operations=db_operations,
-        metagraph=bt_metagraph,
+        netuid=bt_netuid,
+        subtensor=AsyncSubtensor(config=config),
         logger=logger,
         page_size=100,
     )
@@ -186,9 +188,7 @@ async def main():
         interval_seconds=379.0,
         db_operations=db_operations,
         logger=logger,
-        metagraph=bt_metagraph,
         netuid=bt_netuid,
-        # Create own subtensor instance
         subtensor=AsyncSubtensor(config=config),
         wallet=bt_wallet,
         api_client=numinous_api_client,

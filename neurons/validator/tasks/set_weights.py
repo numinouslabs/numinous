@@ -1,3 +1,4 @@
+import asyncio
 import copy
 import time
 from dataclasses import dataclass
@@ -17,7 +18,6 @@ from neurons.validator.numinous_client.client import NuminousClient
 from neurons.validator.scheduler.task import AbstractTask
 from neurons.validator.utils.common.converters import pydantic_models_to_dataframe
 from neurons.validator.utils.common.interval import BLOCK_DURATION
-from neurons.validator.utils.if_metagraph import IfMetagraph
 from neurons.validator.utils.logger.logger import NuminousLogger
 from neurons.validator.version import __spec_version__ as spec_version
 
@@ -40,19 +40,20 @@ class SetWeights(AbstractTask):
     db_operations: DatabaseOperations
     logger: NuminousLogger
     netuid: int
-    subtensor: AsyncSubtensor
-    wallet: Wallet  # type: ignore
+    subtensor_cm: AsyncSubtensor
+    wallet: Wallet
+    timeout_seconds: float
 
     def __init__(
         self,
         interval_seconds: float,
         db_operations: DatabaseOperations,
         logger: NuminousLogger,
-        metagraph: IfMetagraph,
         netuid: int,
         subtensor: AsyncSubtensor,
-        wallet: Wallet,  # type: ignore
+        wallet: Wallet,
         api_client: NuminousClient,
+        timeout_seconds: float = 60.0 * 15,
     ):
         if not isinstance(interval_seconds, float) or interval_seconds <= 0:
             raise ValueError("interval_seconds must be a positive number (float).")
@@ -63,15 +64,21 @@ class SetWeights(AbstractTask):
         if not isinstance(api_client, NuminousClient):
             raise TypeError("api_client must be an instance of NuminousClient.")
 
+        if not isinstance(timeout_seconds, float) or timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be a positive number (float).")
+
+        if not isinstance(netuid, int) or netuid < 0:
+            raise ValueError("netuid must be a non-negative integer.")
+
         self.interval = interval_seconds
         self.db_operations = db_operations
         self.logger = logger
 
-        self.metagraph = metagraph
         self.netuid = netuid
-        self.subtensor = subtensor
+        self.subtensor_cm = subtensor
         self.wallet = wallet
         self.api_client = api_client
+        self.timeout_seconds = timeout_seconds
 
         self.current_hotkeys = None
         self.n_hotkeys = None
@@ -89,10 +96,7 @@ class SetWeights(AbstractTask):
     def interval_seconds(self):
         return self.interval
 
-    async def metagraph_lite_sync(self):
-        # sync the metagraph
-        await self.metagraph.sync()
-
+    def copy_metagraph_state(self):
         # hotkeys is list[str], uids is np.ndarray
         self.current_hotkeys = copy.deepcopy(self.metagraph.hotkeys)
         self.n_hotkeys = len(self.current_hotkeys)
@@ -105,7 +109,14 @@ class SetWeights(AbstractTask):
         )
 
     async def time_to_set_weights(self):
+        self.logger.debug("Weights rate limit", extra={"step": "fetching"})
+
         weights_rate_limit = await self.subtensor.weights_rate_limit(netuid=self.netuid)
+
+        self.logger.debug(
+            "Weights rate limit",
+            extra={"step": "fetched", "weights_rate_limit": weights_rate_limit},
+        )
 
         # do not attempt to set weights more often than the rate limit
         blocks_since_last_attempt = (
@@ -287,44 +298,46 @@ class SetWeights(AbstractTask):
         return processed_uids, processed_weights
 
     async def subtensor_set_weights(
-        self, processed_uids: np.ndarray, processed_weights: np.ndarray
+        self,
+        processed_uids: np.ndarray,
+        processed_weights: np.ndarray,
     ):
-        async with self.subtensor as subtensor:
-            response = await subtensor.set_weights(
-                wallet=self.wallet,
-                netuid=self.netuid,
-                uids=processed_uids,
-                weights=processed_weights,
-                version_key=self.spec_version,
-                wait_for_inclusion=True,
-                wait_for_finalization=True,
-                wait_for_revealed_execution=False,
-                max_attempts=2,
-                raise_error=True,
-            )
+        response = await self.subtensor.set_weights(
+            wallet=self.wallet,
+            netuid=self.netuid,
+            uids=processed_uids,
+            weights=processed_weights,
+            version_key=self.spec_version,
+            wait_for_inclusion=True,
+            wait_for_finalization=True,
+            wait_for_revealed_execution=False,
+            max_attempts=2,
+            raise_error=True,
+        )
 
-            if not response.success:
-                extra = {
-                    "fail_msg": response.message,
-                    "processed_uids[:10]": processed_uids.tolist()[:10],
-                    "processed_weights[:10]": processed_weights.tolist()[:10],
-                    "exception": f"{type(response.error).__name__}: {response.error}",
-                }
-                log_msg = "Failed to set the weights."
-                if "No attempt made" in response.message:
-                    # do not consider this as an error - pollutes the logs
-                    self.logger.warning(log_msg, extra=extra)
-                else:
-                    self.logger.error(log_msg, extra=extra)
+        if not response.success:
+            extra = {
+                "fail_msg": response.message,
+                "processed_uids[:10]": processed_uids.tolist()[:10],
+                "processed_weights[:10]": processed_weights.tolist()[:10],
+                "exception": f"{type(response.error).__name__}: {response.error}",
+            }
+            log_msg = "Failed to set the weights."
+
+            if response.message and "No attempt made" in response.message:
+                # do not consider this as an error - pollutes the logs
+                self.logger.warning(log_msg, extra=extra)
             else:
-                self.logger.debug(
-                    "Weights set successfully.",
-                    extra={
-                        "last_set_weights_at": datetime.fromtimestamp(
-                            self.last_set_weights_at, tz=timezone.utc
-                        ).isoformat(timespec="seconds")
-                    },
-                )
+                self.logger.error(log_msg, extra=extra)
+        else:
+            self.logger.debug(
+                "Weights set successfully.",
+                extra={
+                    "last_set_weights_at": datetime.fromtimestamp(
+                        self.last_set_weights_at, tz=timezone.utc
+                    ).isoformat(timespec="seconds")
+                },
+            )
 
     def get_owner_neuron(self):
         owner_uid = None
@@ -367,56 +380,62 @@ class SetWeights(AbstractTask):
         return weights
 
     async def run(self):
-        await self.metagraph_lite_sync()
+        async with asyncio.timeout(delay=self.timeout_seconds):
+            async with self.subtensor_cm as st:
+                self.subtensor = st
 
-        can_set_weights = await self.time_to_set_weights()
-        if not can_set_weights:
-            return
+                self.metagraph = await st.metagraph(netuid=self.netuid, lite=True)
 
-        try:
-            api_response = await self.api_client.get_weights()
+                self.copy_metagraph_state()
 
-            self.logger.info(
-                "Fetched centralized weights from API",
-                extra={
-                    "aggregated_at": api_response.aggregated_at.isoformat(),
-                    "num_weights": len(api_response.weights),
-                    "count": api_response.count,
-                },
-            )
+                can_set_weights = await self.time_to_set_weights()
+                if not can_set_weights:
+                    return
 
-            weights_from_api = self._convert_api_weights_to_weights(api_response)
+                try:
+                    api_response = await self.api_client.get_weights()
 
-        except aiohttp.ClientResponseError as e:
-            if e.status == 503:
-                self.logger.warning(
-                    "Backend has no weights available yet (503). Skipping set_weights this round.",
-                    extra={"status": e.status},
-                )
-                return
-            else:
-                self.logger.error(
-                    "Failed to fetch weights from backend API",
-                    extra={"status": e.status, "message": str(e)},
-                )
-                raise
+                    self.logger.info(
+                        "Fetched centralized weights from API",
+                        extra={
+                            "aggregated_at": api_response.aggregated_at.isoformat(),
+                            "num_weights": len(api_response.weights),
+                            "count": api_response.count,
+                        },
+                    )
 
-        except Exception as e:
-            self.logger.exception(
-                "Unexpected error fetching weights from API",
-                extra={"error_type": type(e).__name__},
-            )
-            raise
+                    weights_from_api = self._convert_api_weights_to_weights(api_response)
 
-        if not weights_from_api:
-            raise ValueError("Failed to get weights from API (empty response).")
+                except aiohttp.ClientResponseError as e:
+                    if e.status == 503:
+                        self.logger.warning(
+                            "Backend has no weights available yet (503). Skipping set_weights this round.",
+                            extra={"status": e.status},
+                        )
+                        return
+                    else:
+                        self.logger.error(
+                            "Failed to fetch weights from backend API",
+                            extra={"status": e.status, "message": str(e)},
+                        )
+                        raise
 
-        merged_weights = self.merge_weights_with_metagraph(weights_from_api)
+                except Exception as e:
+                    self.logger.exception(
+                        "Unexpected error fetching weights from API",
+                        extra={"error_type": type(e).__name__},
+                    )
+                    raise
 
-        self.check_scores_sanity(merged_weights)
+                if not weights_from_api:
+                    raise ValueError("Failed to get weights from API (empty response).")
 
-        normalized_scores = self.renormalize_weights(merged_weights)
+                merged_weights = self.merge_weights_with_metagraph(weights_from_api)
 
-        uids, weights = await self.preprocess_weights(normalized_scores)
+                self.check_scores_sanity(merged_weights)
 
-        await self.subtensor_set_weights(processed_uids=uids, processed_weights=weights)
+                normalized_scores = self.renormalize_weights(merged_weights)
+
+                uids, weights = await self.preprocess_weights(normalized_scores)
+
+                await self.subtensor_set_weights(processed_uids=uids, processed_weights=weights)

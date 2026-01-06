@@ -79,18 +79,19 @@ def set_bittensor_logger():
     return bt_logger
 
 
-def set_uvicorn_logger():
-    uvicorn_logger = logging.getLogger("uvicorn")
-    uvicorn_logger.setLevel(loggers_level)
+def set_async_substrate_interface_logger():
+    asi_logger = logging.getLogger("async_substrate_interface")
+    asi_logger.propagate = False
+    asi_logger.setLevel(loggers_level)
 
     # Add a console handler with JSON formatter
     json_handler = logging.StreamHandler()
     json_handler.setFormatter(JSONFormatter())
 
-    uvicorn_logger.handlers.clear()
-    uvicorn_logger.addHandler(json_handler)
+    asi_logger.handlers.clear()
+    asi_logger.addHandler(json_handler)
 
-    return uvicorn_logger
+    return asi_logger
 
 
 logger = create_logger("validator")

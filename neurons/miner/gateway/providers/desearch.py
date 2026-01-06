@@ -1,3 +1,4 @@
+import datetime
 import typing
 
 import aiohttp
@@ -7,6 +8,8 @@ from neurons.validator.models.desearch import (
     WebCrawlResponse,
     WebLinksResponse,
     WebSearchResponse,
+    XPostResponse,
+    XPostSummary,
 )
 
 
@@ -111,3 +114,58 @@ class DesearchClient:
                 response.raise_for_status()
                 data = await response.text()
                 return WebCrawlResponse(url=url, content=data)
+
+    async def x_search(
+        self,
+        query: str,
+        sort: typing.Optional[typing.Literal["Top", "Latest"]] = "Top",
+        user: typing.Optional[str] = None,
+        start_date: typing.Optional[datetime.datetime] = None,
+        end_date: typing.Optional[datetime.datetime] = None,
+        lang: typing.Optional[str] = None,
+        verified: typing.Optional[bool] = None,
+        blue_verified: typing.Optional[bool] = None,
+        is_quote: typing.Optional[bool] = None,
+        is_video: typing.Optional[bool] = None,
+        is_image: typing.Optional[bool] = None,
+        min_retweets: typing.Optional[int] = None,
+        min_replies: typing.Optional[int] = None,
+        min_likes: typing.Optional[int] = None,
+        count: int = 20,
+    ) -> list[XPostSummary]:
+        params = {
+            "query": query,
+            "sort": sort,
+            "user": user,
+            "start_date": start_date,
+            "end_date": end_date,
+            "lang": lang,
+            "verified": verified,
+            "blue_verified": blue_verified,
+            "is_quote": is_quote,
+            "is_video": is_video,
+            "is_image": is_image,
+            "min_retweets": min_retweets,
+            "min_replies": min_replies,
+            "min_likes": min_likes,
+            "count": count,
+        }
+
+        params = {k: v for k, v in params.items() if v is not None}
+
+        url = f"{self.__base_url}/twitter"
+
+        async with aiohttp.ClientSession(timeout=self.__timeout, headers=self.__headers) as session:
+            async with session.get(url, params=params) as response:
+                response.raise_for_status()
+                data = await response.json()
+                return [XPostSummary.model_validate(item) for item in data]
+
+    async def fetch_x_post(self, post_id: str) -> XPostResponse:
+        url = f"{self.__base_url}/twitter/post"
+
+        async with aiohttp.ClientSession(timeout=self.__timeout, headers=self.__headers) as session:
+            async with session.get(url, params={"id": post_id}) as response:
+                response.raise_for_status()
+                data = await response.json()
+                return XPostResponse.model_validate(data)

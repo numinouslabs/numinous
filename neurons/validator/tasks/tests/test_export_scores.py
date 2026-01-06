@@ -57,7 +57,7 @@ class TestExportScores:
     def export_scores_task(
         self,
         db_operations: DatabaseOperations,
-        bt_wallet: Wallet,  # type: ignore
+        bt_wallet: Wallet,
     ):
         api_client = NuminousClient(
             env="test", logger=MagicMock(spec=NuminousLogger), bt_wallet=bt_wallet

@@ -1,5 +1,11 @@
 # Release Notes
 
+## [2.0.7] - 2025-12-30
+- **Logging**: Enable async_substrate_interface logs
+- **Weights**: Add timeout to set weights
+- **Bittensor Upgrade**: Upgraded to Bittensor version 10.0.1
+- **Bittensor CLI Upgrade**: Upgraded to Bittensor CLI version 9.17.0
+
 ## [2.0.6] - 2025-12-22
 - **Database**: Drop deprecated scores columns
 - **Validator**: Removed metagraph-based scoring pipeline

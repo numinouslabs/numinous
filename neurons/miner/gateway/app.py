@@ -176,6 +176,66 @@ async def desearch_web_crawl(
     )
 
 
+@gateway_router.post("/desearch/x/search", response_model=models.GatewayDesearchXSearchResponse)
+@cached_gateway_call
+@handle_provider_errors("Desearch")
+async def desearch_x_search(
+    request: models.DesearchXSearchRequest,
+) -> models.GatewayDesearchXSearchResponse:
+    api_key = os.getenv("DESEARCH_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="DESEARCH_API_KEY not configured",
+        )
+
+    client = DesearchClient(api_key=api_key)
+    result = await client.x_search(
+        query=request.query,
+        sort=request.sort,
+        user=request.user,
+        start_date=request.start_date,
+        end_date=request.end_date,
+        lang=request.lang,
+        verified=request.verified,
+        blue_verified=request.blue_verified,
+        is_quote=request.is_quote,
+        is_video=request.is_video,
+        is_image=request.is_image,
+        min_retweets=request.min_retweets,
+        min_replies=request.min_replies,
+        min_likes=request.min_likes,
+        count=request.count,
+    )
+
+    return models.GatewayDesearchXSearchResponse(
+        posts=result,
+        cost=calculate_desearch_cost(DesearchEndpoint.X_SEARCH),
+    )
+
+
+@gateway_router.post("/desearch/x/post", response_model=models.GatewayDesearchXPostResponse)
+@cached_gateway_call
+@handle_provider_errors("Desearch")
+async def desearch_x_post(
+    request: models.DesearchXPostRequest,
+) -> models.GatewayDesearchXPostResponse:
+    api_key = os.getenv("DESEARCH_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="DESEARCH_API_KEY not configured",
+        )
+
+    client = DesearchClient(api_key=api_key)
+    result = await client.fetch_x_post(post_id=request.post_id)
+
+    return models.GatewayDesearchXPostResponse(
+        **result.model_dump(),
+        cost=calculate_desearch_cost(DesearchEndpoint.FETCH_X_POST),
+    )
+
+
 app.include_router(gateway_router)
 
 

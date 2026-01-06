@@ -4,6 +4,8 @@ from typing import Any
 
 from bittensor.core.metagraph import AsyncMetagraph
 
+from neurons.validator.utils.logger.logger import logger
+
 
 class IfMetagraph(AsyncMetagraph):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -13,19 +15,27 @@ class IfMetagraph(AsyncMetagraph):
         self._sync_lock = asyncio.Lock()
 
     async def sync(self) -> None:
+        logger.debug("Syncing metagraph")
+
         sync_throttle_seconds = 30
 
         now = time.time()
 
         if now - self._last_sync_time < sync_throttle_seconds:
+            logger.debug("Metagraph synced", extra={"throttled": True})
+
             return
 
         async with self._sync_lock:
             now = time.time()
 
             if now - self._last_sync_time < sync_throttle_seconds:
+                logger.debug("Metagraph synced", extra={"throttled_after_lock": True})
+
                 return
 
             await super().sync(lite=True)
 
             self._last_sync_time = time.time()
+
+            logger.debug("Metagraph synced", extra={"throttled": False})
