@@ -1057,6 +1057,21 @@ class DatabaseOperations:
 
         return self._parse_rows(model=AgentRunsModel, rows=rows)
 
+    async def get_failed_agent_runs_for_event(self, event_id: str) -> list[AgentRunsModel]:
+        rows = await self.__db_client.many(
+            f"""
+                SELECT {', '.join(AGENT_RUNS_FIELDS)}
+                FROM agent_runs
+                WHERE unique_event_id = ?
+                    AND is_final = 1
+                    AND status != ?
+            """,
+            [event_id, AgentRunStatus.SUCCESS.value],
+            use_row_factory=True,
+        )
+
+        return self._parse_rows(model=AgentRunsModel, rows=rows)
+
     async def mark_agent_runs_as_exported(self, run_ids: list[str]) -> None:
         if not run_ids:
             return

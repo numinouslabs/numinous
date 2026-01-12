@@ -437,10 +437,29 @@ Run: numi services link
 
 ## Linking Services
 
-After uploading your agent, link your Desearch account to cover Desearch API costs:
+After uploading your agent, link your API accounts to cover API costs for LLM inference and search.
+
+### Chutes AI (LLM Inference)
+
+Link your Chutes account to access higher budget for LLM API calls:
 
 ```bash
-# Link Desearch (required for production use)
+numi services link chutes
+```
+
+You'll be prompted for:
+- Your Chutes API key (get from https://chutes.ai/app)
+- Coldkey password (to sign the linking)
+
+**Cost Tiers:**
+- Free tier (default): $0.01 per agent run
+- Paid tier (your key): $0.10 per agent run
+
+### Desearch AI (Search & Data)
+
+Link your Desearch account to cover search API costs:
+
+```bash
 numi services link desearch
 ```
 
@@ -448,14 +467,16 @@ You'll be prompted for:
 - Your Desearch API key (get from https://console.desearch.ai)
 - Coldkey password (to sign the linking)
 
+**Cost Tiers:**
+- Free tier (default): $0.01 per agent run
+- Paid tier (your key): $0.10 per agent run
+
 **Important:** Re-link after each agent upload - each code version needs its own link.
 
 Check your linked services anytime:
 ```bash
 numi services list
 ```
-
-**Note:** Currently, only Desearch costs are billed to your account. In the future, all API costs will transition to miner accounts, allowing us to add more services and increase cost limits for better forecasting capabilities.
 
 ## Activation Schedule
 
@@ -470,6 +491,11 @@ You can submit anytime, but activation happens once daily at midnight UTC.
 numi upload-agent          # Submit agent to network
 numi list-agents           # List your uploaded agents
 numi inspect-agent         # View/download agent code
+
+# Service Linking
+numi services link chutes   # Link Chutes API key
+numi services link desearch # Link Desearch API key
+numi services list          # Check linked services
 
 # Local Testing
 numi test-agent            # Test agent with real events

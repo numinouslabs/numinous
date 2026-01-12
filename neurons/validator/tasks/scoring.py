@@ -7,6 +7,7 @@ import pandas as pd
 from bittensor import AsyncSubtensor
 
 from neurons.validator.db.operations import DatabaseOperations
+from neurons.validator.models.agent_runs import AgentRunsModel
 from neurons.validator.models.event import EventsModel
 from neurons.validator.models.prediction import PredictionsModel
 from neurons.validator.models.score import ScoresModel
@@ -310,18 +311,32 @@ class Scoring(AbstractTask):
             ]
         )
 
-    def fill_missing_predictions(
-        self, interval_scores: pd.DataFrame, imputed_prediction: float = 0.5
+    def fill_unresponsive_miners(
+        self,
+        interval_scores: pd.DataFrame,
+        failed_runs: list[AgentRunsModel],
+        imputed_prediction: float = 0.5,
     ) -> pd.DataFrame:
         interval_scores_df = interval_scores.copy()
         interval_scores_df[ScoreNames.interval_agg_prediction] = interval_scores_df[
             ScoreNames.interval_agg_prediction
         ].astype("Float64")
 
+        failed_miners = {(run.miner_uid, run.miner_hotkey) for run in failed_runs}
+
+        # Only impute 0.5 for miners with failed runs
         missing_predictions = interval_scores_df[ScoreNames.interval_agg_prediction].isnull()
+        has_failed_run = interval_scores_df.apply(
+            lambda row: (row[ScoreNames.miner_uid], row[ScoreNames.miner_hotkey]) in failed_miners,
+            axis=1,
+        )
+
+        should_impute = missing_predictions & has_failed_run
         interval_scores_df.loc[
-            missing_predictions, ScoreNames.interval_agg_prediction
+            should_impute, ScoreNames.interval_agg_prediction
         ] = imputed_prediction
+
+        interval_scores_df = interval_scores_df.dropna(subset=[ScoreNames.interval_agg_prediction])
 
         return interval_scores_df
 
@@ -379,8 +394,11 @@ class Scoring(AbstractTask):
                 "No intervals to score - event discarded.", event.event_id
             )
 
-        # Score all miners in the metagraph - those without predictions get 0.5 imputed
-        miners = self.miners_last_reg.copy()
+        # Do not score miners which registered after the scoring window started
+        miners = self.miners_last_reg[
+            self.miners_last_reg[ScoreNames.miner_registered_minutes]
+            <= scoring_window_start_minutes
+        ].copy()
         if miners.empty:
             return self.return_empty_scores_df("No miners to score.", event.event_id)
 
@@ -393,9 +411,14 @@ class Scoring(AbstractTask):
             predictions_df=predictions_df, miners=miners, intervals=intervals
         )
 
-        # Fill missing predictions with 0.5 for miners without predictions
-        interval_scores_df = self.fill_missing_predictions(
-            interval_scores_df, imputed_prediction=0.5
+        # Fetch failed agent runs to identify miners whose code failed
+        failed_runs = await self.db_operations.get_failed_agent_runs_for_event(
+            event_id=event.event_id
+        )
+
+        # Fill missing predictions with 0.5 for miners whose code failed, then drop truly-missing
+        interval_scores_df = self.fill_unresponsive_miners(
+            interval_scores_df, failed_runs=failed_runs, imputed_prediction=0.5
         )
 
         # Aggregate predictions by miner using weighted average

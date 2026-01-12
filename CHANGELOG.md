@@ -1,5 +1,8 @@
 # Release Notes
 
+## [2.0.8] - 2026-01-12
+- **Scoring**: Remove 0.5 imputation for miners without predictions
+
 ## [2.0.7] - 2025-12-30
 - **Logging**: Enable async_substrate_interface logs
 - **Weights**: Add timeout to set weights

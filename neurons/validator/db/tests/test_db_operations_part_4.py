@@ -273,6 +273,62 @@ class TestDbOperationsPart4(TestDbOperationsBase):
         """Test marking empty list does nothing"""
         await db_operations.mark_agent_runs_as_exported([])
 
+    async def test_get_failed_agent_runs_for_event(
+        self, db_operations: DatabaseOperations, db_client: DatabaseClient
+    ):
+        """Test getting failed agent runs for a specific event"""
+        # Create FK dependencies
+        event_id = "event_failed_test"
+        await self._create_event(db_operations, event_id)
+        await self._create_miner_agent(db_operations, "agent_v1", miner_uid=1)
+        await self._create_miner_agent(db_operations, "agent_v2", miner_uid=2)
+        await self._create_miner_agent(db_operations, "agent_v3", miner_uid=3)
+
+        # Miner 1: Success run
+        run_success = AgentRunsModel(
+            run_id=str(uuid4()),
+            unique_event_id=event_id,
+            agent_version_id="agent_v1",
+            miner_uid=1,
+            miner_hotkey="hotkey_1",
+            status=AgentRunStatus.SUCCESS,
+            is_final=True,
+        )
+        await db_operations.upsert_agent_runs([run_success])
+
+        # Miner 2: Failed run with is_final=False
+        run_failed_not_final = AgentRunsModel(
+            run_id=str(uuid4()),
+            unique_event_id=event_id,
+            agent_version_id="agent_v2",
+            miner_uid=2,
+            miner_hotkey="hotkey_2",
+            status=AgentRunStatus.SANDBOX_TIMEOUT,
+            is_final=False,
+        )
+        await db_operations.upsert_agent_runs([run_failed_not_final])
+
+        # Miner 3: Failed run with is_final=True
+        run_failed_final = AgentRunsModel(
+            run_id=str(uuid4()),
+            unique_event_id=event_id,
+            agent_version_id="agent_v3",
+            miner_uid=3,
+            miner_hotkey="hotkey_3",
+            status=AgentRunStatus.INTERNAL_AGENT_ERROR,
+            is_final=True,
+        )
+        await db_operations.upsert_agent_runs([run_failed_final])
+
+        failed_runs = await db_operations.get_failed_agent_runs_for_event(event_id)
+
+        # Should only return miner 3 run
+        assert len(failed_runs) == 1
+        assert failed_runs[0].run_id == run_failed_final.run_id
+        assert failed_runs[0].miner_uid == 3
+        assert failed_runs[0].status == AgentRunStatus.INTERNAL_AGENT_ERROR
+        assert failed_runs[0].is_final is True
+
     async def test_retry_scenario(
         self, db_operations: DatabaseOperations, db_client: DatabaseClient
     ):

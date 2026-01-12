@@ -10,6 +10,7 @@ from freezegun import freeze_time
 
 from neurons.validator.db.client import DatabaseClient
 from neurons.validator.db.operations import DatabaseOperations
+from neurons.validator.models.agent_runs import AgentRunsModel, AgentRunStatus
 from neurons.validator.models.event import EventsModel, EventStatus
 from neurons.validator.models.miner import MinersModel
 from neurons.validator.models.prediction import PredictionsModel
@@ -447,11 +448,12 @@ class TestScoring:
         assert ScoreNames.rema_prediction in df.columns
         assert ScoreNames.rema_peer_score in df.columns
 
-    def test_fill_missing_predictions_with_missing(self, scoring_task: Scoring):
-        """Test that missing predictions are filled with 0.5 regardless of registration time."""
+    def test_fill_unresponsive_miners_with_failed_run(self, scoring_task: Scoring):
+        """Test that miners with failed agent runs get 0.5 imputed."""
         df = pd.DataFrame(
             {
                 ScoreNames.miner_uid: [1, 2],
+                ScoreNames.miner_hotkey: ["hotkey1", "hotkey2"],
                 ScoreNames.miner_registered_minutes: [50, 50],
                 ScoreNames.interval_start: [100, 100],
                 ScoreNames.interval_agg_prediction: [pd.NA, 0.8],
@@ -459,10 +461,26 @@ class TestScoring:
                 ScoreNames.weight: [1, 1],
             }
         )
-        result_df = scoring_task.fill_missing_predictions(df, imputed_prediction=0.5)
+
+        # Create a failed run for miner 1
+        failed_runs = [
+            AgentRunsModel(
+                run_id="run_1",
+                unique_event_id="event_1",
+                agent_version_id="agent_v1",
+                miner_uid=1,
+                miner_hotkey="hotkey1",
+                status=AgentRunStatus.SANDBOX_TIMEOUT,
+                is_final=True,
+            )
+        ]
+
+        result_df = scoring_task.fill_unresponsive_miners(
+            df, failed_runs=failed_runs, imputed_prediction=0.5
+        )
 
         assert isinstance(result_df, pd.DataFrame)
-        # Missing prediction should be filled with 0.5
+        # Miner 1 has failed run, so missing prediction should be filled with 0.5
         np.testing.assert_allclose(
             result_df.loc[
                 result_df[ScoreNames.miner_uid] == 1, ScoreNames.interval_agg_prediction
@@ -470,7 +488,7 @@ class TestScoring:
             0.5,
             rtol=1e-5,
         )
-        # Existing prediction should be unchanged
+        # Miner 2 has real prediction, should be unchanged
         np.testing.assert_allclose(
             result_df.loc[
                 result_df[ScoreNames.miner_uid] == 2, ScoreNames.interval_agg_prediction
@@ -479,13 +497,12 @@ class TestScoring:
             rtol=1e-5,
         )
 
-    def test_fill_missing_predictions_fills_all_regardless_of_registration(
-        self, scoring_task: Scoring
-    ):
-        """Test that ALL missing predictions are filled, even for miners registered after the interval."""
+    def test_fill_unresponsive_miners_without_failed_run_stays_null(self, scoring_task: Scoring):
+        """Test that miners without failed runs do NOT get 0.5 imputed - they stay null."""
         df = pd.DataFrame(
             {
                 ScoreNames.miner_uid: [1, 2],
+                ScoreNames.miner_hotkey: ["hotkey1", "hotkey2"],
                 ScoreNames.miner_registered_minutes: [50, 150],  # miner 2 registered after interval
                 ScoreNames.interval_start: [100, 100],
                 ScoreNames.interval_agg_prediction: [pd.NA, pd.NA],
@@ -494,10 +511,25 @@ class TestScoring:
             }
         )
 
-        result_df = scoring_task.fill_missing_predictions(df, imputed_prediction=0.5)
+        # Only miner 1 has a failed run
+        failed_runs = [
+            AgentRunsModel(
+                run_id="run_1",
+                unique_event_id="event_1",
+                agent_version_id="agent_v1",
+                miner_uid=1,
+                miner_hotkey="hotkey1",
+                status=AgentRunStatus.INTERNAL_AGENT_ERROR,
+                is_final=True,
+            )
+        ]
+
+        result_df = scoring_task.fill_unresponsive_miners(
+            df, failed_runs=failed_runs, imputed_prediction=0.5
+        )
         assert isinstance(result_df, pd.DataFrame)
 
-        # Miner 1: registered before interval, missing prediction -> filled with 0.5
+        # Miner 1: has failed run, missing prediction -> filled with 0.5
         np.testing.assert_allclose(
             result_df.loc[
                 result_df[ScoreNames.miner_uid] == 1, ScoreNames.interval_agg_prediction
@@ -505,14 +537,8 @@ class TestScoring:
             0.5,
             rtol=1e-5,
         )
-        # Miner 2: registered AFTER interval, missing prediction -> ALSO filled with 0.5
-        np.testing.assert_allclose(
-            result_df.loc[
-                result_df[ScoreNames.miner_uid] == 2, ScoreNames.interval_agg_prediction
-            ].iloc[0],
-            0.5,
-            rtol=1e-5,
-        )
+        # Miner 2: no failed run, missing prediction -> gets dropped entirely
+        assert len(result_df[result_df[ScoreNames.miner_uid] == 2]) == 0
 
     def test_aggregate_predictions_by_miner(self, scoring_task: Scoring):
         # Test REMA weighted aggregation: sum(pred × weight) / sum(weight)
@@ -593,8 +619,7 @@ class TestScoring:
         assert len(updated_events) == 1
         assert updated_events[0]["status"] == str(EventStatus.DISCARDED.value)
 
-    async def test_score_event_miner_without_prediction_gets_imputed(self, scoring_task: Scoring):
-        """Test that miners without predictions get 0.5 imputed, regardless of registration time."""
+    async def test_score_event_miner_with_failed_run_gets_imputed(self, scoring_task: Scoring):
         base_time = datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc)
         duration_minutes = 3 * AGGREGATION_INTERVAL_LENGTH_MINUTES
 
@@ -620,8 +645,8 @@ class TestScoring:
             SCORING_WINDOW_INTERVALS * AGGREGATION_INTERVAL_LENGTH_MINUTES
         )
 
-        # Miner 1: has predictions for all intervals (like run_agents does via replication)
-        # Miner 2: registered after scoring window, no prediction - should get 0.5 imputed
+        # Miner 1: has predictions for all intervals
+        # Miner 2: registered before window, has failed agent run, no prediction - should get 0.5
         predictions = [
             # Miner 1: prediction in interval 0 (older, gets weight 1.0)
             PredictionsModel(
@@ -656,10 +681,26 @@ class TestScoring:
                 ScoreNames.miner_hotkey: ["hotkey1", "hotkey2"],
                 ScoreNames.miner_registered_minutes: [
                     scoring_window_start_minutes - 1,  # miner 1: registered before
-                    scoring_window_start_minutes + 1,  # miner 2: registered after
+                    scoring_window_start_minutes - 1,  # miner 2: also registered before
                 ],
             }
         )
+
+        # Mock failed agent run for miner 2
+        unit.db_operations.get_failed_agent_runs_for_event = AsyncMock(
+            return_value=[
+                AgentRunsModel(
+                    run_id="run_failed_2",
+                    unique_event_id="evt_imputation_test",
+                    agent_version_id="agent_v2",
+                    miner_uid=2,
+                    miner_hotkey="hotkey2",
+                    status=AgentRunStatus.SANDBOX_TIMEOUT,
+                    is_final=True,
+                )
+            ]
+        )
+
         result = await unit.score_event(event, predictions)
 
         # Both miners should be scored
@@ -672,7 +713,7 @@ class TestScoring:
         # Brier for 0.8 with outcome=1: (0.8 - 1)² = 0.04
         np.testing.assert_allclose(miner1[ScoreNames.rema_peer_score], 0.04, rtol=1e-5)
 
-        # Miner 2: no prediction, should be imputed with 0.5
+        # Miner 2: failed run, no prediction -> should be imputed with 0.5
         miner2 = result[result[ScoreNames.miner_uid] == 2].iloc[0]
         np.testing.assert_allclose(miner2[ScoreNames.rema_prediction], 0.5, rtol=1e-5)
         # Brier for 0.5 with outcome=1: (0.5 - 1)² = 0.25
@@ -752,18 +793,32 @@ class TestScoring:
             SCORING_WINDOW_INTERVALS * AGGREGATION_INTERVAL_LENGTH_MINUTES
         )
 
-        prediction = PredictionsModel(
-            unique_event_id="evt_normal",
-            miner_hotkey="hotkey1",
-            miner_uid=1,
-            latest_prediction=0.8,
-            interval_start_minutes=event_cutoff_start_minutes - AGGREGATION_INTERVAL_LENGTH_MINUTES,
-            interval_agg_prediction=0.8,
-            interval_count=1,
-            submitted=datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc),
-            exported=False,
-        )
-        predictions = [prediction]
+        # Provide predictions for all intervals (like run_agents does via replication)
+        predictions = [
+            PredictionsModel(
+                unique_event_id="evt_normal",
+                miner_hotkey="hotkey1",
+                miner_uid=1,
+                latest_prediction=0.8,
+                interval_start_minutes=scoring_window_start_minutes,  # interval 0 (older, higher weight)
+                interval_agg_prediction=0.8,
+                interval_count=1,
+                submitted=datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc),
+                exported=False,
+            ),
+            PredictionsModel(
+                unique_event_id="evt_normal",
+                miner_hotkey="hotkey1",
+                miner_uid=1,
+                latest_prediction=0.8,
+                interval_start_minutes=event_cutoff_start_minutes
+                - AGGREGATION_INTERVAL_LENGTH_MINUTES,  # interval 1 (newer, lower weight)
+                interval_agg_prediction=0.8,
+                interval_count=1,
+                submitted=datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc),
+                exported=False,
+            ),
+        ]
 
         unit = scoring_task
 
@@ -777,6 +832,9 @@ class TestScoring:
             }
         )
 
+        # Mock no failed runs
+        unit.db_operations.get_failed_agent_runs_for_event = AsyncMock(return_value=[])
+
         result = await unit.score_event(event, predictions)
 
         assert not result.empty
@@ -789,16 +847,15 @@ class TestScoring:
         ]:
             assert col in result.columns
 
-        # Scoring window generates SCORING_WINDOW_INTERVALS intervals (3 by default)
-        # Miner has prediction only for the last interval (0.8)
-        # Early intervals get imputed to 0.5 (unresponsive)
-        # REMA will be between 0.5 and 0.8 (closer to 0.8 due to power decay weighting)
+        # Scoring window generates SCORING_WINDOW_INTERVALS intervals (default 2)
+        # Miner has prediction of 0.8 in all intervals
+        # No imputation happens (no failed runs)
         row = result.iloc[0]
         assert row[ScoreNames.miner_uid] == 1
         assert row[ScoreNames.miner_hotkey] == "hotkey1"
 
-        # Reasonable prediction (between 0.5 and 0.8)
-        assert 0.5 <= row[ScoreNames.rema_prediction] <= 0.8
+        # REMA prediction should be 0.8 (all intervals have 0.8)
+        np.testing.assert_allclose(row[ScoreNames.rema_prediction], 0.8, rtol=1e-5)
 
         # Brier score should be calculated from the REMA prediction
         expected_brier = (row[ScoreNames.rema_prediction] - 1.0) ** 2
@@ -807,10 +864,8 @@ class TestScoring:
         assert unit.errors_count == 0
         assert unit.logger.error.call_count == 0
 
-    async def test_score_event_all_miners_scored_regardless_of_registration(
-        self, scoring_task: Scoring
-    ):
-        """Test that ALL miners are scored regardless of when they registered."""
+    async def test_score_event_only_miners_registered_before_window(self, scoring_task: Scoring):
+        """Test that only miners registered before scoring window are scored."""
         base_time = datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc)
         duration_minutes = 5 * AGGREGATION_INTERVAL_LENGTH_MINUTES
 
@@ -860,7 +915,7 @@ class TestScoring:
                 submitted=base_time,
                 exported=False,
             ),
-            # Miner 2: interval 0
+            # Miner 2: interval 0 (won't be scored - registered after window)
             PredictionsModel(
                 unique_event_id="evt_window_exclusion",
                 miner_hotkey="miner_late",
@@ -872,7 +927,7 @@ class TestScoring:
                 submitted=base_time,
                 exported=False,
             ),
-            # Miner 2: interval 1
+            # Miner 2: interval 1 (won't be scored - registered after window)
             PredictionsModel(
                 unique_event_id="evt_window_exclusion",
                 miner_hotkey="miner_late",
@@ -891,7 +946,7 @@ class TestScoring:
 
         # Miner 1: registered before scoring window
         # Miner 2: registered after scoring window start
-        # BOTH should be scored
+        # Only miner 1 should be scored
         unit.miners_last_reg = pd.DataFrame(
             {
                 ScoreNames.miner_uid: [1, 2],
@@ -905,19 +960,18 @@ class TestScoring:
             }
         )
 
+        # Mock no failed runs
+        unit.db_operations.get_failed_agent_runs_for_event = AsyncMock(return_value=[])
+
         result = await unit.score_event(event, predictions)
 
-        # BOTH miners should be scored (new behavior)
+        # Only miner 1 should be scored (registered before window)
         assert not result.empty
-        assert result.shape[0] == 2
+        assert result.shape[0] == 1
 
         # Miner 1 with prediction 0.7
         miner1_row = result[result[ScoreNames.miner_uid] == 1].iloc[0]
         np.testing.assert_allclose(miner1_row[ScoreNames.rema_prediction], 0.7, rtol=1e-5)
-
-        # Miner 2 with prediction 0.9
-        miner2_row = result[result[ScoreNames.miner_uid] == 2].iloc[0]
-        np.testing.assert_allclose(miner2_row[ScoreNames.rema_prediction], 0.9, rtol=1e-5)
 
         assert unit.errors_count == 0
 
@@ -968,6 +1022,9 @@ class TestScoring:
                 exported=False,
             ),
         ]
+
+        # Mock no failed runs
+        unit.db_operations.get_failed_agent_runs_for_event = AsyncMock(return_value=[])
 
         result = await unit.score_event(event, predictions)
 
@@ -1080,10 +1137,19 @@ class TestScoring:
         # Event1: cutoff at +10 intervals (both miners eligible)
         event1_cutoff = base_date + timedelta(minutes=10 * AGGREGATION_INTERVAL_LENGTH_MINUTES)
 
-        # Predictions: last interval before event1 cutoff
+        # Predictions: replicate across all intervals (like run_agents does)
         event1_cutoff_minutes = minutes_since_epoch(event1_cutoff)
         event1_cutoff_aligned = align_to_interval(event1_cutoff_minutes)
-        predictions_interval_minutes = event1_cutoff_aligned - AGGREGATION_INTERVAL_LENGTH_MINUTES
+        event1_scoring_window_start = event1_cutoff_aligned - (
+            SCORING_WINDOW_INTERVALS * AGGREGATION_INTERVAL_LENGTH_MINUTES
+        )
+
+        event2_cutoff_minutes = minutes_since_epoch(event2_cutoff)
+        event2_cutoff_aligned = align_to_interval(event2_cutoff_minutes)
+        event2_scoring_window_start = event2_cutoff_aligned - (
+            SCORING_WINDOW_INTERVALS * AGGREGATION_INTERVAL_LENGTH_MINUTES
+        )
+
         event3_cutoff = event1_cutoff
 
         # Mock dependencies
@@ -1248,47 +1314,65 @@ class TestScoring:
             parameters=[EventStatus.SETTLED, EventStatus.DISCARDED],
         )
 
-        # insert predictions
-        predictions = [
-            PredictionsModel(
-                unique_event_id="event2",
-                miner_hotkey="hotkey1",
-                miner_uid=1,
-                latest_prediction=1.0,
-                interval_start_minutes=predictions_interval_minutes,
-                interval_agg_prediction=1.0,
-            ),
-            PredictionsModel(
-                unique_event_id="event2",
-                miner_hotkey="hotkey2",
-                miner_uid=2,
-                latest_prediction=1.0,
-                interval_start_minutes=predictions_interval_minutes,
-                interval_agg_prediction=1.0,
-            ),
-            PredictionsModel(
-                unique_event_id=expected_event_id,
-                miner_hotkey="hotkey2",
-                miner_uid=2,
-                latest_prediction=1.0,
-                interval_start_minutes=predictions_interval_minutes,
-                interval_agg_prediction=1.0,
-            ),
-            PredictionsModel(
-                unique_event_id=expected_event_id,
-                miner_hotkey="hotkey3",
-                miner_uid=3,
-                latest_prediction=1.0,
-                interval_start_minutes=predictions_interval_minutes,
-                interval_agg_prediction=1.0,
-            ),
-        ]
+        # insert predictions - replicate across all intervals like run_agents does
+        predictions = []
+        # Event2 predictions for both intervals
+        for interval_offset in range(SCORING_WINDOW_INTERVALS):
+            predictions.extend(
+                [
+                    PredictionsModel(
+                        unique_event_id="event2",
+                        miner_hotkey="hotkey1",
+                        miner_uid=1,
+                        latest_prediction=1.0,
+                        interval_start_minutes=event2_scoring_window_start
+                        + (interval_offset * AGGREGATION_INTERVAL_LENGTH_MINUTES),
+                        interval_agg_prediction=1.0,
+                    ),
+                    PredictionsModel(
+                        unique_event_id="event2",
+                        miner_hotkey="hotkey2",
+                        miner_uid=2,
+                        latest_prediction=1.0,
+                        interval_start_minutes=event2_scoring_window_start
+                        + (interval_offset * AGGREGATION_INTERVAL_LENGTH_MINUTES),
+                        interval_agg_prediction=1.0,
+                    ),
+                ]
+            )
+
+        # Event1 predictions for both intervals
+        for interval_offset in range(SCORING_WINDOW_INTERVALS):
+            predictions.extend(
+                [
+                    PredictionsModel(
+                        unique_event_id=expected_event_id,
+                        miner_hotkey="hotkey2",
+                        miner_uid=2,
+                        latest_prediction=1.0,
+                        interval_start_minutes=event1_scoring_window_start
+                        + (interval_offset * AGGREGATION_INTERVAL_LENGTH_MINUTES),
+                        interval_agg_prediction=1.0,
+                    ),
+                    PredictionsModel(
+                        unique_event_id=expected_event_id,
+                        miner_hotkey="hotkey3",
+                        miner_uid=3,
+                        latest_prediction=1.0,
+                        interval_start_minutes=event1_scoring_window_start
+                        + (interval_offset * AGGREGATION_INTERVAL_LENGTH_MINUTES),
+                        interval_agg_prediction=1.0,
+                    ),
+                ]
+            )
+
         await db_ops.upsert_predictions(predictions)
         exp_predictions = await db_ops.get_predictions_for_scoring(
             unique_event_id=expected_event_id
         )
         exp_predictions += await db_ops.get_predictions_for_scoring(unique_event_id="event2")
-        assert len(exp_predictions) == 4
+        # 2 miners * 2 intervals * 2 events = 8 predictions total
+        assert len(exp_predictions) == 8
 
         # test return empty scores df
         with patch.object(scoring_task, "prepare_predictions_df", return_value=pd.DataFrame()):
@@ -1336,10 +1420,11 @@ class TestScoring:
         df_actual_ev_1 = pd.DataFrame.from_dict(actual_scores_ev_1, orient="index").reset_index(
             drop=True
         )
-        assert len(df_actual_ev_1) == 2, "event1 should have 2 miners scored"
+        # Only miner 2 should be scored (has prediction, miner 1 has no prediction and no failed run)
+        assert len(df_actual_ev_1) == 1, "event1 should have 1 miner scored"
 
-        # Check both miners are present
-        assert set(df_actual_ev_1[ScoreNames.miner_uid].tolist()) == {1, 2}
+        # Check only miner 2 is present
+        assert set(df_actual_ev_1[ScoreNames.miner_uid].tolist()) == {2}
 
         # For each miner, verify bier score
         for idx, row in df_actual_ev_1.iterrows():
@@ -1357,12 +1442,12 @@ class TestScoring:
             )
 
         # Validate event2 scores (outcome=0)
-        # With new behavior, ALL miners are scored (miner 2 gets 0.5 imputed)
+        # Only miner 1 should be scored (miner 2 registered after event2 cutoff)
         df_actual_ev_2 = pd.DataFrame.from_dict(actual_scores_ev_2, orient="index").reset_index(
             drop=True
         )
-        assert len(df_actual_ev_2) == 2, "event2 should have 2 miners scored (new behavior)"
-        assert set(df_actual_ev_2[ScoreNames.miner_uid].tolist()) == {1, 2}
+        assert len(df_actual_ev_2) == 1, "event2 should have 1 miner scored"
+        assert set(df_actual_ev_2[ScoreNames.miner_uid].tolist()) == {1}
 
         # Miner 1: has prediction 1.0 (clipped to 0.99)
         miner1_ev2 = df_actual_ev_2[df_actual_ev_2[ScoreNames.miner_uid] == 1].iloc[0]
@@ -1374,12 +1459,6 @@ class TestScoring:
         np.testing.assert_allclose(
             miner1_ev2[ScoreNames.rema_peer_score], expected_brier_ev2_m1, rtol=1e-5
         )
-
-        # Miner 2: no prediction, imputed 0.5
-        miner2_ev2 = df_actual_ev_2[df_actual_ev_2[ScoreNames.miner_uid] == 2].iloc[0]
-        np.testing.assert_allclose(miner2_ev2[ScoreNames.rema_prediction], 0.5, rtol=1e-5)
-        # Brier for 0.5 with outcome=0: (0.5 - 0)² = 0.25
-        np.testing.assert_allclose(miner2_ev2[ScoreNames.rema_peer_score], 0.25, rtol=1e-5)
 
         # Check events are marked as processed
         events_for_scoring = await db_ops.get_events_for_scoring()
