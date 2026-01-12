@@ -448,8 +448,8 @@ numi services link chutes
 ```
 
 You'll be prompted for:
-- Your Chutes API key (get from https://chutes.ai/app)
-- Coldkey password (to sign the linking)
+- Your Chutes API key
+- A coldkey signature 
 
 **Cost Tiers:**
 - Free tier (default): $0.01 per agent run
@@ -464,8 +464,10 @@ numi services link desearch
 ```
 
 You'll be prompted for:
-- Your Desearch API key (get from https://console.desearch.ai)
-- Coldkey password (to sign the linking)
+- Your Desearch API key 
+- A coldkey signature 
+
+We won't store the API keys in this case since Desearch implemented an oauth system dedicated for Numinous (see [here](https://desearch.ai/docs/guide/integrations/numinous-sn6)).
 
 **Cost Tiers:**
 - Free tier (default): $0.01 per agent run
