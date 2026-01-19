@@ -13,6 +13,7 @@ from rich.table import Table
 
 from neurons.miner.scripts.link_chutes import link_chutes_impl
 from neurons.miner.scripts.link_desearch import link_desearch_impl
+from neurons.miner.scripts.link_openai import link_openai_impl
 from neurons.miner.scripts.numinous_config import ENV_URLS
 from neurons.miner.scripts.wallet_utils import load_keypair, prompt_wallet_selection
 
@@ -29,6 +30,7 @@ def services():
       numi services link           # Link a service (interactive)
       numi services link desearch  # Link Desearch directly
       numi services link chutes    # Link Chutes directly
+      numi services link openai    # Link OpenAI directly
       numi services unlink <name>  # Unlink a service
 
     \b
@@ -37,6 +39,7 @@ def services():
       numi services link
       numi services link desearch
       numi services link chutes
+      numi services link openai
       numi services unlink chutes
     """
     pass
@@ -164,18 +167,20 @@ def link(
     Available Services:
       - desearch: Link Desearch API account
       - chutes: Link Chutes API key
+      - openai: Link OpenAI API key
 
     \b
     Examples:
       numi services link              # Interactive mode
       numi services link desearch     # Link Desearch directly
       numi services link chutes       # Link Chutes directly
+      numi services link openai       # Link OpenAI directly
     """
     if not service_name:
         console.print()
         service_choice = Prompt.ask(
             "[bold cyan]Select service to link[/bold cyan]",
-            choices=["desearch", "chutes"],
+            choices=["desearch", "chutes", "openai"],
             default="desearch",
         )
         service_name = service_choice.lower()
@@ -185,6 +190,8 @@ def link(
         link_desearch_impl(wallet, hotkey, env, wallet_path)
     elif service_name == "chutes":
         link_chutes_impl(wallet, hotkey, env, wallet_path)
+    elif service_name == "openai":
+        link_openai_impl(wallet, hotkey, env, wallet_path)
     else:
         console.print(f"[red]✗ Unknown service:[/red] {service_name}")
         raise click.Abort()

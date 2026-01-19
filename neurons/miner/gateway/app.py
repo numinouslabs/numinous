@@ -9,11 +9,13 @@ from neurons.miner.gateway.cache import cached_gateway_call
 from neurons.miner.gateway.error_handler import handle_provider_errors
 from neurons.miner.gateway.providers.chutes import ChutesClient
 from neurons.miner.gateway.providers.desearch import DesearchClient
+from neurons.miner.gateway.providers.openai import OpenAIClient
 from neurons.validator.models import numinous_client as models
 from neurons.validator.models.chutes import ChuteStatus
 from neurons.validator.models.chutes import calculate_cost as calculate_chutes_cost
 from neurons.validator.models.desearch import DesearchEndpoint
 from neurons.validator.models.desearch import calculate_cost as calculate_desearch_cost
+from neurons.validator.models.openai import calculate_cost as calculate_openai_cost
 
 logger = logging.getLogger(__name__)
 
@@ -233,6 +235,37 @@ async def desearch_x_post(
     return models.GatewayDesearchXPostResponse(
         **result.model_dump(),
         cost=calculate_desearch_cost(DesearchEndpoint.FETCH_X_POST),
+    )
+
+
+@gateway_router.post("/openai/responses", response_model=models.GatewayOpenAIResponse)
+@cached_gateway_call
+@handle_provider_errors("OpenAI")
+async def openai_create_response(
+    request: models.OpenAIInferenceRequest,
+) -> models.GatewayOpenAIResponse:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="OPENAI_API_KEY not configured",
+        )
+
+    client = OpenAIClient(api_key=api_key)
+    input_messages = [msg.model_dump(exclude_none=True) for msg in request.input]
+    result = await client.create_response(
+        model=request.model,
+        input=input_messages,
+        temperature=request.temperature,
+        max_output_tokens=request.max_output_tokens,
+        tools=request.tools,
+        tool_choice=request.tool_choice,
+        instructions=request.instructions,
+        **(request.model_extra or {}),
+    )
+
+    return models.GatewayOpenAIResponse(
+        **result.model_dump(), cost=calculate_openai_cost(request.model, result)
     )
 
 

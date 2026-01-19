@@ -26,7 +26,7 @@ def numi():
       numi list-agents     # List your uploaded agents
       numi inspect-agent   # View/download any activated agent code
       numi fetch-logs      # Fetch agent run logs
-      numi services        # Manage linked services (Desearch, etc.)
+      numi services        # Manage linked services (Desearch, Chutes, OpenAI)
 
     \b
     For detailed help on any command, run:
