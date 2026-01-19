@@ -36,12 +36,31 @@ All events are currently 3 days events. The length of the immunity period is abo
 - `numi` CLI tool (installed via this repo)
 - **Chutes AI API key** (for local testing with LLMs)
 - **Desearch AI API key** (for local testing with web/Twitter search)
+- **OpenAI API key** (for local testing with GPT-5 models)
 
 **Get API Keys:**
 - Chutes AI: https://chutes.ai/app
 - Desearch AI: https://desearch.ai/
+- OpenAI: https://platform.openai.com/api-keys
 
-**Note:** API keys are only needed for **local testing**. In production, validators provide API access via gateway at no cost to you.
+**⚠️ OpenAI Security Recommendation:**
+
+For compliance and security, use **project-specific service accounts** instead of personal API keys:
+
+1. **Create a dedicated project** (e.g., "Numinous") in your [OpenAI Dashboard](https://platform.openai.com/)
+2. **Create a service account API key** (not a personal key) for that project
+3. **Set appropriate permissions** (restrict to only what's needed)
+
+**Why?**
+- ✅ Compliant with [OpenAI's Terms](https://openai.com/policies/services-agreement/) (Section 3.1 forbids sharing personal credentials)
+- ✅ Project isolation (key only accesses this specific project)
+- ✅ Budget control (set project-specific spending limits)
+- ✅ Easy revocation (delete project to instantly invalidate key)
+
+**Learn more:**
+- [Managing Projects](https://help.openai.com/en/articles/9186755-managing-your-work-in-the-api-platform-with-projects)
+- [Project Service Accounts](https://platform.openai.com/docs/api-reference/project-service-accounts)
+- [API Key Best Practices](https://help.openai.com/en/articles/5112595-best-practices-for-api-key-safety)
 
 ---
 
@@ -231,6 +250,85 @@ def agent_main(event_data: Dict[str, Any]) -> Dict[str, Any]:
 
 def analyze_results(results, event_data):
     # Your analysis logic here
+    return 0.5
+```
+
+### Using OpenAI (LLM with Web Search)
+
+```python
+import os
+import httpx
+from typing import Dict, Any
+
+# Required: Get proxy URL and run ID
+PROXY_URL = os.getenv("SANDBOX_PROXY_URL", "http://sandbox_proxy")
+RUN_ID = os.getenv("RUN_ID")
+
+if not RUN_ID:
+    raise ValueError("RUN_ID environment variable is required but not set")
+
+OPENAI_URL = f"{PROXY_URL}/api/gateway/openai"
+
+def agent_main(event_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Uses OpenAI with built-in web search for forecasting."""
+
+    # Build forecast prompt
+    prompt = f"""Forecast the probability (0.0-1.0) of this event occurring:
+
+Event: {event_data['title']}
+Description: {event_data['description']}
+Deadline: {event_data['cutoff']}
+
+Before making your forecast, systematically research:
+1. Search for recent news and developments
+2. Search for expert analysis and predictions
+3. Search for historical data or precedents
+
+Return only:
+PREDICTION: [number 0.0-1.0]
+REASONING: [2-4 sentences]"""
+
+    # Call OpenAI with web_search tool
+    response = httpx.post(
+        f"{OPENAI_URL}/responses",
+        json={
+            "model": "gpt-5-mini",
+            "input": [
+                {"role": "developer", "content": "You are an expert forecaster."},
+                {"role": "user", "content": prompt}
+            ],
+            "tools": [{"type": "web_search"}],  # Enable web search
+            "run_id": RUN_ID,
+        },
+        timeout=120.0,
+    )
+
+    result = response.json()
+
+    # Extract response text from output
+    text = extract_response_text(result)
+    prediction = parse_prediction(text)
+
+    return {
+        "event_id": event_data["event_id"],
+        "prediction": prediction
+    }
+
+def extract_response_text(data: dict) -> str:
+    """Extract text from OpenAI response."""
+    for item in data.get("output", []):
+        if item.get("type") == "message":
+            for content in item.get("content", []):
+                if content.get("text"):
+                    return content["text"]
+    return ""
+
+def parse_prediction(text: str) -> float:
+    """Parse PREDICTION: value from response."""
+    for line in text.split("\n"):
+        if line.startswith("PREDICTION:"):
+            pred = float(line.replace("PREDICTION:", "").strip())
+            return max(0.0, min(1.0, pred))
     return 0.5
 ```
 
@@ -439,6 +537,8 @@ Run: numi services link
 
 After uploading your agent, link your API accounts to cover API costs for LLM inference and search.
 
+**Security:** API keys are securely stored using external secret management and never exposed to validators.
+
 ### Chutes AI (LLM Inference)
 
 Link your Chutes account to access higher budget for LLM API calls:
@@ -448,8 +548,8 @@ numi services link chutes
 ```
 
 You'll be prompted for:
-- Your Chutes API key
-- A coldkey signature 
+- Your Chutes API key (get from https://chutes.ai/app)
+- Coldkey password (to sign the linking)
 
 **Cost Tiers:**
 - Free tier (default): $0.01 per agent run
@@ -464,14 +564,25 @@ numi services link desearch
 ```
 
 You'll be prompted for:
-- Your Desearch API key 
-- A coldkey signature 
-
-We won't store the API keys in this case since Desearch implemented an oauth system dedicated for Numinous (see [here](https://desearch.ai/docs/guide/integrations/numinous-sn6)).
+- Your Desearch API key (get from https://console.desearch.ai)
+- Coldkey password (to sign the linking)
 
 **Cost Tiers:**
 - Free tier (default): $0.01 per agent run
 - Paid tier (your key): $0.10 per agent run
+
+### OpenAI (LLM Inference)
+
+Link your OpenAI account for GPT-5 series models with web search:
+
+```bash
+numi services link openai
+```
+
+You'll be prompted for:
+- Your OpenAI API key (get from https://platform.openai.com/api-keys)
+
+**Note:** OpenAI requires linking your own API key. There is no free tier - you must link your account to use OpenAI models.
 
 **Important:** Re-link after each agent upload - each code version needs its own link.
 
@@ -497,6 +608,7 @@ numi inspect-agent         # View/download agent code
 # Service Linking
 numi services link chutes   # Link Chutes API key
 numi services link desearch # Link Desearch API key
+numi services link openai   # Link OpenAI API key
 numi services list          # Check linked services
 
 # Local Testing

@@ -117,7 +117,6 @@ async def main():
         bt_wallet=bt_wallet,
         gateway_url=gateway_url,
         logger=logger,
-        log_docker_to_stdout=True,
         temp_base_dir=sandbox_temp_dir,
         force_rebuild=True,
     )

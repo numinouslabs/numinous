@@ -7,10 +7,13 @@ The Gateway API provides miner agents with access to external services during sa
 **Available Services:**
 - **Chutes AI**: LLM inference with multiple open-source models
 - **Desearch AI**: Web search, social media search, and content crawling
+- **OpenAI**: GPT-5 series models with built-in web search
 
 All requests are cached to optimize performance and reduce costs.
 
-**Cost Limits:** $0.01 (default) or $0.10 (linked account) per sandbox run for each service.
+**Cost Limits:** $0.01 (default) or $0.10 (linked account) per sandbox run for Chutes and Desearch. OpenAI has no free tier.
+
+**Security:** API keys are securely stored using external secret management and never exposed to validators.
 
 ---
 
@@ -731,6 +734,173 @@ print(f"Author: {post['user']['username']}")
 print(f"Text: {post['text']}")
 print(f"Engagement: {post['like_count']} likes, {post['retweet_count']} retweets")
 ```
+
+---
+
+## OpenAI Endpoints
+
+OpenAI provides access to GPT-5 series models with built-in web search capability.
+
+### POST /api/gateway/openai/responses
+
+Create a response using OpenAI's GPT-5 models with optional web search.
+
+**URL:** `{SANDBOX_PROXY_URL}/api/gateway/openai/responses`
+
+**Request Body:**
+```json
+{
+  "run_id": "550e8400-e29b-41d4-a716-446655440000",
+  "model": "gpt-5-mini",
+  "input": [
+    {"role": "developer", "content": "You are a helpful assistant."},
+    {"role": "user", "content": "What is the capital of France?"}
+  ],
+  "temperature": 0.7,
+  "max_output_tokens": 1000,
+  "tools": [{"type": "web_search"}],
+  "tool_choice": null,
+  "instructions": null
+}
+```
+
+**Parameters:**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `run_id` | string (UUID) | Yes | - | Execution tracking ID from environment |
+| `model` | string | Yes | - | Model identifier (see Available Models below) |
+| `input` | array | Yes | - | List of message objects with `role` and `content` |
+| `temperature` | float | No | 0.7 | Sampling temperature (0.0-2.0) |
+| `max_output_tokens` | integer | No | null | Maximum tokens to generate |
+| `tools` | array | No | null | Tool definitions (e.g., `[{"type": "web_search"}]`) |
+| `tool_choice` | string/object | No | null | Tool selection strategy |
+| `instructions` | string | No | null | System-level instructions |
+
+**Available Models:**
+
+| Model | Identifier | Notes |
+|-------|-----------|-------|
+| GPT-5 Mini | `gpt-5-mini` | Cost-effective, fast |
+| GPT-5 | `gpt-5` | Balanced performance |
+| GPT-5.2 | `gpt-5.2` | Enhanced reasoning |
+| GPT-5.2 Pro | `gpt-5.2-pro` | Most capable |
+| GPT-5 Nano | `gpt-5-nano` | Lightweight |
+
+**Web Search Tool:**
+
+Enable web search by including `tools`:
+```json
+"tools": [{"type": "web_search"}]
+```
+
+The model will autonomously decide when to search based on the prompt. Each search costs $0.01.
+
+**Response:**
+```json
+{
+  "id": "resp_123",
+  "object": "response",
+  "created_at": 1768496869,
+  "model": "gpt-5-mini-2025-08-07",
+  "output": [
+    {
+      "id": "msg_123",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "The capital of France is Paris.",
+          "logprobs": [],
+          "annotations": []
+        }
+      ],
+      "status": "completed"
+    }
+  ],
+  "usage": {
+    "input_tokens": 22,
+    "output_tokens": 207,
+    "total_tokens": 229
+  },
+  "status": "completed",
+  "cost": 0.001953
+}
+```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Response identifier |
+| `model` | string | Model used for generation |
+| `output` | array | List of output items (messages, reasoning steps) |
+| `output[].type` | string | Item type (`message`, `reasoning`) |
+| `output[].content[].text` | string | Generated text content |
+| `usage` | object | Token usage statistics |
+| `usage.input_tokens` | integer | Input tokens consumed |
+| `usage.output_tokens` | integer | Output tokens generated |
+| `cost` | float | Total cost in USD (includes token cost + web search cost) |
+
+**Example (using httpx):**
+```python
+import os
+import httpx
+
+PROXY_URL = os.getenv("SANDBOX_PROXY_URL")
+RUN_ID = os.getenv("RUN_ID")
+
+response = httpx.post(
+    f"{PROXY_URL}/api/gateway/openai/responses",
+    json={
+        "run_id": RUN_ID,
+        "model": "gpt-5-mini",
+        "input": [
+            {"role": "developer", "content": "You are an expert forecaster."},
+            {"role": "user", "content": "What is the probability of rain tomorrow?"}
+        ],
+        "tools": [{"type": "web_search"}],
+        "temperature": 0.7,
+    },
+    timeout=120.0,
+)
+
+result = response.json()
+
+# Extract text from output
+for item in result["output"]:
+    if item["type"] == "message":
+        for content in item["content"]:
+            if content.get("text"):
+                print(content["text"])
+```
+
+**Cost Calculation:**
+
+Total cost = Token cost + Web search cost
+
+- **Token cost:** Based on input/output tokens and model pricing
+- **Web search cost:** $0.01 per search executed
+
+The `cost` field in the response includes both components.
+
+**Error Handling:**
+
+| Status Code | Description | Recommended Action |
+|-------------|-------------|-------------------|
+| 503 | Service Unavailable | Retry with exponential backoff |
+| 404 | Model not found | Verify model identifier |
+| 429 | Rate limit exceeded | Retry with exponential backoff |
+| 401 | Authentication failed | Contact validator |
+| 500 | Internal server error | Retry with fallback |
+
+**Best Practices:**
+
+1. **Use web_search selectively:** Only enable when research is needed
+2. **Clear prompts:** Explicitly ask the model to search before forecasting
+3. **Model selection:** Use `gpt-5-mini` for cost-efficiency, `gpt-5.2` for complex reasoning
+4. **Error handling:** Always implement retry logic with fallback predictions
 
 ---
 

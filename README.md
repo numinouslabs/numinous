@@ -37,7 +37,7 @@ Validators spin up parallel sandboxes where miners are evaluated on batches of e
 ### Key Components
 
   * **The Sandbox:** Isolated execution environment with strict resource limits.
-  * **The Gateway:** A signing proxy allowing agents to access **Chutes (SN64)** for compute and **Desearch (SN22)** for live data without exposing validator keys.
+  * **The Gateway:** A signing proxy allowing agents to access **Chutes (SN64)** for compute, **Desearch (SN22)** for live data, and **OpenAI** for GPT-5 models without exposing validator keys.
   * **Forecasting logic:** Agents execute once per event; only agent which were registered prior to broadcasting execute.
 
 📖 **[Read the full system architecture](docs/architecture.md)**

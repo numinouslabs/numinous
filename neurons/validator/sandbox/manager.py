@@ -11,6 +11,7 @@ from typing import Callable, Dict, Optional, Type
 import docker
 import docker.errors
 import requests.exceptions
+import urllib3.exceptions
 from bittensor_wallet import Wallet
 
 from neurons.validator.sandbox.agent_models import AgentOutput, AgentRunnerOutput, RunStatus
@@ -32,7 +33,6 @@ class SandboxManager:
     logger: NuminousLogger
     bt_wallet: Wallet
     gateway_url: str
-    log_docker_to_stdout: bool
     signing_proxy_container: Optional[docker.models.containers.Container]
     sandboxes: Dict[str, SandboxState]
     temp_base_dir: Optional[Path]
@@ -43,7 +43,6 @@ class SandboxManager:
         gateway_url: str,
         logger: NuminousLogger,
         *,
-        log_docker_to_stdout: bool = False,
         force_rebuild: bool = False,
         temp_base_dir: Optional[Path] = None,
     ) -> None:
@@ -59,10 +58,6 @@ class SandboxManager:
         if not isinstance(logger, NuminousLogger):
             raise TypeError("logger must be an instance of NuminousLogger.")
 
-        # Validate log_docker_to_stdout
-        if not isinstance(log_docker_to_stdout, bool):
-            raise TypeError("log_docker_to_stdout must be a boolean.")
-
         # Validate force_rebuild
         if not isinstance(force_rebuild, bool):
             raise TypeError("force_rebuild must be a boolean.")
@@ -74,7 +69,6 @@ class SandboxManager:
         self.bt_wallet = bt_wallet
         self.gateway_url = gateway_url
         self.logger = logger
-        self.log_docker_to_stdout = log_docker_to_stdout
         self.temp_base_dir = temp_base_dir
 
         # Initialize Docker client
@@ -430,18 +424,13 @@ class SandboxManager:
             sandbox.container = self.docker_client.containers.run(**container_args)
 
             try:
-                if self.log_docker_to_stdout:
-                    for log_line in sandbox.container.logs(stream=True, follow=True):
-                        self.logger.info(
-                            "Container log",
-                            extra={
-                                "sandbox_id": sandbox_id,
-                                "log": log_line.decode("utf-8").rstrip(),
-                            },
-                        )
-                else:
-                    sandbox.container.wait(timeout=sandbox.timeout)
-            except (TimeoutError, requests.exceptions.ReadTimeout):
+                # Wait for container to finish with timeout
+                sandbox.container.wait(timeout=sandbox.timeout)
+            except (
+                requests.exceptions.ReadTimeout,
+                requests.exceptions.ConnectionError,
+                urllib3.exceptions.ReadTimeoutError,
+            ):
                 sandbox.container.kill()
 
                 try:
@@ -481,6 +470,21 @@ class SandboxManager:
             sandbox.container = None
 
         except Exception as e:
+            # Try to capture logs even on container error
+            try:
+                if sandbox.container:
+                    result.logs = sandbox.container.logs(stderr=False).decode("utf-8")
+                    self.logger.debug(
+                        "Captured logs on container error",
+                        extra={"sandbox_id": sandbox_id, "lines": len(result.logs.splitlines())},
+                    )
+            except Exception as log_err:
+                self.logger.debug(
+                    "Failed to capture logs on container error",
+                    extra={"sandbox_id": sandbox_id, "error": str(log_err)},
+                )
+                result.logs = ""
+
             result.traceback = traceback.format_exc()
             finish_with_error(
                 f"Container error: {e}", result, error_type=SandboxErrorType.CONTAINER_ERROR

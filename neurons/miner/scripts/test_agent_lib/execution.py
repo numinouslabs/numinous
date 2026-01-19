@@ -75,7 +75,6 @@ async def run_tests_async(agent_path: Path, events: list[dict]) -> dict:
             bt_wallet=wallet,
             gateway_url=GATEWAY_URL,
             logger=logger,
-            log_docker_to_stdout=False,
         )
     except Exception as e:
         console.print(f"[red]✗ Failed to initialize sandbox: {e}[/red]")

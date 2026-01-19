@@ -18,6 +18,7 @@ from neurons.validator.models.desearch import (
     XPostResponse,
     XPostSummary,
 )
+from neurons.validator.models.openai import OpenAIResponse
 
 
 class NuminousEvent(BaseModel):
@@ -306,6 +307,43 @@ class GatewayDesearchXSearchResponse(GatewayCallResponse):
 
 
 class GatewayDesearchXPostResponse(XPostResponse, GatewayCallResponse):
+    pass
+
+
+class OpenAIMessage(BaseModel):
+    role: str = Field(..., description="Message role: 'developer', 'user', 'assistant', or 'tool'")
+    content: typing.Optional[str] = Field(None, description="Message content")
+    tool_calls: typing.Optional[list[dict[str, typing.Any]]] = Field(
+        None, description="Tool calls made by the model"
+    )
+
+    model_config = ConfigDict(extra="allow")
+
+
+class OpenAIInferenceRequest(GatewayCall):
+    model: str = Field(..., description="OpenAI model to use for inference")
+    input: list[OpenAIMessage] = Field(..., description="List of input messages")
+    temperature: typing.Optional[float] = Field(
+        default=None, ge=0.0, le=2.0, description="Sampling temperature"
+    )
+    max_output_tokens: typing.Optional[int] = Field(
+        default=None, ge=16, description="Maximum tokens to generate (minimum 16)"
+    )
+    tools: typing.Optional[list[dict[str, typing.Any]]] = Field(
+        default=None, description="Tool definitions (web_search, functions, etc.)"
+    )
+    tool_choice: typing.Optional[typing.Any] = Field(
+        default=None,
+        description="Tool choice setting ('auto', 'required', or specific tool)",
+    )
+    instructions: typing.Optional[str] = Field(
+        default=None, description="High-level instructions for model behavior"
+    )
+
+    model_config = ConfigDict(extra="allow")
+
+
+class GatewayOpenAIResponse(OpenAIResponse, GatewayCallResponse):
     pass
 
 
