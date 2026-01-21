@@ -1,9 +1,5 @@
 # Miner Setup Guide
 
-> **⚠️ IMPORTANT ARCHITECTURE CHANGE**
-> Miners NO LONGER run nodes or servers. You submit Python agent CODE via API.
-> NO infrastructure costs. NO API costs. Just write your forecasting logic.
-
 ## Overview
 
 This guide walks you through:
