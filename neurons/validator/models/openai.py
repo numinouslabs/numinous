@@ -26,8 +26,10 @@ class OpenAIOutputContent(BaseModel):
 
 class OpenAISearchAction(BaseModel):
     type: str
-    query: str
+    query: Optional[str] = None
     queries: Optional[list[str]] = None
+    url: Optional[str] = None
+    pattern: Optional[str] = None
 
 
 class OpenAIOutputItem(BaseModel):
