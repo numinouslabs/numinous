@@ -8,10 +8,11 @@ The Gateway API provides miner agents with access to external services during sa
 - **Chutes AI**: LLM inference with multiple open-source models
 - **Desearch AI**: Web search, social media search, and content crawling
 - **OpenAI**: GPT-5 series models with built-in web search
+- **Perplexity**: Reasoning LLMs with built-in web search
 
 All requests are cached to optimize performance and reduce costs.
 
-**Cost Limits:** $0.01 (default) or $0.10 (linked account) per sandbox run for Chutes and Desearch. OpenAI has no free tier.
+**Cost Limits:** $0.01 (default) or $0.10 (linked account) per sandbox run for Chutes and Desearch. OpenAI: $1.00 per run (requires linked account, no free tier). Perplexity: $0.10 per run (requires linked account, no free tier).
 
 **Security:** API keys are securely stored using external secret management and never exposed to validators.
 
@@ -901,6 +902,153 @@ The `cost` field in the response includes both components.
 2. **Clear prompts:** Explicitly ask the model to search before forecasting
 3. **Model selection:** Use `gpt-5-mini` for cost-efficiency, `gpt-5.2` for complex reasoning
 4. **Error handling:** Always implement retry logic with fallback predictions
+
+---
+
+## Perplexity Endpoints
+
+Perplexity provides reasoning LLMs with built-in web search capability.
+
+### POST /api/gateway/perplexity/chat/completions
+
+Create a response using Perplexity's reasoning models with automatic web search.
+
+**URL:** `{SANDBOX_PROXY_URL}/api/gateway/perplexity/chat/completions`
+
+**Request Body:**
+```json
+{
+  "run_id": "550e8400-e29b-41d4-a716-446655440000",
+  "model": "sonar-reasoning-pro",
+  "messages": [
+    {"role": "system", "content": "You are a helpful assistant."},
+    {"role": "user", "content": "What is the capital of France?"}
+  ],
+  "temperature": 0.7,
+  "max_tokens": 1000,
+  "search_recency_filter": "month"
+}
+```
+
+**Parameters:**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `run_id` | string (UUID) | Yes | - | Execution tracking ID from environment |
+| `model` | string | Yes | - | Model identifier (see Available Models below) |
+| `messages` | array | Yes | - | List of message objects with `role` and `content` |
+| `temperature` | float | No | 0.7 | Sampling temperature (0.0-2.0) |
+| `max_tokens` | integer | No | null | Maximum tokens to generate |
+| `search_recency_filter` | string | No | null | Time range for search results (`day`, `week`, `month`, `year`) |
+
+**Available Models:**
+
+| Model | Identifier | Notes |
+|-------|-----------|-------|
+| Sonar Reasoning Pro | `sonar-reasoning-pro` | Most capable reasoning model |
+| Sonar Pro | `sonar-pro` | Balanced performance |
+| Sonar | `sonar` | Fast and efficient |
+
+**Response:**
+```json
+{
+  "id": "chatcmpl-123",
+  "object": "chat.completion",
+  "created": 1677652288,
+  "model": "sonar-reasoning-pro",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "The capital of France is Paris."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 28,
+    "completion_tokens": 8,
+    "total_tokens": 36
+  },
+  "citations": [
+    "https://example.com/source1",
+    "https://example.com/source2"
+  ],
+  "search_results": [
+    {
+      "title": "Source title",
+      "url": "https://example.com/source1",
+      "snippet": "Relevant text..."
+    }
+  ],
+  "cost": 0.002145
+}
+```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Response identifier |
+| `model` | string | Model used for generation |
+| `choices` | array | List of completion choices |
+| `choices[].message.content` | string | Generated text content |
+| `usage` | object | Token usage statistics |
+| `citations` | array | List of source URLs used |
+| `search_results` | array | Detailed search result objects |
+| `cost` | float | Total cost in USD |
+
+**Example (using httpx):**
+```python
+import os
+import httpx
+
+PROXY_URL = os.getenv("SANDBOX_PROXY_URL")
+RUN_ID = os.getenv("RUN_ID")
+
+response = httpx.post(
+    f"{PROXY_URL}/api/gateway/perplexity/chat/completions",
+    json={
+        "run_id": RUN_ID,
+        "model": "sonar-reasoning-pro",
+        "messages": [
+            {"role": "system", "content": "You are an expert forecaster."},
+            {"role": "user", "content": "What is the probability of rain tomorrow?"}
+        ],
+        "temperature": 0.2,
+        "search_recency_filter": "day",
+    },
+    timeout=120.0,
+)
+
+result = response.json()
+
+content = result["choices"][0]["message"]["content"]
+citations = result.get("citations", [])
+
+print(f"Response: {content}")
+print(f"Sources: {citations}")
+```
+
+**Error Handling:**
+
+| Status Code | Description | Recommended Action |
+|-------------|-------------|-------------------|
+| 503 | Service Unavailable | Retry with exponential backoff |
+| 404 | Model not found | Verify model identifier |
+| 429 | Rate limit exceeded | Retry with exponential backoff |
+| 401 | Authentication failed | Contact validator |
+| 500 | Internal server error | Retry with fallback |
+
+**Best Practices:**
+
+1. **Use search_recency_filter:** Set to `day` or `week` for time-sensitive events
+2. **Extract citations:** Use the `citations` array to verify information sources
+3. **Model selection:** Use `sonar-reasoning-pro` for complex reasoning tasks
+4. **Error handling:** Always implement retry logic with fallback predictions
+
+**Note:** Perplexity has no free tier. You must link your API key to use Perplexity models.
 
 ---
 

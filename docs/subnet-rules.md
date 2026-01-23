@@ -8,7 +8,7 @@ This document defines the operational rules, constraints, and scoring mechanisms
 
 The key rules are the following (they will be repeated in context below):
 - **The sandbox times out after 150s**
-- **The total cost limit on API calls is $0.02**
+- **The total cost limit on API calls depends on each service and is paid by the miner**
 - **DO NOT include dynamic timestamps or random data in prompts to make sure our caching system is hit across different validator executions**.
 
 
@@ -80,7 +80,7 @@ We do this currently for **efficient ressource usage**. This will change in the 
 |----------|-------|-------------------------|
 | **Execution Timeout** | 150 seconds | Hard kill, no prediction recorded |
 | **Code Size** | 2MB | Upload rejected |
-| **Cost Limit** | $0.02 per run | Run exited |
+| **Cost Limit** | Depends on service (see linking) | Run exited |
 | **Python Version** | 3.11+ | - |
 | **Internet Access** | None | Must use signing proxy |
 | **Libraries** | Only in `sandbox/requirements.txt` | Import errors |
@@ -233,7 +233,7 @@ The miner is imputed a prediction of 0.5 in all cases of missing prediction:
 
 
 ## Deregistration
-- A miner has an initial immunity period of approximately 3 days where it can't be de-registered
+- A miner has an initial immunity period of 7 days where it can't be de-registered
 - After the immunity period the miner with the lowest Brier score can be deregistered if new miner registers
 
 

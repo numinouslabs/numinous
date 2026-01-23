@@ -19,6 +19,7 @@ from neurons.validator.models.desearch import (
     XPostSummary,
 )
 from neurons.validator.models.openai import OpenAIResponse
+from neurons.validator.models.perplexity import PerplexityCompletion
 
 
 class NuminousEvent(BaseModel):
@@ -344,6 +345,29 @@ class OpenAIInferenceRequest(GatewayCall):
 
 
 class GatewayOpenAIResponse(OpenAIResponse, GatewayCallResponse):
+    pass
+
+
+class PerplexityMessage(BaseModel):
+    role: str
+    content: str
+
+
+class PerplexityInferenceRequest(GatewayCall):
+    model: str = Field(..., description="Perplexity model to use")
+    messages: list[PerplexityMessage] = Field(..., description="Chat messages")
+    temperature: typing.Optional[float] = Field(
+        default=None, ge=0.0, le=2.0, description="Sampling temperature"
+    )
+    max_tokens: typing.Optional[int] = Field(default=None, description="Maximum tokens to generate")
+    search_recency_filter: typing.Optional[str] = Field(
+        default=None, description="Search recency filter: day, week, month, year"
+    )
+
+    model_config = ConfigDict(extra="allow")
+
+
+class GatewayPerplexityCompletion(PerplexityCompletion, GatewayCallResponse):
     pass
 
 

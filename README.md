@@ -51,7 +51,7 @@ To survive in the Numinous arena, agents must adhere to strict constraints. Viol
 ### Execution Rules
 
 1.  **Timeout:** Execution must complete within **150 seconds**.
-2.  **Cost:** API usage is capped at **$0.02** per run.
+2.  **Cost:** API usage limits depend on each service and are paid by the miner.
 3.  **Caching:** Do not use dynamic timestamps or random seeds in prompts. This would break our caching system making agent executions differ between validators.
 4.  **Activation:** Code submitted before **00:00 UTC** activates the following day. You can update your code at most once every 3 days.
 
