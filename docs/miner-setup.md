@@ -15,12 +15,11 @@ For gateway API reference (Chutes AI, Desearch AI), see [gateway-guide.md](./gat
 
 The key rules to follow as a miner are the following:
 - **The sandbox times out after 150s**
-- **The total cost limit on API calls is $0.02**
+- **The total cost limit on API calls depends on each service and its paid by the miner**
 - **DO NOT include dynamic timestamps or random data in prompts to make sure our caching system is hit across different validator executions**.
 - **A forecasting agent can only be updated at most once every 3 days**
 
-All events are currently 3 days events. The length of the immunity period is about 4 days to ensure any time before registration. 
-
+All events are currently 3 days events. The length of the immunity period is 7 days to ensure any time before registration. 
 
 ---
 
@@ -33,11 +32,13 @@ All events are currently 3 days events. The length of the immunity period is abo
 - **Chutes AI API key** (for local testing with LLMs)
 - **Desearch AI API key** (for local testing with web/Twitter search)
 - **OpenAI API key** (for local testing with GPT-5 models)
+- **Perplexity API key** (for local testing with reasoning LLMs)
 
 **Get API Keys:**
 - Chutes AI: https://chutes.ai/app
 - Desearch AI: https://desearch.ai/
 - OpenAI: https://platform.openai.com/api-keys
+- Perplexity: https://www.perplexity.ai/settings/api
 
 **⚠️ OpenAI Security Recommendation:**
 
@@ -328,6 +329,70 @@ def parse_prediction(text: str) -> float:
     return 0.5
 ```
 
+### Using Perplexity
+
+```python
+import os
+import httpx
+from typing import Dict, Any
+
+PROXY_URL = os.getenv("SANDBOX_PROXY_URL", "http://sandbox_proxy")
+RUN_ID = os.getenv("RUN_ID")
+
+if not RUN_ID:
+    raise ValueError("RUN_ID environment variable is required but not set")
+
+PERPLEXITY_URL = f"{PROXY_URL}/api/gateway/perplexity"
+
+def agent_main(event_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Uses Perplexity reasoning LLM with web search for forecasting."""
+
+    prompt = f"""Forecast the probability (0.0-1.0) of this event occurring:
+
+Event: {event_data['title']}
+Description: {event_data['description']}
+Deadline: {event_data['cutoff']}
+
+Search for recent information and provide:
+PREDICTION: [number 0.0-1.0]
+REASONING: [2-4 sentences]"""
+
+    response = httpx.post(
+        f"{PERPLEXITY_URL}/chat/completions",
+        json={
+            "model": "sonar-reasoning-pro",
+            "messages": [
+                {"role": "system", "content": "You are an expert forecaster."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.2,
+            "search_recency_filter": "week",
+            "run_id": RUN_ID,
+        },
+        timeout=120.0,
+    )
+
+    result = response.json()
+
+    text = result["choices"][0]["message"]["content"]
+    citations = result.get("citations", [])
+
+    prediction = parse_prediction(text)
+
+    return {
+        "event_id": event_data["event_id"],
+        "prediction": prediction
+    }
+
+def parse_prediction(text: str) -> float:
+    """Parse PREDICTION: value from response."""
+    for line in text.split("\n"):
+        if line.startswith("PREDICTION:"):
+            pred = float(line.replace("PREDICTION:", "").strip())
+            return max(0.0, min(1.0, pred))
+    return 0.5
+```
+
 ## Important Notes
 
 1. **Always use `SANDBOX_PROXY_URL`** - Never hardcode API URLs
@@ -545,7 +610,6 @@ numi services link chutes
 
 You'll be prompted for:
 - Your Chutes API key (get from https://chutes.ai/app)
-- Coldkey password (to sign the linking)
 
 **Cost Tiers:**
 - Free tier (default): $0.01 per agent run
@@ -580,6 +644,19 @@ You'll be prompted for:
 
 **Note:** OpenAI requires linking your own API key. There is no free tier - you must link your account to use OpenAI models.
 
+### Perplexity
+
+Link your Perplexity account for reasoning LLMs with web search:
+
+```bash
+numi services link perplexity
+```
+
+You'll be prompted for:
+- Your Perplexity API key (get from https://www.perplexity.ai/settings/api)
+
+**Note:** Perplexity has no free tier. You must link your account to use Perplexity models.
+
 **Important:** Re-link after each agent upload - each code version needs its own link.
 
 Check your linked services anytime:
@@ -602,10 +679,11 @@ numi list-agents           # List your uploaded agents
 numi inspect-agent         # View/download agent code
 
 # Service Linking
-numi services link chutes   # Link Chutes API key
-numi services link desearch # Link Desearch API key
-numi services link openai   # Link OpenAI API key
-numi services list          # Check linked services
+numi services link chutes     # Link Chutes API key
+numi services link desearch   # Link Desearch API key
+numi services link openai     # Link OpenAI API key
+numi services link perplexity # Link Perplexity API key
+numi services list            # Check linked services
 
 # Local Testing
 numi test-agent            # Test agent with real events

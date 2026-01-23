@@ -10,12 +10,14 @@ from neurons.miner.gateway.error_handler import handle_provider_errors
 from neurons.miner.gateway.providers.chutes import ChutesClient
 from neurons.miner.gateway.providers.desearch import DesearchClient
 from neurons.miner.gateway.providers.openai import OpenAIClient
+from neurons.miner.gateway.providers.perplexity import PerplexityClient
 from neurons.validator.models import numinous_client as models
 from neurons.validator.models.chutes import ChuteStatus
 from neurons.validator.models.chutes import calculate_cost as calculate_chutes_cost
 from neurons.validator.models.desearch import DesearchEndpoint
 from neurons.validator.models.desearch import calculate_cost as calculate_desearch_cost
 from neurons.validator.models.openai import calculate_cost as calculate_openai_cost
+from neurons.validator.models.perplexity import calculate_cost as calculate_perplexity_cost
 
 logger = logging.getLogger(__name__)
 
@@ -266,6 +268,33 @@ async def openai_create_response(
 
     return models.GatewayOpenAIResponse(
         **result.model_dump(), cost=calculate_openai_cost(request.model, result)
+    )
+
+
+@gateway_router.post("/perplexity/chat/completions")
+@cached_gateway_call
+@handle_provider_errors("Perplexity")
+async def perplexity_chat_completion(request: models.PerplexityInferenceRequest):
+    api_key = os.getenv("PERPLEXITY_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="PERPLEXITY_API_KEY not configured",
+        )
+
+    client = PerplexityClient(api_key=api_key)
+    messages = [msg.model_dump() for msg in request.messages]
+    result = await client.chat_completion(
+        model=request.model,
+        messages=messages,
+        temperature=request.temperature,
+        max_tokens=request.max_tokens,
+        search_recency_filter=request.search_recency_filter,
+        **(request.model_extra or {}),
+    )
+
+    return models.GatewayPerplexityCompletion(
+        **result.model_dump(), cost=calculate_perplexity_cost(request.model, result)
     )
 
 

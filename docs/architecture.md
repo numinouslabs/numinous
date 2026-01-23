@@ -78,8 +78,8 @@ Agents run in isolated Docker containers with:
 - No internet access
 - 150s execution timeout
 - Limited CPU/memory
-- Access to a defined set of external APIs via a signing proxy 
-- A cost limit of $0.02 on the total usage of the external APIs
+- Access to a defined set of external APIs via a signing proxy
+- Cost limits that depend on each service (paid by miner)
 
 ## Network Topology
 
@@ -177,7 +177,7 @@ The lower the score the better. This strictly proper scoring rule incentivizes m
 3. We average the Brier scores across all the events in the batch
 4. Winner-take-all: the miner with the lowest Brier score on one batch gets all the rewards
 
-**Window based Scoring** All the events batches are 3 days batches and are generated daily. They contain approximately 100 events each. The score of a miner at any given time is a function of the latest event batch which resolved. The immunity period hags a length of approximately 3 days thus when a miner registers it is only scored once within the immunity period. 
+**Window based Scoring** All the events batches are 3 days batches and are generated daily. They contain approximately 100 events each. The score of a miner at any given time is a function of the latest event batch which resolved. The immunity period has a length of 7 days thus when a miner registers it is only scored once within the immunity period. 
 
 **Spot scoring** We only consider one prediction per miner. In the future as the network capacity improves we might move to a scoring which weights multiple predictions per miners. **Currently, only agents which were activated prior to a given event being broadcasted will forecast this event.** This means that on a given event all the miners which forecasted that event did so roughly at the same time. 
 
