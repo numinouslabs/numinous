@@ -50,7 +50,7 @@ class RunAgents(AbstractTask):
         logger: NuminousLogger,
         max_concurrent_sandboxes: int = 5,
         timeout_seconds: int = 600,
-        sync_hour: int = 4,
+        sync_hour: int = 1,
         validator_uid: int = 0,
         validator_hotkey: str = "",
     ):

@@ -59,8 +59,8 @@ def get_config():
     parser.add_argument(
         "--validator.sync_hour",
         type=int,
-        default=4,
-        help="Hour for validator synchronization (default: 4)",
+        default=1,
+        help="Hour for validator synchronization (default: 1)",
     )
 
     AsyncSubtensor.add_args(parser=parser)

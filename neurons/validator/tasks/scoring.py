@@ -411,9 +411,8 @@ class Scoring(AbstractTask):
             predictions_df=predictions_df, miners=miners, intervals=intervals
         )
 
-        # Fetch failed agent runs to identify miners whose code failed
         failed_runs = await self.db_operations.get_failed_agent_runs_for_event(
-            event_id=event.event_id
+            event_id=event.unique_event_id
         )
 
         # Fill missing predictions with 0.5 for miners whose code failed, then drop truly-missing

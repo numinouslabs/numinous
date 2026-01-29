@@ -1,5 +1,8 @@
 # Release Notes
 
+## [2.0.9] - 2026-01-27
+- **Events**: Fix pagination to use backend `has_more` field instead of response length check
+
 ## [2.0.8] - 2026-01-12
 - **Scoring**: Remove 0.5 imputation for miners without predictions
 
