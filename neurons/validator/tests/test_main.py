@@ -56,7 +56,7 @@ class TestValidatorMain:
             # Mock get_config
             logger_level = 99
             gateway_url = "https://test.numinous.earth"
-            validator_sync_hour = 4
+            validator_sync_hour = 1
             netuid = 1234
             network = "testnet"
 

@@ -35,6 +35,7 @@ class NuminousEvent(BaseModel):
 class GetEventsResponse(BaseModel):
     count: typing.Optional[int] = None
     items: typing.List[NuminousEvent]
+    has_more: bool = False
 
     model_config = ConfigDict(from_attributes=True, extra="ignore")
 

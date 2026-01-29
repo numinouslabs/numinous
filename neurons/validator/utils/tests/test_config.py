@@ -46,7 +46,7 @@ class TestConfig:
         logging_trace=None,
         logging_debug=None,
         logging_info=None,
-        validator_sync_hour=4,
+        validator_sync_hour=1,
     ):
         """Helper method to create a mock args object with the required attributes"""
         mock_args = MagicMock()
@@ -80,7 +80,7 @@ class TestConfig:
             assert env == "prod"
             assert db_path == str(Path(DEFAULT_DB_DIRECTORY) / "validator.db")
             assert logger_level == logging.WARNING
-            assert validator_sync_hour == 4
+            assert validator_sync_hour == 1
 
     def test_required_args_missing(self):
         """Test behavior when required arguments are missing"""

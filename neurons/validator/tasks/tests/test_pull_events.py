@@ -155,7 +155,12 @@ class TestPullEventsTask:
 
         db_operations_mock.get_last_event_from.return_value = None
 
-        api_client_mock.get_events.return_value = GetEventsResponse.model_validate({"items": []})
+        api_client_mock.get_events.return_value = GetEventsResponse.model_validate(
+            {
+                "items": [],
+                "has_more": False,
+            }
+        )
 
         pull_events_task = PullEvents(
             interval_seconds=60.0,
@@ -192,6 +197,7 @@ class TestPullEventsTask:
                     "event_metadata": {},
                 },
             ],
+            "has_more": True,
         }
 
         mock_response_data_2 = {
@@ -211,11 +217,13 @@ class TestPullEventsTask:
                     "event_metadata": {},
                 },
             ],
+            "has_more": True,
         }
 
         mock_response_data_3 = {
             "count": -5,
             "items": [],
+            "has_more": False,
         }
 
         # Mock API response
@@ -273,11 +281,13 @@ class TestPullEventsTask:
                     "event_metadata": {},
                 },
             ],
+            "has_more": True,
         }
 
         mock_response_data_2 = {
             "count": -5,
             "items": [],
+            "has_more": False,
         }
 
         mock_response_data_3 = {
@@ -297,11 +307,13 @@ class TestPullEventsTask:
                     "event_metadata": {},
                 },
             ],
+            "has_more": True,
         }
 
         mock_response_data_4 = {
             "count": -5,
             "items": [],
+            "has_more": False,
         }
 
         from_last = math.floor(

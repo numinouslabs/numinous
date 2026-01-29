@@ -78,7 +78,7 @@ class PullEvents(AbstractTask):
             if len(parsed_events_for_insertion) > 0:
                 await self.db_operations.upsert_events(events=parsed_events_for_insertion)
 
-            if len(events) < self.page_size:
+            if not response.has_more:
                 # Break if no more events
                 break
 
