@@ -10,6 +10,7 @@ from typing import Callable, Dict, Optional, Type
 
 import docker
 import docker.errors
+import docker.types
 import requests.exceptions
 import urllib3.exceptions
 from bittensor_wallet import Wallet
@@ -180,23 +181,27 @@ class SandboxManager:
     def _create_signing_proxy(self) -> None:
         try:
             existing_proxy = self.docker_client.containers.get(SANDBOX_SIGNING_PROXY_HOST)
-            if existing_proxy.status == "running":
+            self.logger.info(
+                f"Found existing signing proxy (status: {existing_proxy.status}), removing to ensure fresh state",
+                extra={
+                    "container_name": SANDBOX_SIGNING_PROXY_HOST,
+                    "status": existing_proxy.status,
+                    "container_id": existing_proxy.short_id,
+                },
+            )
+            try:
+                existing_proxy.remove(force=True)
                 self.logger.info(
-                    "Reusing existing signing proxy container",
-                    extra={"container_name": SANDBOX_SIGNING_PROXY_HOST},
+                    "Successfully removed old signing proxy container",
+                    extra={"container_id": existing_proxy.short_id},
                 )
-                self.signing_proxy_container = existing_proxy
-                return
-            else:
-                self.logger.debug("Removing stopped signing proxy container")
-                try:
-                    existing_proxy.remove(force=True)
-                except Exception as e:
-                    self.logger.warning(
-                        "Failed to remove stopped signing proxy", extra={"error": str(e)}
-                    )
+            except Exception as e:
+                self.logger.warning(
+                    "Failed to remove old signing proxy, will try to create anyway",
+                    extra={"error": str(e)},
+                )
         except docker.errors.NotFound:
-            self.logger.debug("No existing signing proxy found, creating new one")
+            self.logger.info("No existing signing proxy found, creating fresh one")
         except Exception as e:
             self.logger.warning(
                 "Error checking for existing signing proxy", extra={"error": str(e)}
@@ -236,6 +241,7 @@ class SandboxManager:
                     "VALIDATOR_VERSION": __version__,
                 },
                 volumes={str(wallet_path): {"bind": "/wallet", "mode": "ro"}},
+                ulimits=[docker.types.Ulimit(name="nofile", soft=65536, hard=65536)],
                 remove=False,
                 detach=True,
             )
@@ -262,7 +268,7 @@ class SandboxManager:
 
         self.logger.info(
             "Signing proxy running",
-            extra={"container_name": SANDBOX_SIGNING_PROXY_HOST},
+            extra={"container_name": SANDBOX_SIGNING_PROXY_HOST, "ulimit_nofile": 65536},
         )
 
     def create_sandbox(
@@ -413,6 +419,7 @@ class SandboxManager:
                     **sandbox.env_vars,
                 },
                 "network": SANDBOX_NETWORK_NAME,
+                "ulimits": [docker.types.Ulimit(name="nofile", soft=65536, hard=65536)],
                 "remove": False,
                 "detach": True,
                 "mem_limit": "768m",  # 0.75GB RAM per sandbox

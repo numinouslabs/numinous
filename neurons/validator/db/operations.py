@@ -325,7 +325,7 @@ class DatabaseOperations:
         if row is not None:
             return row[0]
 
-    async def get_events_to_predict(self, days_until_cutoff: int) -> Iterable[tuple[str]]:
+    async def get_events_to_predict(self) -> Iterable[tuple[str]]:
         return await self.__db_client.many(
             """
                 SELECT
@@ -342,9 +342,11 @@ class DatabaseOperations:
                 WHERE
                     status = ?
                     AND datetime(CURRENT_TIMESTAMP) < datetime(cutoff)
-                    AND date(cutoff, 'utc') = date('now', 'utc', '+' || ? || ' days')
+                    AND date(cutoff) = date('now', 'utc', '+' || run_days_before_cutoff || ' days')
+                ORDER BY
+                    unique_event_id ASC
             """,
-            parameters=[EventStatus.PENDING, days_until_cutoff],
+            parameters=[EventStatus.PENDING],
         )
 
     async def get_last_event_from(self) -> str | None:
@@ -980,7 +982,7 @@ class DatabaseOperations:
                 WHERE
                     rn = 1
                 ORDER BY
-                    pulled_at ASC
+                    version_id ASC
         """
 
         parameters = []

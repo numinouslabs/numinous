@@ -2,8 +2,8 @@
 aiohttp~=3.13
 aiosqlite==0.21.0
 alembic==1.14.1
-bittensor-cli==9.17.0
-bittensor==10.0.1
+bittensor-cli==9.18.0
+bittensor==10.1.0
 docker~=7.1.0
 dotenv==0.9.9
 fastapi==0.110.3

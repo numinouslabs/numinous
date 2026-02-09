@@ -12,7 +12,6 @@ from neurons.validator.models.event import EventsModel, EventStatus
 from neurons.validator.models.miner import MinersModel
 from neurons.validator.models.prediction import PredictionExportedStatus, PredictionsModel
 from neurons.validator.models.score import ScoresModel
-from neurons.validator.utils.common.interval import SCORING_WINDOW_INTERVALS
 from neurons.validator.utils.logger.logger import NuminousLogger
 
 
@@ -767,14 +766,17 @@ class TestDbOperationsPart1(TestDbOperationsBase):
         assert result is None
 
     async def test_get_events_to_predict(self, db_operations: DatabaseOperations):
+        """
+        Events-to-predict are selected by per-event run_days_before_cutoff:
+        date(cutoff) == date(now_utc + run_days_before_cutoff days)
+        """
         event_to_predict_id = "event3"
 
         now = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         cutoff_past = (now - timedelta(days=1)).isoformat()
         cutoff_today = now.isoformat()
-        cutoff_exact_window = (now + timedelta(days=SCORING_WINDOW_INTERVALS)).isoformat()
-        cutoff_before_window = (now + timedelta(days=SCORING_WINDOW_INTERVALS - 1)).isoformat()
-        cutoff_after_window = (now + timedelta(days=SCORING_WINDOW_INTERVALS + 1)).isoformat()
+        cutoff_in_2_days = (now + timedelta(days=2)).isoformat()
+        cutoff_in_3_days = (now + timedelta(days=3)).isoformat()
 
         events = [
             EventsModel(
@@ -800,6 +802,7 @@ class TestDbOperationsPart1(TestDbOperationsBase):
                 metadata='{"key": "value"}',
                 created_at="2012-12-02T14:30:00+00:00",
                 cutoff=cutoff_today,
+                run_days_before_cutoff=0,
             ),
             EventsModel(
                 unique_event_id="unique3",
@@ -811,7 +814,8 @@ class TestDbOperationsPart1(TestDbOperationsBase):
                 status=EventStatus.PENDING,
                 metadata='{"key": "value"}',
                 created_at="2012-12-02T14:30:00+00:00",
-                cutoff=cutoff_exact_window,
+                cutoff=cutoff_in_2_days,
+                run_days_before_cutoff=2,
             ),
             EventsModel(
                 unique_event_id="unique4",
@@ -823,7 +827,8 @@ class TestDbOperationsPart1(TestDbOperationsBase):
                 status=EventStatus.PENDING,
                 metadata='{"key": "value"}',
                 created_at="2012-12-02T14:30:00+00:00",
-                cutoff=cutoff_before_window,
+                cutoff=cutoff_in_2_days,
+                run_days_before_cutoff=3,
             ),
             EventsModel(
                 unique_event_id="unique5",
@@ -835,7 +840,8 @@ class TestDbOperationsPart1(TestDbOperationsBase):
                 status=EventStatus.PENDING,
                 metadata='{"key": "value"}',
                 created_at="2012-12-02T14:30:00+00:00",
-                cutoff=cutoff_after_window,
+                cutoff=cutoff_in_3_days,
+                run_days_before_cutoff=3,
             ),
             EventsModel(
                 unique_event_id="unique6",
@@ -847,18 +853,21 @@ class TestDbOperationsPart1(TestDbOperationsBase):
                 status=EventStatus.SETTLED,
                 metadata='{"key": "value"}',
                 created_at="2012-12-02T14:30:00+00:00",
-                cutoff=cutoff_exact_window,
+                cutoff=cutoff_in_2_days,
+                run_days_before_cutoff=2,
             ),
         ]
 
         await db_operations.upsert_events(events=events)
 
-        result = await db_operations.get_events_to_predict(
-            days_until_cutoff=SCORING_WINDOW_INTERVALS
-        )
+        result = await db_operations.get_events_to_predict()
 
-        assert len(result) == 1
+        # Two events should match today's schedule:
+        # - unique3: cutoff in 2 days, run_days_before_cutoff=2
+        # - unique5: cutoff in 3 days, run_days_before_cutoff=3
+        assert len(result) == 2
         assert result[0][1] == event_to_predict_id
+        assert result[1][1] == "event5"
 
     async def test_get_predictions_for_event(self, db_operations: DatabaseOperations):
         unique_event_id_1 = "unique_event_id_1"

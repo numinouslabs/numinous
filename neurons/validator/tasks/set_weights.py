@@ -416,7 +416,7 @@ class SetWeights(AbstractTask):
                     else:
                         self.logger.error(
                             "Failed to fetch weights from backend API",
-                            extra={"status": e.status, "message": str(e)},
+                            extra={"status": e.status, "error_message": str(e)},
                         )
                         raise
 

@@ -14,6 +14,8 @@ from neurons.validator.utils.logger.logger import NuminousLogger
 
 console = Console()
 
+SANDBOX_TIMEOUT_SECONDS = 210
+
 
 def get_gateway_url() -> str:
     return (
@@ -227,7 +229,7 @@ async def run_single_test(
                 event_data=event_data,
                 run_id=run_id,
                 on_finish=on_finish,
-                timeout=300,
+                timeout=SANDBOX_TIMEOUT_SECONDS,
             )
         except Exception as e:
             result = {
@@ -239,11 +241,12 @@ async def run_single_test(
                 result_future.set_result(result)
 
         try:
-            result = await asyncio.wait_for(result_future, timeout=180)
+            # Add a small buffer for sandbox cleanup after execution finishes
+            result = await asyncio.wait_for(result_future, timeout=SANDBOX_TIMEOUT_SECONDS + 5)
         except asyncio.TimeoutError:
             result = {
                 "status": "error",
-                "error": "Sandbox execution timeout (125s)",
+                "error": f"Sandbox execution timeout ({SANDBOX_TIMEOUT_SECONDS}s)",
                 "traceback": "",
             }
         except Exception as e:

@@ -15,7 +15,6 @@ from neurons.validator.scheduler.task import AbstractTask
 from neurons.validator.utils.common.converters import pydantic_models_to_dataframe
 from neurons.validator.utils.common.interval import (
     AGGREGATION_INTERVAL_LENGTH_MINUTES,
-    SCORING_WINDOW_INTERVALS,
     align_to_interval,
     minutes_since_epoch,
     to_utc,
@@ -379,9 +378,10 @@ class Scoring(AbstractTask):
         event_cutoff_minutes = minutes_since_epoch(event.cutoff)
         event_cutoff_start_minutes = align_to_interval(event_cutoff_minutes)
 
-        # Calculate scoring window start (last N intervals before cutoff)
+        # Calculate scoring window start (last N intervals before cutoff).
+        # N is event-specific: run_days_before_cutoff.
         scoring_window_start_minutes = event_cutoff_start_minutes - (
-            SCORING_WINDOW_INTERVALS * AGGREGATION_INTERVAL_LENGTH_MINUTES
+            event.run_days_before_cutoff * AGGREGATION_INTERVAL_LENGTH_MINUTES
         )
 
         intervals = self.get_intervals_df(

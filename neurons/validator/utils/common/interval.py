@@ -6,11 +6,6 @@ SCORING_REFERENCE_DATE = datetime(2024, 1, 1, 0, 0, 0, 0, tzinfo=timezone.utc)
 # Intervals are grouped in 24-hour blocks (1440 minutes).
 AGGREGATION_INTERVAL_LENGTH_MINUTES = 60 * 24
 
-# Number of intervals (days) used for scoring window and prediction window
-# Miners only predict on events cutoffing in exactly this many days
-# Scoring only considers the last N intervals before cutoff
-SCORING_WINDOW_INTERVALS = 2
-
 BLOCK_DURATION = 12  # 12 seconds block duration from bittensor
 
 

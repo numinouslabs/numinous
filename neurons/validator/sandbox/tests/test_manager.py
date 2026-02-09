@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import docker.errors
 import pytest
 import requests.exceptions
 
@@ -209,3 +210,55 @@ class TestSandboxManagerValidation:
                 on_finish=MagicMock(),
                 timeout=-1,
             )
+
+
+class TestSigningProxyLifecycle:
+    @patch("neurons.validator.sandbox.manager.build_docker_image")
+    @patch("neurons.validator.sandbox.manager.image_exists", return_value=True)
+    def test_removes_existing_proxy_before_creating_new_one(
+        self, mock_image_exists, mock_build_image, mock_wallet, mock_logger
+    ):
+        mock_docker_client = MagicMock()
+        mock_old_proxy = MagicMock()
+        mock_old_proxy.status = "running"
+        mock_old_proxy.short_id = "abc123"
+        mock_docker_client.containers.get = MagicMock(return_value=mock_old_proxy)
+        mock_docker_client.containers.run = MagicMock()
+        mock_docker_client.networks.get = MagicMock()
+        mock_docker_client.networks.create = MagicMock()
+
+        with patch("docker.from_env", return_value=mock_docker_client):
+            SandboxManager(mock_wallet, "http://gateway", mock_logger)
+
+        mock_old_proxy.remove.assert_called_once_with(force=True)
+        mock_docker_client.containers.run.assert_called_once()
+        call_kwargs = mock_docker_client.containers.run.call_args[1]
+        assert "ulimits" in call_kwargs
+        assert len(call_kwargs["ulimits"]) == 1
+        assert call_kwargs["ulimits"][0]["Name"] == "nofile"
+        assert call_kwargs["ulimits"][0]["Soft"] == 65536
+        assert call_kwargs["ulimits"][0]["Hard"] == 65536
+
+    @patch("neurons.validator.sandbox.manager.build_docker_image")
+    @patch("neurons.validator.sandbox.manager.image_exists", return_value=True)
+    def test_creates_new_proxy_when_none_exists(
+        self, mock_image_exists, mock_build_image, mock_wallet, mock_logger
+    ):
+        mock_docker_client = MagicMock()
+        mock_docker_client.containers.get = MagicMock(
+            side_effect=docker.errors.NotFound("proxy not found")
+        )
+        mock_docker_client.containers.run = MagicMock()
+        mock_docker_client.networks.get = MagicMock()
+        mock_docker_client.networks.create = MagicMock()
+
+        with patch("docker.from_env", return_value=mock_docker_client):
+            SandboxManager(mock_wallet, "http://gateway", mock_logger)
+
+        mock_docker_client.containers.run.assert_called_once()
+        call_kwargs = mock_docker_client.containers.run.call_args[1]
+        assert "ulimits" in call_kwargs
+        assert len(call_kwargs["ulimits"]) == 1
+        assert call_kwargs["ulimits"][0]["Name"] == "nofile"
+        assert call_kwargs["ulimits"][0]["Soft"] == 65536
+        assert call_kwargs["ulimits"][0]["Hard"] == 65536

@@ -226,14 +226,14 @@ class TestMinerAgentsOperations(TestDbOperationsBase):
         assert len(result) == 0
         assert isinstance(result, list)
 
-    async def test_get_active_agents_ordered_by_pulled_at(self, db_operations: DatabaseOperations):
+    async def test_get_active_agents_ordered_by_version_id(self, db_operations: DatabaseOperations):
         pulled_at_1 = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
         pulled_at_2 = datetime(2024, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
         pulled_at_3 = datetime(2024, 1, 1, 11, 0, 0, tzinfo=timezone.utc)
 
         agents = [
             MinerAgentsModel(
-                version_id=str(uuid4()),
+                version_id="c-agent",
                 miner_uid=1,
                 miner_hotkey="hotkey1",
                 agent_name="Agent1",
@@ -243,7 +243,7 @@ class TestMinerAgentsOperations(TestDbOperationsBase):
                 created_at=datetime(2024, 1, 1, 9, 0, 0, tzinfo=timezone.utc),
             ),
             MinerAgentsModel(
-                version_id=str(uuid4()),
+                version_id="a-agent",
                 miner_uid=2,
                 miner_hotkey="hotkey2",
                 agent_name="Agent2",
@@ -253,7 +253,7 @@ class TestMinerAgentsOperations(TestDbOperationsBase):
                 created_at=datetime(2024, 1, 1, 9, 0, 0, tzinfo=timezone.utc),
             ),
             MinerAgentsModel(
-                version_id=str(uuid4()),
+                version_id="b-agent",
                 miner_uid=3,
                 miner_hotkey="hotkey3",
                 agent_name="Agent3",
@@ -270,14 +270,14 @@ class TestMinerAgentsOperations(TestDbOperationsBase):
 
         assert len(result) == 3
         assert isinstance(result[0], MinerAgentsModel)
-        assert result[0].miner_uid == 2
-        assert result[1].miner_uid == 3
-        assert result[2].miner_uid == 1
+        assert result[0].version_id == "a-agent"
+        assert result[1].version_id == "b-agent"
+        assert result[2].version_id == "c-agent"
 
     async def test_get_active_agents_with_limit(self, db_operations: DatabaseOperations):
         agents = [
             MinerAgentsModel(
-                version_id=str(uuid4()),
+                version_id=f"{i:02d}-agent",
                 miner_uid=i,
                 miner_hotkey=f"hotkey{i}",
                 agent_name=f"Agent{i}",
@@ -308,7 +308,7 @@ class TestMinerAgentsOperations(TestDbOperationsBase):
 
         agents = [
             MinerAgentsModel(
-                version_id=str(uuid4()),
+                version_id="1-miner1-v1",
                 miner_uid=1,
                 miner_hotkey="hotkey1",
                 agent_name="Agent1",
@@ -318,7 +318,7 @@ class TestMinerAgentsOperations(TestDbOperationsBase):
                 created_at=datetime(2024, 1, 1, 9, 0, 0, tzinfo=timezone.utc),
             ),
             MinerAgentsModel(
-                version_id=str(uuid4()),
+                version_id="1-miner1-v3",
                 miner_uid=1,
                 miner_hotkey="hotkey1",
                 agent_name="Agent1",
@@ -328,7 +328,7 @@ class TestMinerAgentsOperations(TestDbOperationsBase):
                 created_at=datetime(2024, 1, 1, 11, 0, 0, tzinfo=timezone.utc),
             ),
             MinerAgentsModel(
-                version_id=str(uuid4()),
+                version_id="1-miner1-v2",
                 miner_uid=1,
                 miner_hotkey="hotkey1",
                 agent_name="Agent1",
@@ -338,7 +338,7 @@ class TestMinerAgentsOperations(TestDbOperationsBase):
                 created_at=datetime(2024, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
             ),
             MinerAgentsModel(
-                version_id=str(uuid4()),
+                version_id="2-miner2-v1",
                 miner_uid=2,
                 miner_hotkey="hotkey2",
                 agent_name="Agent2",
@@ -348,7 +348,7 @@ class TestMinerAgentsOperations(TestDbOperationsBase):
                 created_at=datetime(2024, 1, 1, 9, 0, 0, tzinfo=timezone.utc),
             ),
             MinerAgentsModel(
-                version_id=str(uuid4()),
+                version_id="2-miner2-v2",
                 miner_uid=2,
                 miner_hotkey="hotkey2",
                 agent_name="Agent2",
@@ -358,7 +358,7 @@ class TestMinerAgentsOperations(TestDbOperationsBase):
                 created_at=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
             ),
             MinerAgentsModel(
-                version_id=str(uuid4()),
+                version_id="3-miner3-v1",
                 miner_uid=3,
                 miner_hotkey="hotkey3",
                 agent_name="Agent3",
@@ -390,9 +390,9 @@ class TestMinerAgentsOperations(TestDbOperationsBase):
         assert miner3_agent.version_number == 1
         assert miner3_agent.file_path == "/data/agents/3/v1/agent.py"
 
-        assert result[0].miner_uid == 3
-        assert result[1].miner_uid == 1
-        assert result[2].miner_uid == 2
+        assert result[0].version_id == "1-miner1-v3"
+        assert result[1].version_id == "2-miner2-v2"
+        assert result[2].version_id == "3-miner3-v1"
 
     async def test_upsert_miner_agents_unique_constraint(
         self, db_operations: DatabaseOperations, db_client: DatabaseClient

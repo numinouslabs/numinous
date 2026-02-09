@@ -53,8 +53,8 @@ def get_config():
     parser.add_argument(
         "--sandbox.timeout_seconds",
         type=int,
-        default=180,
-        help="Timeout for agent execution in seconds (default: 180)",
+        default=210,
+        help="Timeout for agent execution in seconds (default: 210)",
     )
     parser.add_argument(
         "--validator.sync_hour",

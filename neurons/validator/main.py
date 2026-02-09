@@ -130,7 +130,7 @@ async def main():
         subtensor=AsyncSubtensor(config=config),
         logger=logger,
         max_concurrent_sandboxes=config.get("sandbox", {}).get("max_concurrent", 50),
-        timeout_seconds=config.get("sandbox", {}).get("timeout_seconds", 180),
+        timeout_seconds=config.get("sandbox", {}).get("timeout_seconds", 210),
         sync_hour=validator_sync_hour,
         validator_uid=validator_uid,
         validator_hotkey=validator_hotkey,
