@@ -30,6 +30,7 @@ class NuminousEvent(BaseModel):
     event_metadata: typing.Optional[dict] = None
     created_at: datetime
     cutoff: datetime
+    run_days_before_cutoff: int
 
 
 class GetEventsResponse(BaseModel):

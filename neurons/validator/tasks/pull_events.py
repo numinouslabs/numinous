@@ -103,4 +103,5 @@ class PullEvents(AbstractTask):
             metadata=json.dumps(metadata),
             created_at=event.created_at,
             cutoff=event.cutoff,
+            run_days_before_cutoff=event.run_days_before_cutoff,
         )

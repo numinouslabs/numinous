@@ -15,10 +15,7 @@ from neurons.validator.numinous_client.client import NuminousClient
 from neurons.validator.sandbox import SandboxManager
 from neurons.validator.sandbox.models import SandboxErrorType
 from neurons.validator.scheduler.task import AbstractTask
-from neurons.validator.utils.common.interval import (
-    SCORING_WINDOW_INTERVALS,
-    get_interval_start_minutes,
-)
+from neurons.validator.utils.common.interval import get_interval_start_minutes
 from neurons.validator.utils.logger.logger import NuminousLogger
 
 TITLE_SEPARATOR = " ==Further Information==: "
@@ -133,9 +130,7 @@ class RunAgents(AbstractTask):
             "Synced metagraph", extra={"block": block, "neurons": len(self.metagraph.uids)}
         )
 
-        events = await self.db_operations.get_events_to_predict(
-            days_until_cutoff=SCORING_WINDOW_INTERVALS
-        )
+        events = await self.db_operations.get_events_to_predict()
         if not len(events):
             self.logger.debug("No events to predict")
             return
@@ -155,7 +150,6 @@ class RunAgents(AbstractTask):
         self.logger.info(
             "Starting to run agents",
             extra={
-                "scoring_window_intervals": SCORING_WINDOW_INTERVALS,
                 "total_events": len(events),
                 "total_agents": len(valid_agents),
                 "interval_start_minutes": interval_start_minutes,

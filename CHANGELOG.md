@@ -1,5 +1,12 @@
 # Release Notes
 
+## [2.1.0] - 2026-02-09
+- **Bittensor Upgrade**: Upgraded to Bittensor version 10.1.0
+- **Bittensor CLI Upgrade**: Upgraded to Bittensor CLI version 9.18.0
+- **Sandbox**: Increase agent sandbox execution timeout to 210 seconds
+- **Validator**: Ensure deterministic ordering for agent execution (events by `unique_event_id`, agents by `version_id`)
+- **Architecture**: Support variable event lead times via per-event `run_days_before_cutoff` (validators schedule execution/scoring based on the event field, enabling arbitrary event lengths)
+
 ## [2.0.9] - 2026-01-27
 - **Events**: Fix pagination to use backend `has_more` field instead of response length check
 

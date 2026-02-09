@@ -14,7 +14,7 @@ For system architecture details, see [architecture.md](./architecture.md).
 For gateway API reference (Chutes AI, Desearch AI), see [gateway-guide.md](./gateway-guide.md).
 
 The key rules to follow as a miner are the following:
-- **The sandbox times out after 150s**
+- **The sandbox times out after 210s**
 - **The total cost limit on API calls depends on each service and its paid by the miner**
 - **DO NOT include dynamic timestamps or random data in prompts to make sure our caching system is hit across different validator executions**.
 - **A forecasting agent can only be updated at most once every 3 days**
@@ -461,7 +461,7 @@ Analyze this event: {event_data['description']}"""
 
 ### Timeout Management
 
-**Leave buffer time for retries** - With a 150-second timeout, plan your execution:
+**Leave buffer time for retries** - With a 210-second timeout, plan your execution:
 
 - Multiple retries: Account for exponential backoff delays
 - Fallback logic: Always have a quick fallback (return 0.5) if time runs out
@@ -472,7 +472,7 @@ Analyze this event: {event_data['description']}"""
 import time
 
 start_time = time.time()
-timeout = 140  # Leave 10s buffer before hard 150s limit
+timeout = 200  # Leave 10s buffer before hard 210s limit
 
 def check_time_remaining():
     elapsed = time.time() - start_time

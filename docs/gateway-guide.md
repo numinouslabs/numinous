@@ -1165,14 +1165,14 @@ def query_llm_with_retry(prompt: str, max_retries: int = 3) -> Optional[str]:
 
 ### Timeout Management
 
-Plan your execution time to stay within the 150-second sandbox limit:
+Plan your execution time to stay within the 210-second sandbox limit:
 
 ```python
 import time
 
 start_time = time.time()
 timeout_buffer = 10  # seconds
-max_time = 140  # 150s limit - 10s buffer
+max_time = 200  # 210s limit - 10s buffer
 
 def time_remaining():
     elapsed = time.time() - start_time

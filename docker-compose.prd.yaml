@@ -31,17 +31,7 @@ services:
 
     # Production configuration
     command: >
-      bash -c "python neurons/validator.py
-      --netuid 6
-      --subtensor.network finney
-      --wallet.name ifkey
-      --wallet.hotkey ifhkey
-      --db.directory /root/infinite_games/database
-      --numinous.env prod
-      --sandbox.max_concurrent 50
-      --sandbox.timeout_seconds 150
-      --validator.sync_hour 0
-      --logging.debug"
+      bash -c "python neurons/validator.py --netuid 6 --subtensor.network finney --wallet.name ifkey --wallet.hotkey ifhkey --db.directory /root/infinite_games/database --numinous.env prod --sandbox.max_concurrent 50 --sandbox.timeout_seconds 210 --validator.sync_hour 0 --logging.debug"
 
     logging:
       driver: "json-file"

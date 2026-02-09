@@ -30,16 +30,7 @@ services:
       - HOST_WALLET_PATH=${HOST_WALLET_PATH:-${HOME}/.bittensor/wallets}
 
     command: >
-      bash -c "python neurons/validator.py
-      --netuid 6
-      --subtensor.network finney
-      --wallet.name ${WALLET_NAME}
-      --wallet.hotkey ${WALLET_HOTKEY}
-      --db.directory /root/infinite_games/database
-      --numinous.env prod
-      --sandbox.max_concurrent 50
-      --sandbox.timeout_seconds 150
-      --logging.debug"
+      bash -c "python neurons/validator.py --netuid 6 --subtensor.network finney --wallet.name ${WALLET_NAME} --wallet.hotkey ${WALLET_HOTKEY} --db.directory /root/infinite_games/database --numinous.env prod --sandbox.max_concurrent 50 --sandbox.timeout_seconds 210 --logging.debug"
 
     logging:
       driver: "json-file"

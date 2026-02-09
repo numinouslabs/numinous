@@ -217,6 +217,7 @@ class TestNuminousClient:
                     "market_type": "BINARY",
                     "created_at": 1733200000,
                     "event_metadata": {},
+                    "run_days_before_cutoff": 2,
                 },
                 {
                     "event_id": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef",
@@ -229,6 +230,7 @@ class TestNuminousClient:
                     "market_type": "POLYMARKET",
                     "created_at": 1733210000,
                     "event_metadata": {},
+                    "run_days_before_cutoff": 2,
                 },
             ],
         }

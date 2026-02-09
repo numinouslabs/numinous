@@ -33,6 +33,7 @@ class EventsModel(BaseModel):
     exported: Optional[bool] = False
     created_at: Optional[datetime] = None
     cutoff: Optional[datetime] = None
+    run_days_before_cutoff: int = 2
     resolved_at: Optional[datetime] = None
     event_type: Optional[str] = None
     deleted_at: Optional[datetime] = None

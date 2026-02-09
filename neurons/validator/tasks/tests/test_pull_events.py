@@ -67,6 +67,7 @@ class TestPullEventsTask:
                 "market_type": "TYpe1",
                 "cutoff": 1699996800,
                 "event_metadata": {"topics": [], "trigger_name": None},
+                "run_days_before_cutoff": 2,
             }
         )
 
@@ -97,6 +98,7 @@ class TestPullEventsTask:
             exported=False,
             created_at=datetime.fromtimestamp(1699996400, tz=timezone.utc),
             cutoff=datetime.fromtimestamp(1699996800, tz=timezone.utc),
+            run_days_before_cutoff=2,
             resolved_at=None,
             deleted_at=None,
         )
@@ -114,6 +116,7 @@ class TestPullEventsTask:
                 "market_type": "TYpe1",
                 "cutoff": 1699996800,
                 "event_metadata": None,
+                "run_days_before_cutoff": 2,
             }
         )
 
@@ -144,6 +147,7 @@ class TestPullEventsTask:
             exported=False,
             created_at=datetime.fromtimestamp(1699996400, tz=timezone.utc),
             cutoff=datetime.fromtimestamp(1699996800, tz=timezone.utc),
+            run_days_before_cutoff=2,
             resolved_at=None,
             deleted_at=None,
         )
@@ -195,6 +199,7 @@ class TestPullEventsTask:
                     "created_at": 1733200000,
                     "end_date": 1733620000,
                     "event_metadata": {},
+                    "run_days_before_cutoff": 2,
                 },
             ],
             "has_more": True,
@@ -215,6 +220,7 @@ class TestPullEventsTask:
                     "created_at": 1733210000,
                     "end_date": 1733621000,
                     "event_metadata": {},
+                    "run_days_before_cutoff": 2,
                 },
             ],
             "has_more": True,
@@ -279,6 +285,7 @@ class TestPullEventsTask:
                     "created_at": 1733200000,
                     "end_date": 1733620000,
                     "event_metadata": {},
+                    "run_days_before_cutoff": 2,
                 },
             ],
             "has_more": True,
@@ -305,6 +312,7 @@ class TestPullEventsTask:
                     "created_at": 1733210000,
                     "end_date": 1733621000,
                     "event_metadata": {},
+                    "run_days_before_cutoff": 2,
                 },
             ],
             "has_more": True,

@@ -76,7 +76,7 @@ The validators spin up 50 parallel sandboxes where 50 miners are evaluated on th
 
 Agents run in isolated Docker containers with:
 - No internet access
-- 150s execution timeout
+- 210s execution timeout
 - Limited CPU/memory
 - Access to a defined set of external APIs via a signing proxy
 - Cost limits that depend on each service (paid by miner)
@@ -210,7 +210,7 @@ def agent_main(event_data: dict) -> dict:
 ## Constraints
 
 - Max code size: 2MB
-- Execution timeout: 150s
+- Execution timeout: 210s
 - No direct internet access (must use gateway for external APIs)
 - Available libraries: see sandbox requirements
 

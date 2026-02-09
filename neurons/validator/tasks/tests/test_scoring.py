@@ -22,7 +22,6 @@ from neurons.validator.tasks.scoring import (
 )
 from neurons.validator.utils.common.interval import (
     AGGREGATION_INTERVAL_LENGTH_MINUTES,
-    SCORING_WINDOW_INTERVALS,
     align_to_interval,
     minutes_since_epoch,
     to_utc,
@@ -642,7 +641,7 @@ class TestScoring:
         event_cutoff_minutes = minutes_since_epoch(event.cutoff)
         event_cutoff_start_minutes = align_to_interval(event_cutoff_minutes)
         scoring_window_start_minutes = event_cutoff_start_minutes - (
-            SCORING_WINDOW_INTERVALS * AGGREGATION_INTERVAL_LENGTH_MINUTES
+            event.run_days_before_cutoff * AGGREGATION_INTERVAL_LENGTH_MINUTES
         )
 
         # Miner 1: has predictions for all intervals
@@ -743,7 +742,7 @@ class TestScoring:
         event_cutoff_minutes = minutes_since_epoch(event.cutoff)
         event_cutoff_start_minutes = align_to_interval(event_cutoff_minutes)
         scoring_window_start_minutes = event_cutoff_start_minutes - (
-            SCORING_WINDOW_INTERVALS * AGGREGATION_INTERVAL_LENGTH_MINUTES
+            event.run_days_before_cutoff * AGGREGATION_INTERVAL_LENGTH_MINUTES
         )
 
         # Miner registered BEFORE scoring window start should be included
@@ -790,7 +789,7 @@ class TestScoring:
 
         # Calculate scoring window start
         scoring_window_start_minutes = event_cutoff_start_minutes - (
-            SCORING_WINDOW_INTERVALS * AGGREGATION_INTERVAL_LENGTH_MINUTES
+            event.run_days_before_cutoff * AGGREGATION_INTERVAL_LENGTH_MINUTES
         )
 
         # Provide predictions for all intervals (like run_agents does via replication)
@@ -847,7 +846,7 @@ class TestScoring:
         ]:
             assert col in result.columns
 
-        # Scoring window generates SCORING_WINDOW_INTERVALS intervals (default 2)
+        # Scoring window generates `event.run_days_before_cutoff` intervals
         # Miner has prediction of 0.8 in all intervals
         # No imputation happens (no failed runs)
         row = result.iloc[0]
@@ -880,12 +879,13 @@ class TestScoring:
             outcome="1",
             cutoff=base_time + timedelta(minutes=duration_minutes),
             registered_date=base_time,
+            run_days_before_cutoff=2,
         )
 
         event_cutoff_minutes = minutes_since_epoch(event.cutoff)
         event_cutoff_start_minutes = align_to_interval(event_cutoff_minutes)
         scoring_window_start_minutes = event_cutoff_start_minutes - (
-            SCORING_WINDOW_INTERVALS * AGGREGATION_INTERVAL_LENGTH_MINUTES
+            event.run_days_before_cutoff * AGGREGATION_INTERVAL_LENGTH_MINUTES
         )
 
         # Predictions for both intervals (like run_agents does via replication)
@@ -975,6 +975,83 @@ class TestScoring:
 
         assert unit.errors_count == 0
 
+    async def test_score_event_uses_event_run_days_before_cutoff_for_miner_eligibility(
+        self, scoring_task: Scoring
+    ):
+        """
+        Ensure miner eligibility is based on the event-specific run_days_before_cutoff.
+        Miners registered after the scoring window start are excluded (even if they have predictions).
+        """
+        base_time = datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc)
+        run_days_before_cutoff = 5
+        duration_minutes = 10 * AGGREGATION_INTERVAL_LENGTH_MINUTES
+
+        event = EventsModel(
+            unique_event_id="evt_variable_lead_days",
+            event_id="e_variable_1",
+            market_type="dummy",
+            event_type="dummy",
+            description="variable lead days eligibility test",
+            metadata="{}",
+            status=EventStatus.SETTLED,
+            outcome="1",
+            cutoff=base_time + timedelta(minutes=duration_minutes),
+            registered_date=base_time,
+            run_days_before_cutoff=run_days_before_cutoff,
+        )
+
+        event_cutoff_minutes = minutes_since_epoch(event.cutoff)
+        event_cutoff_start_minutes = align_to_interval(event_cutoff_minutes)
+        scoring_window_start_minutes = event_cutoff_start_minutes - (
+            run_days_before_cutoff * AGGREGATION_INTERVAL_LENGTH_MINUTES
+        )
+
+        predictions = [
+            PredictionsModel(
+                unique_event_id=event.unique_event_id,
+                miner_hotkey="miner_early",
+                miner_uid=1,
+                latest_prediction=0.7,
+                interval_start_minutes=scoring_window_start_minutes,
+                interval_agg_prediction=0.7,
+                interval_count=1,
+                submitted=base_time,
+                exported=False,
+            ),
+            PredictionsModel(
+                unique_event_id=event.unique_event_id,
+                miner_hotkey="miner_late",
+                miner_uid=2,
+                latest_prediction=0.9,
+                interval_start_minutes=scoring_window_start_minutes,
+                interval_agg_prediction=0.9,
+                interval_count=1,
+                submitted=base_time,
+                exported=False,
+            ),
+        ]
+
+        unit = scoring_task
+        unit.miners_last_reg = pd.DataFrame(
+            {
+                ScoreNames.miner_uid: [1, 2],
+                ScoreNames.miner_hotkey: ["miner_early", "miner_late"],
+                ScoreNames.miner_registered_minutes: [
+                    scoring_window_start_minutes - 1,  # before window
+                    scoring_window_start_minutes + 1,  # after window
+                ],
+            }
+        )
+
+        unit.db_operations.get_failed_agent_runs_for_event = AsyncMock(return_value=[])
+
+        result = await unit.score_event(event, predictions)
+
+        assert not result.empty
+        assert result.shape[0] == 1
+        assert result.iloc[0][ScoreNames.miner_uid] == 1
+        np.testing.assert_allclose(result.iloc[0][ScoreNames.rema_prediction], 0.7, rtol=1e-5)
+
     async def test_score_event_scoring_window_intervals_generation(self, scoring_task: Scoring):
         base_time = datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc)
 
@@ -989,12 +1066,13 @@ class TestScoring:
             outcome="1",
             cutoff=base_time + timedelta(minutes=10 * AGGREGATION_INTERVAL_LENGTH_MINUTES),
             registered_date=base_time,
+            run_days_before_cutoff=2,
         )
 
         event_cutoff_minutes = minutes_since_epoch(event.cutoff)
         event_cutoff_start_minutes = align_to_interval(event_cutoff_minutes)
         scoring_window_start_minutes = event_cutoff_start_minutes - (
-            SCORING_WINDOW_INTERVALS * AGGREGATION_INTERVAL_LENGTH_MINUTES
+            event.run_days_before_cutoff * AGGREGATION_INTERVAL_LENGTH_MINUTES
         )
 
         unit = scoring_task
@@ -1140,14 +1218,17 @@ class TestScoring:
         # Predictions: replicate across all intervals (like run_agents does)
         event1_cutoff_minutes = minutes_since_epoch(event1_cutoff)
         event1_cutoff_aligned = align_to_interval(event1_cutoff_minutes)
+        event1_run_days_before_cutoff = 2
+        event2_run_days_before_cutoff = 2
+
         event1_scoring_window_start = event1_cutoff_aligned - (
-            SCORING_WINDOW_INTERVALS * AGGREGATION_INTERVAL_LENGTH_MINUTES
+            event1_run_days_before_cutoff * AGGREGATION_INTERVAL_LENGTH_MINUTES
         )
 
         event2_cutoff_minutes = minutes_since_epoch(event2_cutoff)
         event2_cutoff_aligned = align_to_interval(event2_cutoff_minutes)
         event2_scoring_window_start = event2_cutoff_aligned - (
-            SCORING_WINDOW_INTERVALS * AGGREGATION_INTERVAL_LENGTH_MINUTES
+            event2_run_days_before_cutoff * AGGREGATION_INTERVAL_LENGTH_MINUTES
         )
 
         event3_cutoff = event1_cutoff
@@ -1317,7 +1398,7 @@ class TestScoring:
         # insert predictions - replicate across all intervals like run_agents does
         predictions = []
         # Event2 predictions for both intervals
-        for interval_offset in range(SCORING_WINDOW_INTERVALS):
+        for interval_offset in range(event2_run_days_before_cutoff):
             predictions.extend(
                 [
                     PredictionsModel(
@@ -1342,7 +1423,7 @@ class TestScoring:
             )
 
         # Event1 predictions for both intervals
-        for interval_offset in range(SCORING_WINDOW_INTERVALS):
+        for interval_offset in range(event1_run_days_before_cutoff):
             predictions.extend(
                 [
                     PredictionsModel(
