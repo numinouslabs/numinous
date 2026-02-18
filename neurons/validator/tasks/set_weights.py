@@ -4,7 +4,6 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-import aiohttp
 import numpy as np
 import pandas as pd
 from bittensor import AsyncSubtensor
@@ -389,43 +388,22 @@ class SetWeights(AbstractTask):
                 self.copy_metagraph_state()
 
                 can_set_weights = await self.time_to_set_weights()
+
                 if not can_set_weights:
                     return
 
-                try:
-                    api_response = await self.api_client.get_weights()
+                api_response = await self.api_client.get_weights()
 
-                    self.logger.info(
-                        "Fetched centralized weights from API",
-                        extra={
-                            "aggregated_at": api_response.aggregated_at.isoformat(),
-                            "num_weights": len(api_response.weights),
-                            "count": api_response.count,
-                        },
-                    )
+                self.logger.debug(
+                    "Fetched centralized weights from API",
+                    extra={
+                        "aggregated_at": api_response.aggregated_at.isoformat(),
+                        "num_weights": len(api_response.weights),
+                        "count": api_response.count,
+                    },
+                )
 
-                    weights_from_api = self._convert_api_weights_to_weights(api_response)
-
-                except aiohttp.ClientResponseError as e:
-                    if e.status == 503:
-                        self.logger.warning(
-                            "Backend has no weights available yet (503). Skipping set_weights this round.",
-                            extra={"status": e.status},
-                        )
-                        return
-                    else:
-                        self.logger.error(
-                            "Failed to fetch weights from backend API",
-                            extra={"status": e.status, "error_message": str(e)},
-                        )
-                        raise
-
-                except Exception as e:
-                    self.logger.exception(
-                        "Unexpected error fetching weights from API",
-                        extra={"error_type": type(e).__name__},
-                    )
-                    raise
+                weights_from_api = self._convert_api_weights_to_weights(api_response)
 
                 if not weights_from_api:
                     raise ValueError("Failed to get weights from API (empty response).")

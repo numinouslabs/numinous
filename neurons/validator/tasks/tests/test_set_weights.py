@@ -529,7 +529,7 @@ class TestSetWeights:
 
         await unit.run()
 
-        assert unit.logger.debug.call_count == 7
+        assert unit.logger.debug.call_count == 8
         assert unit.logger.warning.call_count == 0
         assert unit.logger.error.call_count == 0
 
@@ -543,10 +543,11 @@ class TestSetWeights:
         assert debug_calls[2][0][0] == "Attempting to set the weights - enough blocks passed."
         assert debug_calls[2][1]["extra"]["blocks_since_last_attempt"] >= 100
 
-        assert debug_calls[3][0][0] == "Converted API response to weights"
-        assert debug_calls[4][0][0] == "Merged API weights with current metagraph"
-        assert debug_calls[5][0][0] == "Top 5 and bottom 5 miners by raw_weights"
-        assert debug_calls[6][0][0] == "Weights set successfully."
+        assert debug_calls[3][0][0] == "Fetched centralized weights from API"
+        assert debug_calls[4][0][0] == "Converted API response to weights"
+        assert debug_calls[5][0][0] == "Merged API weights with current metagraph"
+        assert debug_calls[6][0][0] == "Top 5 and bottom 5 miners by raw_weights"
+        assert debug_calls[7][0][0] == "Weights set successfully."
 
         assert unit.subtensor_cm.set_weights.call_count == 1
         assert unit.subtensor_cm.set_weights.call_args.kwargs["uids"].tolist() == [3, 4]
@@ -585,30 +586,7 @@ class TestSetWeights:
         unit.api_client.get_weights.assert_called_once()
         unit.subtensor_cm.set_weights.assert_called_once()
 
-    async def test_run_handles_503_gracefully(self, set_weights_task: SetWeights):
-        import aiohttp
-
-        unit = set_weights_task
-
-        error = aiohttp.ClientResponseError(
-            request_info=MagicMock(),
-            history=(),
-            status=503,
-            message="Service Unavailable",
-        )
-
-        unit.subtensor_cm.set_weights = AsyncMock(
-            return_value=ExtrinsicResponse(success=True, message="Success", error=None)
-        )
-
-        unit.api_client.get_weights = AsyncMock(side_effect=error)
-
-        await unit.run()
-
-        unit.subtensor_cm.set_weights.assert_not_called()
-        unit.logger.warning.assert_called_once()
-
-    async def test_run_raises_on_other_http_errors(self, set_weights_task: SetWeights):
+    async def test_run_raises_http_errors(self, set_weights_task: SetWeights):
         unit = set_weights_task
 
         error = aiohttp.ClientResponseError(

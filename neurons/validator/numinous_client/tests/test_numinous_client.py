@@ -1090,7 +1090,7 @@ class TestNuminousClient:
 
         request_body_dict = {
             "run_id": "223e4567-e89b-12d3-a456-426614174001",
-            "model": ChuteModel.QWEN3_32B,
+            "model": ChuteModel.QWEN_3_32B,
             "messages": [
                 {"role": "user", "content": "Test message"},
             ],

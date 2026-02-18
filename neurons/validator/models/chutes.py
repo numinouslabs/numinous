@@ -7,14 +7,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class ChuteModel(StrEnum):
     # DeepSeek models
-    DEEPSEEK_R1_SGTEST = "deepseek-ai/DeepSeek-R1-sgtest"
     DEEPSEEK_R1_0528 = "deepseek-ai/DeepSeek-R1-0528"
     DEEPSEEK_R1 = "deepseek-ai/DeepSeek-R1"
     DEEPSEEK_V3_0324 = "deepseek-ai/DeepSeek-V3-0324"
     DEEPSEEK_V3_1_TERMINUS = "deepseek-ai/DeepSeek-V3.1-Terminus"
     DEEPSEEK_V3_1 = "deepseek-ai/DeepSeek-V3.1"
     DEEPSEEK_TNG_R1T2_CHIMERA = "tngtech/DeepSeek-TNG-R1T2-Chimera"
-    DEEPSEEK_V3_2_EXP = "deepseek-ai/DeepSeek-V3.2-Exp"
     DEEPSEEK_V3_2 = "deepseek-ai/DeepSeek-V3.2"
     DEEPSEEK_V3_2_SPECIALE = "deepseek-ai/DeepSeek-V3.2-Speciale"
 
@@ -23,17 +21,18 @@ class ChuteModel(StrEnum):
     GEMMA_3_27B_IT = "unsloth/gemma-3-27b-it"
     GEMMA_3_12B_IT = "unsloth/gemma-3-12b-it"
 
-    # Zai models
+    # GLM models
     GLM_4_6 = "zai-org/GLM-4.6"
-    GLM_4_5 = "zai-org/GLM-4.5"
-    GLM_4_5_AIR = "zai-org/GLM-4.5-Air"
+    GLM_4_7 = "zai-org/GLM-4.7"
+    GLM_4_7_FLASH = "zai-org/GLM-4.7-Flash"
+    GLM_5 = "zai-org/GLM-5-TEE"
 
     # Qwen models
-    QWEN3_32B = "Qwen/Qwen3-32B"
-    QWEN2_5_VL_32B_INSTRUCT = "Qwen/Qwen2.5-VL-32B-Instruct"
-    QWEN3_235B_A22B = "Qwen/Qwen3-235B-A22B"
-    QWEN3_235B_A22B_INSTRUCT_2507 = "Qwen/Qwen3-235B-A22B-Instruct-2507"
-    QWEN3_VL_235B_A22B_THINKING = "Qwen/Qwen3-VL-235B-A22B-Thinking"
+    QWEN_2_5_VL_32B_INSTRUCT = "Qwen/Qwen2.5-VL-32B-Instruct"
+    QWEN_3_32B = "Qwen/Qwen3-32B"
+    QWEN_3_235B_A22B = "Qwen/Qwen3-235B-A22B"
+    QWEN_3_235B_A22B_INSTRUCT_2507 = "Qwen/Qwen3-235B-A22B-Instruct-2507"
+    QWEN_3_5_397B_A17B = "Qwen/Qwen3.5-397B-A17B-TEE"
 
     # Mistral models
     MISTRAL_SMALL_24B_INSTRUCT_2501 = "unsloth/Mistral-Small-24B-Instruct-2501"
@@ -41,6 +40,10 @@ class ChuteModel(StrEnum):
     # OpenAI models
     GPT_OSS_20B = "openai/gpt-oss-20b"
     GPT_OSS_120B = "openai/gpt-oss-120b"
+
+    # Kimi
+    KIMI_K_2_5 = "moonshotai/Kimi-K2.5-TEE"
+    KIMI_K_2_THINKING = "moonshotai/Kimi-K2-Thinking"
 
 
 class Message(BaseModel):
@@ -133,11 +136,6 @@ class Chute(BaseModel):
 
 
 CHUTES_REGISTRY: dict[ChuteModel, Chute] = {
-    ChuteModel.DEEPSEEK_R1_SGTEST: Chute(
-        name=ChuteModel.DEEPSEEK_R1_SGTEST,
-        input_cost=0.3,
-        output_cost=1.2,
-    ),
     ChuteModel.DEEPSEEK_R1_0528: Chute(
         name=ChuteModel.DEEPSEEK_R1_0528,
         input_cost=0.4,
@@ -150,8 +148,8 @@ CHUTES_REGISTRY: dict[ChuteModel, Chute] = {
     ),
     ChuteModel.DEEPSEEK_V3_0324: Chute(
         name=ChuteModel.DEEPSEEK_V3_0324,
-        input_cost=0.24,
-        output_cost=0.84,
+        input_cost=0.19,
+        output_cost=0.87,
     ),
     ChuteModel.DEEPSEEK_V3_1_TERMINUS: Chute(
         name=ChuteModel.DEEPSEEK_V3_1_TERMINUS,
@@ -165,18 +163,13 @@ CHUTES_REGISTRY: dict[ChuteModel, Chute] = {
     ),
     ChuteModel.DEEPSEEK_TNG_R1T2_CHIMERA: Chute(
         name=ChuteModel.DEEPSEEK_TNG_R1T2_CHIMERA,
-        input_cost=0.3,
-        output_cost=1.2,
-    ),
-    ChuteModel.DEEPSEEK_V3_2_EXP: Chute(
-        name=ChuteModel.DEEPSEEK_V3_2_EXP,
         input_cost=0.25,
-        output_cost=0.35,
+        output_cost=0.85,
     ),
     ChuteModel.DEEPSEEK_V3_2: Chute(
         name=ChuteModel.DEEPSEEK_V3_2,
-        input_cost=0.27,
-        output_cost=0.41,
+        input_cost=0.28,
+        output_cost=0.42,
     ),
     ChuteModel.DEEPSEEK_V3_2_SPECIALE: Chute(
         name=ChuteModel.DEEPSEEK_V3_2_SPECIALE,
@@ -185,73 +178,88 @@ CHUTES_REGISTRY: dict[ChuteModel, Chute] = {
     ),
     ChuteModel.GLM_4_6: Chute(
         name=ChuteModel.GLM_4_6,
-        input_cost=0.4,
-        output_cost=1.75,
+        input_cost=0.34,
+        output_cost=1.70,
     ),
-    ChuteModel.GLM_4_5: Chute(
-        name=ChuteModel.GLM_4_5,
-        input_cost=0.35,
-        output_cost=1.55,
+    ChuteModel.GLM_4_7: Chute(
+        name=ChuteModel.GLM_4_7,
+        input_cost=0.38,
+        output_cost=1.7,
     ),
-    ChuteModel.GLM_4_5_AIR: Chute(
-        name=ChuteModel.GLM_4_5_AIR,
-        input_cost=0,
-        output_cost=0,
+    ChuteModel.GLM_4_7_FLASH: Chute(
+        name=ChuteModel.GLM_4_7_FLASH,
+        input_cost=0.06,
+        output_cost=0.35,
+    ),
+    ChuteModel.GLM_5: Chute(
+        name=ChuteModel.GLM_5,
+        input_cost=0.85,
+        output_cost=3,
     ),
     ChuteModel.GEMMA_3_4B_IT: Chute(
         name=ChuteModel.GEMMA_3_4B_IT,
-        input_cost=0,
-        output_cost=0,
+        input_cost=0.01,
+        output_cost=0.03,
     ),
     ChuteModel.GEMMA_3_27B_IT: Chute(
         name=ChuteModel.GEMMA_3_27B_IT,
-        input_cost=0.13,
-        output_cost=0.52,
+        input_cost=0.04,
+        output_cost=0.15,
     ),
     ChuteModel.GEMMA_3_12B_IT: Chute(
         name=ChuteModel.GEMMA_3_12B_IT,
         input_cost=0.03,
         output_cost=0.1,
     ),
-    ChuteModel.QWEN3_32B: Chute(
-        name=ChuteModel.QWEN3_32B,
-        input_cost=0.05,
-        output_cost=0.2,
+    ChuteModel.QWEN_3_32B: Chute(
+        name=ChuteModel.QWEN_3_32B,
+        input_cost=0.08,
+        output_cost=0.24,
     ),
-    ChuteModel.QWEN3_235B_A22B: Chute(
-        name=ChuteModel.QWEN3_235B_A22B,
+    ChuteModel.QWEN_3_235B_A22B: Chute(
+        name=ChuteModel.QWEN_3_235B_A22B,
         input_cost=0.3,
         output_cost=1.2,
     ),
-    ChuteModel.QWEN2_5_VL_32B_INSTRUCT: Chute(
-        name=ChuteModel.QWEN2_5_VL_32B_INSTRUCT,
+    ChuteModel.QWEN_2_5_VL_32B_INSTRUCT: Chute(
+        name=ChuteModel.QWEN_2_5_VL_32B_INSTRUCT,
         input_cost=0.05,
         output_cost=0.22,
     ),
-    ChuteModel.QWEN3_235B_A22B_INSTRUCT_2507: Chute(
-        name=ChuteModel.QWEN3_235B_A22B_INSTRUCT_2507,
+    ChuteModel.QWEN_3_235B_A22B_INSTRUCT_2507: Chute(
+        name=ChuteModel.QWEN_3_235B_A22B_INSTRUCT_2507,
         input_cost=0.08,
         output_cost=0.55,
     ),
-    ChuteModel.QWEN3_VL_235B_A22B_THINKING: Chute(
-        name=ChuteModel.QWEN3_VL_235B_A22B_THINKING,
+    ChuteModel.QWEN_3_5_397B_A17B: Chute(
+        name=ChuteModel.QWEN_3_5_397B_A17B,
         input_cost=0.3,
         output_cost=1.2,
     ),
     ChuteModel.MISTRAL_SMALL_24B_INSTRUCT_2501: Chute(
         name=ChuteModel.MISTRAL_SMALL_24B_INSTRUCT_2501,
-        input_cost=0.05,
-        output_cost=0.22,
+        input_cost=0.07,
+        output_cost=0.3,
     ),
     ChuteModel.GPT_OSS_20B: Chute(
         name=ChuteModel.GPT_OSS_20B,
-        input_cost=0,
-        output_cost=0,
+        input_cost=0.04,
+        output_cost=0.15,
     ),
     ChuteModel.GPT_OSS_120B: Chute(
         name=ChuteModel.GPT_OSS_120B,
         input_cost=0.04,
-        output_cost=0.4,
+        output_cost=0.18,
+    ),
+    ChuteModel.KIMI_K_2_5: Chute(
+        name=ChuteModel.KIMI_K_2_5,
+        input_cost=0.45,
+        output_cost=2.2,
+    ),
+    ChuteModel.KIMI_K_2_THINKING: Chute(
+        name=ChuteModel.KIMI_K_2_THINKING,
+        input_cost=0.4,
+        output_cost=1.75,
     ),
 }
 
