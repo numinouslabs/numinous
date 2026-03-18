@@ -10,6 +10,7 @@ from neurons.miner.gateway.error_handler import handle_provider_errors
 from neurons.miner.gateway.providers.chutes import ChutesClient
 from neurons.miner.gateway.providers.desearch import DesearchClient
 from neurons.miner.gateway.providers.numinous_indicia import NuminousIndiciaClient
+from neurons.miner.gateway.providers.azure_openai import AzureOpenAIClient
 from neurons.miner.gateway.providers.openai import OpenAIClient
 from neurons.miner.gateway.providers.openrouter import OpenRouterClient
 from neurons.miner.gateway.providers.perplexity import PerplexityClient
@@ -22,6 +23,7 @@ from neurons.validator.models.desearch import calculate_cost as calculate_desear
 from neurons.validator.models.numinous_indicia import (
     calculate_cost as calculate_numinous_indicia_cost,
 )
+from neurons.validator.models.azure_openai import calculate_cost as calculate_azure_openai_cost
 from neurons.validator.models.openai import calculate_cost as calculate_openai_cost
 from neurons.validator.models.openrouter import calculate_cost as calculate_openrouter_cost
 from neurons.validator.models.perplexity import calculate_cost as calculate_perplexity_cost
@@ -35,7 +37,7 @@ if env_path.exists():
 else:
     logger.warning(
         "No .env file found. Make sure to create a .env file in the gateway/ directory "
-        "and add your API keys for Chutes and Desearch."
+        "and add your API keys for providers like Chutes, Desearch, OpenAI, Azure OpenAI, etc."
     )
 
 
@@ -276,6 +278,49 @@ async def openai_create_response(
 
     return models.GatewayOpenAIResponse(
         **result.model_dump(), cost=calculate_openai_cost(request.model, result)
+    )
+
+
+@gateway_router.post("/azure-openai/responses", response_model=models.GatewayAzureOpenAIResponse)
+@cached_gateway_call
+@handle_provider_errors("AzureOpenAI")
+async def azure_openai_create_response(
+    request: models.AzureOpenAIInferenceRequest,
+) -> models.GatewayAzureOpenAIResponse:
+    api_key = os.getenv("AZURE_OPENAI_API_KEY")
+    resource_name = os.getenv("AZURE_OPENAI_RESOURCE_NAME")
+    api_version = os.getenv("AZURE_OPENAI_API_VERSION")
+
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="AZURE_OPENAI_API_KEY not configured",
+        )
+    if not resource_name:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="AZURE_OPENAI_RESOURCE_NAME not configured",
+        )
+
+    client = AzureOpenAIClient(
+        api_key=api_key,
+        resource_name=resource_name,
+        api_version=api_version,
+    )
+    input_messages = [msg.model_dump(exclude_none=True) for msg in request.input]
+    result = await client.create_response(
+        deployment=request.deployment,
+        input=input_messages,
+        temperature=request.temperature,
+        max_output_tokens=request.max_output_tokens,
+        tools=request.tools,
+        tool_choice=request.tool_choice,
+        instructions=request.instructions,
+        **(request.model_extra or {}),
+    )
+
+    return models.GatewayAzureOpenAIResponse(
+        **result.model_dump(), cost=calculate_azure_openai_cost(request.deployment, result)
     )
 
 
