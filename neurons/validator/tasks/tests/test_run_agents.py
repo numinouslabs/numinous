@@ -2522,3 +2522,216 @@ class TestRunAgentsMaxRetries:
                 "agent_version_id": "a23e4567-e89b-12d3-a456-426614174000",
             },
         )
+
+
+class TestRunAgentsEventsPerInterval:
+    """Tests for budget-based throttling of new events per interval."""
+
+    def _make_event_tuple(self, event_id: str):
+        return (event_id, f"ext_{event_id}", "polymarket", "llm", "Title", "desc", None, "{}")
+
+    def _make_task(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+        events_per_interval=3,
+    ):
+        return RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
+            api_client=mock_api_client,
+            logger=mock_logger,
+            events_per_interval=events_per_interval,
+        )
+
+    def test_events_per_interval_stored(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+    ):
+        task = self._make_task(
+            mock_db_operations,
+            mock_sandbox_manager,
+            mock_subtensor_cm,
+            mock_api_client,
+            mock_logger,
+            events_per_interval=5,
+        )
+        assert task.events_per_interval == 5
+
+    def test_events_per_interval_default_is_zero(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+    ):
+        task = RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
+            api_client=mock_api_client,
+            logger=mock_logger,
+        )
+        assert task.events_per_interval == 0
+
+    def test_events_per_interval_invalid_negative(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+    ):
+        with pytest.raises(ValueError, match="events_per_interval must be a non-negative integer"):
+            RunAgents(
+                interval_seconds=600.0,
+                db_operations=mock_db_operations,
+                sandbox_manager=mock_sandbox_manager,
+                netuid=99,
+                subtensor=mock_subtensor_cm,
+                api_client=mock_api_client,
+                logger=mock_logger,
+                events_per_interval=-1,
+            )
+
+    @patch("neurons.validator.tasks.run_agents.get_interval_start_minutes", return_value=1000)
+    @patch("neurons.validator.tasks.run_agents.datetime")
+    async def test_throttles_new_events_to_budget(
+        self,
+        mock_datetime,
+        mock_get_interval,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+    ):
+        """With events_per_interval=2, only 2 new events should be processed."""
+        mock_datetime.now.return_value = datetime(2025, 12, 3, 10, 0, 0)
+
+        # 5 events total, none have predictions yet
+        events = [self._make_event_tuple(f"event_{i}") for i in range(5)]
+        mock_db_operations.get_events_to_predict.return_value = events
+        mock_db_operations.get_active_agents.return_value = [MagicMock(spec=MinerAgentsModel)]
+        mock_db_operations.get_event_ids_with_predictions.return_value = set()
+
+        task = self._make_task(
+            mock_db_operations,
+            mock_sandbox_manager,
+            mock_subtensor_cm,
+            mock_api_client,
+            mock_logger,
+            events_per_interval=2,
+        )
+        task.filter_agents_by_metagraph = MagicMock(
+            return_value=[MagicMock(spec=MinerAgentsModel)]
+        )
+        task.execute_all = AsyncMock()
+
+        await task.run()
+
+        # Should only pass 2 events (the budget) to execute_all
+        task.execute_all.assert_awaited_once()
+        called_events = task.execute_all.call_args[0][0]
+        assert len(called_events) == 2
+
+    @patch("neurons.validator.tasks.run_agents.get_interval_start_minutes", return_value=1000)
+    @patch("neurons.validator.tasks.run_agents.datetime")
+    async def test_already_predicted_events_always_included(
+        self,
+        mock_datetime,
+        mock_get_interval,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+    ):
+        """Events with existing predictions should always be included (for replication)."""
+        mock_datetime.now.return_value = datetime(2025, 12, 3, 10, 0, 0)
+
+        events = [self._make_event_tuple(f"event_{i}") for i in range(5)]
+        mock_db_operations.get_events_to_predict.return_value = events
+        mock_db_operations.get_active_agents.return_value = [MagicMock(spec=MinerAgentsModel)]
+        # event_0, event_1, event_2 already have predictions
+        mock_db_operations.get_event_ids_with_predictions.return_value = {
+            "event_0",
+            "event_1",
+            "event_2",
+        }
+
+        task = self._make_task(
+            mock_db_operations,
+            mock_sandbox_manager,
+            mock_subtensor_cm,
+            mock_api_client,
+            mock_logger,
+            events_per_interval=1,
+        )
+        task.filter_agents_by_metagraph = MagicMock(
+            return_value=[MagicMock(spec=MinerAgentsModel)]
+        )
+        task.execute_all = AsyncMock()
+
+        await task.run()
+
+        task.execute_all.assert_awaited_once()
+        called_events = task.execute_all.call_args[0][0]
+        called_event_ids = [e[0] for e in called_events]
+        # 3 already-predicted + 1 new (budget) = 4
+        assert len(called_events) == 4
+        # All already-predicted events must be included
+        assert "event_0" in called_event_ids
+        assert "event_1" in called_event_ids
+        assert "event_2" in called_event_ids
+
+    @patch("neurons.validator.tasks.run_agents.get_interval_start_minutes", return_value=1000)
+    @patch("neurons.validator.tasks.run_agents.datetime")
+    async def test_zero_budget_means_no_limit(
+        self,
+        mock_datetime,
+        mock_get_interval,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+    ):
+        """events_per_interval=0 means process all events (no throttling)."""
+        mock_datetime.now.return_value = datetime(2025, 12, 3, 10, 0, 0)
+
+        events = [self._make_event_tuple(f"event_{i}") for i in range(10)]
+        mock_db_operations.get_events_to_predict.return_value = events
+        mock_db_operations.get_active_agents.return_value = [MagicMock(spec=MinerAgentsModel)]
+
+        task = self._make_task(
+            mock_db_operations,
+            mock_sandbox_manager,
+            mock_subtensor_cm,
+            mock_api_client,
+            mock_logger,
+            events_per_interval=0,
+        )
+        task.filter_agents_by_metagraph = MagicMock(
+            return_value=[MagicMock(spec=MinerAgentsModel)]
+        )
+        task.execute_all = AsyncMock()
+
+        await task.run()
+
+        task.execute_all.assert_awaited_once()
+        called_events = task.execute_all.call_args[0][0]
+        assert len(called_events) == 10

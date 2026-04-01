@@ -50,6 +50,7 @@ class RunAgents(AbstractTask):
         sync_hour: int = 1,
         validator_uid: int = 0,
         validator_hotkey: str = "",
+        events_per_interval: int = 0,
     ):
         if not isinstance(interval_seconds, float) or interval_seconds <= 0:
             raise ValueError("interval_seconds must be a positive number (float).")
@@ -83,6 +84,9 @@ class RunAgents(AbstractTask):
         if not isinstance(validator_hotkey, str):
             raise TypeError("validator_hotkey must be a string.")
 
+        if not isinstance(events_per_interval, int) or events_per_interval < 0:
+            raise ValueError("events_per_interval must be a non-negative integer.")
+
         self.interval = interval_seconds
         self.db_operations = db_operations
         self.sandbox_manager = sandbox_manager
@@ -93,6 +97,7 @@ class RunAgents(AbstractTask):
         self.max_concurrent_sandboxes = max_concurrent_sandboxes
         self.timeout_seconds = timeout_seconds
         self.sync_hour = sync_hour
+        self.events_per_interval = events_per_interval
         self.validator_uid = validator_uid
         self.validator_hotkey = validator_hotkey
 
@@ -147,6 +152,10 @@ class RunAgents(AbstractTask):
 
         interval_start_minutes = get_interval_start_minutes()
 
+        # Throttle new events if events_per_interval is set
+        if self.events_per_interval > 0:
+            events = await self._throttle_events(events)
+
         self.logger.info(
             "Starting to run agents",
             extra={
@@ -157,6 +166,28 @@ class RunAgents(AbstractTask):
         )
 
         await self.execute_all(events, valid_agents, interval_start_minutes)
+
+    async def _throttle_events(self, events: list) -> list:
+        """Limit new (unpredicted) events per interval while always including already-predicted ones."""
+        event_ids = [e[0] for e in events]
+        predicted_ids = await self.db_operations.get_event_ids_with_predictions(event_ids)
+
+        already_predicted = [e for e in events if e[0] in predicted_ids]
+        new_events = [e for e in events if e[0] not in predicted_ids]
+
+        budgeted_new = new_events[: self.events_per_interval]
+
+        self.logger.debug(
+            "Throttled events",
+            extra={
+                "already_predicted": len(already_predicted),
+                "new_total": len(new_events),
+                "new_budgeted": len(budgeted_new),
+                "events_per_interval": self.events_per_interval,
+            },
+        )
+
+        return already_predicted + budgeted_new
 
     def filter_agents_by_metagraph(self, agents: List[MinerAgentsModel]) -> List[MinerAgentsModel]:
         valid_agents = []

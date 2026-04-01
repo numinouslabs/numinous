@@ -134,6 +134,7 @@ async def main():
         sync_hour=validator_sync_hour,
         validator_uid=validator_uid,
         validator_hotkey=validator_hotkey,
+        events_per_interval=config.get("run_agents", {}).get("events_per_interval", 0),
     )
 
     export_predictions_task = ExportPredictions(

@@ -668,6 +668,24 @@ class DatabaseOperations:
         )
         return result is not None
 
+    async def get_event_ids_with_predictions(
+        self, event_ids: list[str]
+    ) -> set[str]:
+        """Return the subset of event_ids that have at least one prediction."""
+        if not event_ids:
+            return set()
+
+        placeholders = ", ".join("?" for _ in event_ids)
+        rows = await self.__db_client.many(
+            f"""
+            SELECT DISTINCT unique_event_id
+            FROM predictions
+            WHERE unique_event_id IN ({placeholders})
+            """,
+            parameters=list(event_ids),
+        )
+        return {row[0] if isinstance(row, tuple) else row["unique_event_id"] for row in rows}
+
     async def get_latest_prediction_for_event_and_miner(
         self,
         unique_event_id: str,
