@@ -26,6 +26,8 @@ class ChuteModel(StrEnum):
     GLM_4_7 = "zai-org/GLM-4.7"
     GLM_4_7_FLASH = "zai-org/GLM-4.7-Flash"
     GLM_5 = "zai-org/GLM-5-TEE"
+    GLM_5_TURBO = "zai-org/GLM-5-Turbo"
+    GLM_5_1 = "zai-org/GLM-5.1-TEE"
 
     # Qwen models
     QWEN_2_5_VL_32B_INSTRUCT = "Qwen/Qwen2.5-VL-32B-Instruct"
@@ -44,6 +46,12 @@ class ChuteModel(StrEnum):
     # Kimi
     KIMI_K_2_5 = "moonshotai/Kimi-K2.5-TEE"
     KIMI_K_2_THINKING = "moonshotai/Kimi-K2-Thinking"
+
+    # MiniMax models
+    MINIMAX_M2_5 = "MiniMaxAI/MiniMax-M2.5-TEE"
+
+    # Xiaomi MiMo models
+    MIMO_V2_FLASH = "XiaomiMiMo/MiMo-V2-Flash-TEE"
 
 
 class Message(BaseModel):
@@ -196,6 +204,16 @@ CHUTES_REGISTRY: dict[ChuteModel, Chute] = {
         input_cost=0.85,
         output_cost=3,
     ),
+    ChuteModel.GLM_5_TURBO: Chute(
+        name=ChuteModel.GLM_5_TURBO,
+        input_cost=0.49,
+        output_cost=1.96,
+    ),
+    ChuteModel.GLM_5_1: Chute(
+        name=ChuteModel.GLM_5_1,
+        input_cost=0.95,
+        output_cost=3.15,
+    ),
     ChuteModel.GEMMA_3_4B_IT: Chute(
         name=ChuteModel.GEMMA_3_4B_IT,
         input_cost=0.01,
@@ -260,6 +278,16 @@ CHUTES_REGISTRY: dict[ChuteModel, Chute] = {
         name=ChuteModel.KIMI_K_2_THINKING,
         input_cost=0.4,
         output_cost=1.75,
+    ),
+    ChuteModel.MINIMAX_M2_5: Chute(
+        name=ChuteModel.MINIMAX_M2_5,
+        input_cost=0.118,
+        output_cost=0.99,
+    ),
+    ChuteModel.MIMO_V2_FLASH: Chute(
+        name=ChuteModel.MIMO_V2_FLASH,
+        input_cost=0.09,
+        output_cost=0.29,
     ),
 }
 
