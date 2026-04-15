@@ -1,6 +1,7 @@
 import base64
 import time
 import typing
+from dataclasses import dataclass
 from getpass import getpass
 from pathlib import Path
 
@@ -8,39 +9,99 @@ import click
 import httpx
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Confirm, Prompt
+from rich.prompt import Confirm
 
 from neurons.miner.scripts.numinous_config import ENV_URLS
 from neurons.miner.scripts.wallet_utils import load_keypair, prompt_wallet_selection
-from neurons.validator.models.track import TrackEnum
 
 console = Console()
 
 
-def link_chutes_impl(
+@dataclass
+class ServiceConfig:
+    name: str
+    display_name: str
+    key_url: str
+
+
+HARDCODED_SERVICES: list[ServiceConfig] = [
+    ServiceConfig(name="chutes", display_name="Chutes", key_url="https://chutes.ai/app"),
+    ServiceConfig(
+        name="openai", display_name="OpenAI", key_url="https://platform.openai.com/api-keys"
+    ),
+    ServiceConfig(
+        name="openrouter", display_name="OpenRouter", key_url="https://openrouter.ai/settings/keys"
+    ),
+    ServiceConfig(
+        name="perplexity",
+        display_name="Perplexity",
+        key_url="https://www.perplexity.ai/settings/api",
+    ),
+    ServiceConfig(name="vericore", display_name="Vericore", key_url="https://vericore.ai"),
+    ServiceConfig(name="lunar_crush", display_name="LunarCrush", key_url="https://lunarcrush.com"),
+    ServiceConfig(
+        name="lightning_rod", display_name="Lightning Rod", key_url="https://lightningrod.ai"
+    ),
+    ServiceConfig(
+        name="numinous_signals",
+        display_name="Numinous Signals",
+        key_url="https://eversight.numinouslabs.io/api-keys",
+    ),
+    ServiceConfig(
+        name="unusual_whales",
+        display_name="Unusual Whales",
+        key_url="https://unusualwhales.com/pricing?product=api",
+    ),
+]
+
+
+def fetch_public_data_sources(env: str) -> list[ServiceConfig]:
+    api_url = ENV_URLS[env]
+
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            response = client.get(f"{api_url}/api/v3/miner/public-data/sources")
+
+        if response.status_code != 200:
+            return []
+
+        sources = response.json().get("sources", [])
+        return [
+            ServiceConfig(
+                name=source["name"],
+                display_name=source["name"].replace("_", " ").title(),
+                key_url=source.get("base_url") or source.get("domain", ""),
+            )
+            for source in sources
+            if source.get("requires_auth")
+        ]
+    except Exception:
+        return []
+
+
+def get_all_linkable_services(env: str) -> list[ServiceConfig]:
+    hardcoded_names = {service.name for service in HARDCODED_SERVICES}
+    public_data_services = fetch_public_data_sources(env)
+    new_services = [s for s in public_data_services if s.name not in hardcoded_names]
+    return HARDCODED_SERVICES + new_services
+
+
+def link_api_key_impl(
+    service: ServiceConfig,
     wallet: typing.Optional[str] = None,
     hotkey: typing.Optional[str] = None,
     env: typing.Optional[str] = None,
     wallet_path: typing.Optional[Path] = None,
-    track: str = TrackEnum.MAIN,
+    track: str = "MAIN",
 ) -> None:
     console.print()
     console.print(
         Panel.fit(
-            "[bold cyan]🔗 Link Chutes API Key[/bold cyan]",
+            f"[bold cyan]🔗 Link {service.display_name} API Key[/bold cyan]",
             border_style="cyan",
             padding=(1, 2),
         )
     )
-    console.print()
-
-    if not env:
-        env_choice = Prompt.ask(
-            "[bold cyan]Select environment[/bold cyan]", choices=["test", "prod"], default="test"
-        )
-        env = env_choice.lower()
-
-    console.print(f"[dim]Network:[/dim] [yellow]{env.upper()}[/yellow]")
     console.print()
 
     if not wallet or not hotkey:
@@ -66,18 +127,15 @@ def link_chutes_impl(
     console.print()
     console.print(
         Panel.fit(
-            "[bold cyan]Chutes API Key Setup[/bold cyan]\n\n"
-            "[dim]Get your API key from:[/dim] [cyan]https://chutes.ai/app[/cyan]\n\n"
-            "[yellow]Budget Tiers:[/yellow]\n"
-            "  • Free (backend key): [dim]$0.01 per agent run[/dim]\n"
-            "  • Paid (your key): [green]$0.10 per agent run[/green]\n\n"
+            f"[bold cyan]{service.display_name} API Key Setup[/bold cyan]\n\n"
+            f"[dim]Get your API key from:[/dim] [cyan]{service.key_url}[/cyan]\n\n"
             "[dim]Your API key will be securely stored in AWS Secrets Manager.[/dim]",
             border_style="cyan",
         )
     )
     console.print()
 
-    api_key = getpass("Enter your Chutes API key: ")
+    api_key = getpass("Enter your API key: ")
     if not api_key or not api_key.strip():
         console.print("[red]✗[/red] API key cannot be empty")
         raise click.Abort()
@@ -85,8 +143,7 @@ def link_chutes_impl(
     console.print()
     console.print("[bold cyan]Ready to link:[/bold cyan]")
     console.print(f"  [dim]Hotkey:[/dim] {hotkey_keypair.ss58_address[:16]}...")
-    console.print("  [dim]Service:[/dim] Chutes")
-    console.print("  [dim]Budget:[/dim] $0.10 per run")
+    console.print(f"  [dim]Service:[/dim] {service.display_name}")
     console.print(f"  [dim]Network:[/dim] {env.upper()}")
     console.print(f"  [dim]Track:[/dim] {track}")
     console.print()
@@ -97,13 +154,15 @@ def link_chutes_impl(
 
     console.print()
     with console.status("[cyan]Storing credentials in backend...[/cyan]"):
-        success, error_msg = _store_chutes_credentials(env, hotkey_keypair, api_key, track)
+        success, error_msg = _store_api_key_credentials(
+            env, hotkey_keypair, api_key, service.name, track
+        )
 
     if not success:
         console.print()
         console.print(
             Panel.fit(
-                f"[red]✗ Failed to link Chutes API key[/red]\n\n"
+                f"[red]✗ Failed to link {service.display_name} API key[/red]\n\n"
                 f"[yellow]Error:[/yellow] {error_msg}\n\n"
                 "[dim]Please check:[/dim]\n"
                 "  • API key is valid\n"
@@ -118,11 +177,10 @@ def link_chutes_impl(
     console.print()
     console.print(
         Panel.fit(
-            "[bold green]✓ Successfully linked Chutes API key![/bold green]\n\n"
+            f"[bold green]✓ Successfully linked {service.display_name} API key![/bold green]\n\n"
             f"[dim]Hotkey:[/dim] {hotkey_keypair.ss58_address[:16]}...\n"
-            f"[dim]Service:[/dim] Chutes\n"
-            f"[dim]Budget:[/dim] $0.10 per agent run\n\n"
-            "[yellow]Your agent runs will now use your Chutes API key[/yellow]",
+            f"[dim]Service:[/dim] {service.display_name}\n"
+            f"[dim]Track:[/dim] {track}",
             border_style="green",
             padding=(1, 2),
         )
@@ -130,8 +188,8 @@ def link_chutes_impl(
     console.print()
 
 
-def _store_chutes_credentials(
-    env: str, keypair, api_key: str, track: str
+def _store_api_key_credentials(
+    env: str, keypair, api_key: str, service_name: str, track: str
 ) -> typing.Tuple[bool, typing.Optional[str]]:
     api_url = ENV_URLS[env]
     timestamp = int(time.time())
@@ -145,7 +203,7 @@ def _store_chutes_credentials(
             response = client.post(
                 f"{api_url}/api/v3/miner/services/link",
                 json={
-                    "service_name": "chutes",
+                    "service_name": service_name,
                     "auth_type": "api_key",
                     "track": track,
                     "credential_data": {

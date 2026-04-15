@@ -1,5 +1,6 @@
 import logging
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -16,6 +17,13 @@ from neurons.miner.gateway.providers.numinous_signals import NuminousSignalsClie
 from neurons.miner.gateway.providers.openai import OpenAIClient
 from neurons.miner.gateway.providers.openrouter import OpenRouterClient
 from neurons.miner.gateway.providers.perplexity import PerplexityClient
+from neurons.miner.gateway.providers.public_data import (
+    PublicDataProxyClient,
+    PublicDataSourceInfo,
+    UrlValidationError,
+    fetch_sources_from_prod,
+    log_source_warnings,
+)
 from neurons.miner.gateway.providers.unusual_whales import UnusualWhalesClient
 from neurons.miner.gateway.providers.vericore import VericoreClient
 from neurons.validator.models import numinous_client as models
@@ -51,7 +59,20 @@ else:
     )
 
 
-app = FastAPI(title="Numinous API Gateway")
+_public_data_sources: list[PublicDataSourceInfo] = []
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _public_data_sources
+    logger.info("Fetching public data sources...")
+    _public_data_sources = fetch_sources_from_prod()
+    logger.info("Loaded %d public data source(s)", len(_public_data_sources))
+    log_source_warnings(_public_data_sources)
+    yield
+
+
+app = FastAPI(title="Numinous API Gateway", lifespan=lifespan)
 gateway_router = APIRouter(prefix="/api/gateway")
 
 
@@ -260,10 +281,21 @@ async def desearch_x_post(
     )
 
 
-@gateway_router.post("/openai/responses", response_model=models.GatewayOpenAIResponse)
-@cached_gateway_call
-@handle_provider_errors("OpenAI")
-async def openai_create_response(
+_OPENAI_BUILTIN_TOOL_TYPES = frozenset(
+    {
+        "web_search",
+        "web_search_preview",
+        "file_search",
+        "code_interpreter",
+        "image_generation",
+        "computer",
+        "computer_use_preview",
+        "tool_search",
+    }
+)
+
+
+async def _run_openai_request(
     request: models.OpenAIInferenceRequest,
 ) -> models.GatewayOpenAIResponse:
     api_key = os.getenv("OPENAI_API_KEY")
@@ -289,6 +321,51 @@ async def openai_create_response(
     return models.GatewayOpenAIResponse(
         **result.model_dump(), cost=calculate_openai_cost(request.model, result)
     )
+
+
+@gateway_router.post("/openai/responses", response_model=models.GatewayOpenAIResponse)
+@cached_gateway_call
+@handle_provider_errors("OpenAI")
+async def openai_create_response(
+    request: models.OpenAIInferenceRequest,
+) -> models.GatewayOpenAIResponse:
+    if request.tools:
+        disallowed = [
+            tool.get("type")
+            for tool in request.tools
+            if tool.get("type") in _OPENAI_BUILTIN_TOOL_TYPES - {"web_search", "web_search_preview"}
+        ]
+        if disallowed:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Only web_search is supported as a built-in tool on this endpoint. "
+                    f"Disallowed built-in tools: {disallowed}"
+                ),
+            )
+
+    return await _run_openai_request(request)
+
+
+@gateway_router.post("/openai/responses/inference", response_model=models.GatewayOpenAIResponse)
+@cached_gateway_call
+@handle_provider_errors("OpenAI")
+async def openai_create_inference_only_response(
+    request: models.OpenAIInferenceRequest,
+) -> models.GatewayOpenAIResponse:
+    if request.tools:
+        builtin_tools = [
+            tool.get("type")
+            for tool in request.tools
+            if tool.get("type") in _OPENAI_BUILTIN_TOOL_TYPES
+        ]
+        if builtin_tools:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Built-in tools are not supported on this endpoint: {builtin_tools}",
+            )
+
+    return await _run_openai_request(request)
 
 
 @gateway_router.post("/perplexity/chat/completions")
@@ -668,6 +745,40 @@ async def unusual_whales_get_news_headlines(
 
     return models.GatewayUnusualWhalesHeadlinesResponse(
         **result.model_dump(), cost=calculate_unusual_whales_cost()
+    )
+
+
+@gateway_router.post(
+    "/public-data/fetch",
+    response_model=models.GatewayPublicDataProxyResponse,
+)
+@cached_gateway_call
+@handle_provider_errors("PublicData")
+async def public_data_proxy(
+    request: models.PublicDataProxyRequest,
+) -> models.GatewayPublicDataProxyResponse:
+    client = PublicDataProxyClient(allowed_sources=_public_data_sources)
+
+    try:
+        result = await client.proxy_request(
+            url=request.url,
+            method=request.method,
+            headers=request.headers,
+            query_params=request.query_params,
+            body=request.body,
+            timeout=request.timeout,
+        )
+    except UrlValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    return models.GatewayPublicDataProxyResponse(
+        status_code=result.status_code,
+        response_headers=result.response_headers,
+        response_body=result.response_body,
+        content_type=result.content_type,
+        source_name=result.source_name,
+        source_category=result.source_category,
+        cost=0.0,
     )
 
 

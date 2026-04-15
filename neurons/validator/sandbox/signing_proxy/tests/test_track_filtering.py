@@ -89,6 +89,27 @@ class TestCheckTrackAccess:
 
         assert result is None
 
+    def test_signal_allowed_on_openai_inference_only(self, registry_dir: Path):
+        proxy = self._make_proxy(registry_dir)
+        run_id = "test-run-signal-openai-inference"
+        (registry_dir / run_id).write_text("SIGNAL")
+
+        body = json.dumps({"run_id": run_id}).encode()
+        result = proxy._check_track_access("/api/gateway/openai/responses/inference", body)
+
+        assert result is None
+
+    def test_signal_blocked_on_openai_responses(self, registry_dir: Path):
+        proxy = self._make_proxy(registry_dir)
+        run_id = "test-run-signal-openai-responses"
+        (registry_dir / run_id).write_text("SIGNAL")
+
+        body = json.dumps({"run_id": run_id}).encode()
+        result = proxy._check_track_access("/api/gateway/openai/responses", body)
+
+        assert result is not None
+        assert result.status == 403
+
     def test_main_allowed_on_everything(self, registry_dir: Path):
         proxy = self._make_proxy(registry_dir)
         run_id = "test-run-main"

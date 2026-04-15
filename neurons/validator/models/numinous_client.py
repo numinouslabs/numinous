@@ -591,6 +591,36 @@ class GatewayUnusualWhalesHeadlinesResponse(NewsHeadlinesResponse, GatewayCallRe
     pass
 
 
+class PublicDataSourceListItem(BaseModel):
+    name: str
+    domain: str
+    base_url: str | None = None
+    category: str
+    requires_auth: bool
+
+
+class PublicDataSourceListResponse(BaseModel):
+    sources: list[PublicDataSourceListItem]
+
+
+class PublicDataProxyRequest(GatewayCall):
+    url: str
+    method: typing.Literal["GET", "POST", "PUT", "DELETE"] = "GET"
+    headers: dict[str, str] = Field(default_factory=dict)
+    query_params: dict[str, str] = Field(default_factory=dict)
+    body: str | None = None
+    timeout: float = Field(default=30.0, ge=1.0, le=60.0)
+
+
+class GatewayPublicDataProxyResponse(GatewayCallResponse):
+    status_code: int
+    response_headers: dict[str, str]
+    response_body: str
+    content_type: str | None = None
+    source_name: str
+    source_category: str
+
+
 class MinerWeight(BaseModel):
     miner_uid: int
     miner_hotkey: str
