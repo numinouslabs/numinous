@@ -17,6 +17,7 @@ The Gateway API provides miner agents with access to external services during sa
 - **Numinous Indicia**: Geopolitical and OSINT signals intelligence (X/Twitter, LiveUAMap)
 - **Numinous Signals**: Event-relevant news signals scored by relevance and impact, causal driver graphs, and deep research reports
 - **Unusual Whales**: Financial news headlines with filtering by source, ticker, and sentiment
+- **Public Data Proxy**: Generic proxy any number of free public APIs across sports, economics, weather, finance, and more. No cost. Run `numi services sources` to see what's available. See [Public Data Proxy](#public-data-proxy) below.
 
 All requests are cached to optimize performance and reduce costs.
 
@@ -910,6 +911,94 @@ The `cost` field in the response includes both components.
 2. **Clear prompts:** Explicitly ask the model to search before forecasting
 3. **Model selection:** Use `gpt-5-mini` for cost-efficiency, `gpt-5.2` for complex reasoning
 4. **Error handling:** Always implement retry logic with fallback predictions
+
+---
+
+### POST /api/gateway/openai/responses/inference
+
+Create a response using OpenAI's GPT-5 models without built-in tools. Custom `function` tool schemas are supported.
+
+**URL:** `{SANDBOX_PROXY_URL}/api/gateway/openai/responses/inference`
+
+**Request Body:**
+```json
+{
+  "run_id": "550e8400-e29b-41d4-a716-446655440000",
+  "model": "gpt-5-mini",
+  "input": [
+    {"role": "developer", "content": "You are a helpful assistant."},
+    {"role": "user", "content": "What is the probability of rain tomorrow?"}
+  ],
+  "temperature": 0.7,
+  "max_output_tokens": 1000,
+  "tools": null,
+  "instructions": null
+}
+```
+
+**Parameters:**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `run_id` | string (UUID) | Yes | - | Execution tracking ID from environment |
+| `model` | string | Yes | - | Model identifier (see Available Models above) |
+| `input` | array | Yes | - | List of message objects with `role` and `content` |
+| `temperature` | float | No | 0.7 | Sampling temperature (0.0-2.0) |
+| `max_output_tokens` | integer | No | null | Maximum tokens to generate |
+| `tools` | array | No | null | Custom `function` tool definitions only - built-in tools (web_search, code_interpreter, etc.) are not allowed |
+| `tool_choice` | string/object | No | null | Tool selection strategy |
+| `instructions` | string | No | null | System-level instructions |
+
+**Difference from `/responses`:**
+
+| Feature | `/responses` | `/responses/inference` |
+|---------|-------------|----------------------|
+| `web_search` built-in | Allowed | Blocked |
+| Custom `function` tools | Allowed | Allowed |
+| Other built-in tools | Blocked | Blocked |
+
+**Example (using httpx):**
+```python
+import os
+import httpx
+
+PROXY_URL = os.getenv("SANDBOX_PROXY_URL")
+RUN_ID = os.getenv("RUN_ID")
+
+response = httpx.post(
+    f"{PROXY_URL}/api/gateway/openai/responses/inference",
+    json={
+        "run_id": RUN_ID,
+        "model": "gpt-5-mini",
+        "input": [
+            {"role": "developer", "content": "You are an expert forecaster."},
+            {"role": "user", "content": "Predict the probability of this event occurring."}
+        ],
+        "temperature": 0.7,
+    },
+    timeout=120.0,
+)
+
+result = response.json()
+for item in result["output"]:
+    if item["type"] == "message":
+        for content in item["content"]:
+            if content.get("text"):
+                print(content["text"])
+```
+
+**Error Handling:**
+
+| Status Code | Description | Recommended Action |
+|-------------|-------------|-------------------|
+| 400 | Built-in tool used (e.g. web_search) | Remove built-in tools from request |
+| 503 | Service Unavailable | Retry with exponential backoff |
+| 404 | Model not found | Verify model identifier |
+| 429 | Rate limit exceeded | Retry with exponential backoff |
+| 401 | Authentication failed | Contact validator |
+| 500 | Internal server error | Retry with fallback |
+
+> **Note:** Miners link the same OpenAI API key for both endpoints via `numi services link openai`. The key is stored once and reused across `/responses` and `/responses/inference`.
 
 ---
 
@@ -2304,6 +2393,101 @@ def gather_information(query: str):
             contents.append(crawl.json()["content"][:1000])  # Truncate
 
     return contents
+```
+
+---
+
+## Public Data Proxy
+
+The public data proxy gives agents access to a curated list of public APIs through a single generic endpoint. No API key linking required for most sources. Some sources require you to link your own API key — run `numi services sources` to see which.
+
+**Available on:** MAIN and SIGNAL tracks.
+
+**Cost:** Always $0.00.
+
+### Discovering Available Sources
+
+Run this from your terminal to see what sources are currently available:
+
+```bash
+numi services sources
+```
+
+This shows all sources grouped by whether they require an API key. The list is updated over time as new sources are added — always check this rather than hardcoding assumptions.
+
+For sources that require an API key, link yours with:
+
+```bash
+numi services link <source-name>
+```
+
+### POST /api/gateway/public-data/fetch
+
+Proxy a request to any whitelisted public data source.
+
+**URL:** `{SANDBOX_PROXY_URL}/api/gateway/public-data/fetch`
+
+**Request Body:**
+```json
+{
+  "run_id": "550e8400-e29b-41d4-a716-446655440000",
+  "url": "https://your-whitelisted-source.com/api/endpoint",
+  "method": "GET",
+  "headers": {},
+  "query_params": {},
+  "body": null,
+  "timeout": 30.0
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `run_id` | UUID | Yes | Current run identifier |
+| `url` | string | Yes | Full URL of the public API to call |
+| `method` | string | No | HTTP method: `GET`, `POST`, `PUT`, `DELETE`. Default: `GET` |
+| `headers` | object | No | Additional request headers |
+| `query_params` | object | No | Query string parameters |
+| `body` | string | No | Request body (raw string) |
+| `timeout` | float | No | Timeout in seconds (1–60). Default: 30 |
+
+**Response:**
+```json
+{
+  "status_code": 200,
+  "response_headers": {"content-type": "application/json"},
+  "response_body": "{...}",
+  "content_type": "application/json",
+  "source_name": "source_name",
+  "source_category": "category",
+  "cost": 0.0
+}
+```
+
+The `response_body` is the raw response text (up to 5MB). Parse it as needed.
+
+**Error Responses:**
+- `400 Bad Request` — URL domain not in whitelist, or URL resolves to a private IP
+- `503 Service Unavailable` — upstream API unreachable
+
+**Example:**
+```python
+import os
+import httpx
+
+PROXY_URL = os.getenv("SANDBOX_PROXY_URL", "http://sandbox_proxy")
+RUN_ID = os.getenv("RUN_ID")
+
+def fetch_nfl_scoreboard() -> dict:
+    response = httpx.post(
+        f"{PROXY_URL}/api/gateway/public-data/fetch",
+        json={
+            "run_id": RUN_ID,
+            "url": "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard",
+        },
+        timeout=30.0,
+    )
+    response.raise_for_status()
+    return response.json()["response_body"]
 ```
 
 ---

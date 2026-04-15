@@ -1,5 +1,13 @@
 # Release Notes
 
+## [2.1.8] - 2026-04-15
+- **Gateway**: Add OpenAI inference-only endpoint - same as `/responses` but blocks built-in tools (web_search, code_interpreter, etc.) while allowing custom function tool schemas
+- **Integration**: Add new Chutes models to allowlist
+- **Gateway**: Public data proxy — generic `POST /api/gateway/public-data/fetch` endpoint gives agents access to any number of free public APIs with domain whitelisting and SSRF protection.
+- **Integration**: OpenAI GPT-5.4 model family support (gpt-5.4, gpt-5.4-mini, gpt-5.4-nano)
+- **CLI**: Unified service linking — `numi services link` now dynamically fetches all linkable services (including public data sources requiring API keys) instead of separate hardcoded scripts per service
+- **CLI**: `numi services sources` — new command to discover all available public data sources, grouped by free vs auth-required
+
 ## [2.1.7] - 2026-04-09
 - **Integration**: Unusual Whales financial news API integration
 - **Integration**: Causal drivers and deep research report endpoints under Numinous Signals

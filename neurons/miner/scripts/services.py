@@ -11,16 +11,8 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
 
-from neurons.miner.scripts.link_chutes import link_chutes_impl
 from neurons.miner.scripts.link_desearch import link_desearch_impl
-from neurons.miner.scripts.link_lightning_rod import link_lightning_rod_impl
-from neurons.miner.scripts.link_lunar_crush import link_lunar_crush_impl
-from neurons.miner.scripts.link_numinous_signals import link_numinous_signals_impl
-from neurons.miner.scripts.link_openai import link_openai_impl
-from neurons.miner.scripts.link_openrouter import link_openrouter_impl
-from neurons.miner.scripts.link_perplexity import link_perplexity_impl
-from neurons.miner.scripts.link_unusual_whales import link_unusual_whales_impl
-from neurons.miner.scripts.link_vericore import link_vericore_impl
+from neurons.miner.scripts.link_service import get_all_linkable_services, link_api_key_impl
 from neurons.miner.scripts.numinous_config import ENV_URLS
 from neurons.miner.scripts.track_utils import prompt_track_selection
 from neurons.miner.scripts.wallet_utils import load_keypair, prompt_wallet_selection
@@ -35,33 +27,20 @@ def services():
 
     \b
     Available Commands:
-      numi services list              # List all linked services
+      numi services sources           # List all available public data sources
+      numi services list              # List your linked services
       numi services link              # Link a service (interactive)
-      numi services link desearch     # Link Desearch directly
-      numi services link chutes       # Link Chutes directly
-      numi services link openai       # Link OpenAI directly
-      numi services link openrouter   # Link OpenRouter directly
-      numi services link perplexity   # Link Perplexity directly
-      numi services link vericore     # Link Vericore directly
-      numi services link lunar-crush        # Link LunarCrush directly
-      numi services link lightning-rod      # Link Lightning Rod directly
-      numi services link numinous-signals   # Link Numinous Signals directly
-      numi services link unusual-whales    # Link Unusual Whales directly
-      numi services unlink <name>           # Unlink a service
+      numi services link <name>       # Link a specific service directly
+      numi services unlink <name>     # Unlink a service
 
     \b
     Examples:
+      numi services sources
       numi services list
       numi services link
       numi services link desearch
       numi services link chutes
-      numi services link openai
-      numi services link openrouter
-      numi services link perplexity
-      numi services link vericore
-      numi services link lightning-rod
-      numi services link numinous-signals
-      numi services link unusual-whales
+      numi services link chutes -t SIGNAL
       numi services unlink chutes
     """
     pass
@@ -163,6 +142,87 @@ def list(
     console.print()
 
 
+@services.command(name="sources")
+@click.option(
+    "--env",
+    "-e",
+    type=click.Choice(["test", "prod"], case_sensitive=False),
+    help="Network environment",
+)
+def sources(env: Optional[str] = None) -> None:
+    """List all available public data sources
+
+    \b
+    Examples:
+      numi services sources
+      numi services sources -e prod
+    """
+    if not env:
+        env_choice = Prompt.ask(
+            "[bold cyan]Select environment[/bold cyan]", choices=["test", "prod"], default="test"
+        )
+        env = env_choice.lower()
+
+    console.print()
+    with console.status("[cyan]Fetching public data sources...[/cyan]"):
+        all_sources = _fetch_public_data_sources(env)
+
+    if not all_sources:
+        console.print(
+            Panel.fit(
+                "[yellow]No public data sources available[/yellow]\n\n"
+                "[dim]Sources are added over time. Check back later.[/dim]",
+                border_style="yellow",
+            )
+        )
+        console.print()
+        return
+
+    free_sources = [s for s in all_sources if not s.get("requires_auth")]
+    auth_sources = [s for s in all_sources if s.get("requires_auth")]
+
+    console.print()
+    if free_sources:
+        console.print("[bold cyan]Free Sources[/bold cyan] [dim](no API key needed)[/dim]")
+        table = Table(show_header=True, header_style="bold cyan", box=None, padding=(0, 2))
+        table.add_column("Name", style="green")
+        table.add_column("Domain", style="dim")
+        table.add_column("Category", style="magenta")
+        for source in free_sources:
+            table.add_row(source["name"], source["domain"], source["category"])
+        console.print(table)
+        console.print()
+
+    if auth_sources:
+        console.print(
+            "[bold cyan]Auth-Required Sources[/bold cyan] [dim](link via: numi services link)[/dim]"
+        )
+        table = Table(show_header=True, header_style="bold cyan", box=None, padding=(0, 2))
+        table.add_column("Name", style="green")
+        table.add_column("Domain", style="dim")
+        table.add_column("Category", style="magenta")
+        for source in auth_sources:
+            table.add_row(source["name"], source["domain"], source["category"])
+        console.print(table)
+        console.print()
+
+
+def _fetch_public_data_sources(env: str) -> Optional[typing.List[dict]]:
+    api_url = ENV_URLS[env]
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            response = client.get(f"{api_url}/api/v3/miner/public-data/sources")
+        if response.status_code == 200:
+            return response.json().get("sources", [])
+        console.print(
+            f"[red]✗ HTTP {response.status_code}:[/red] {api_url}/api/v3/miner/public-data/sources"
+        )
+        return None
+    except Exception as exc:
+        console.print(f"[red]✗ Failed to fetch sources:[/red] {exc}")
+        return None
+
+
 @services.command()
 @click.argument("service_name", required=False)
 @click.option("--wallet", "-w", type=str, help="Wallet name")
@@ -195,52 +255,47 @@ def link(
     """Link a third-party service to your miner
 
     \b
-    Available Services:
-      - desearch: Link Desearch API account
-      - chutes: Link Chutes API key
-      - openai: Link OpenAI API key
-      - openrouter: Link OpenRouter API key
-      - perplexity: Link Perplexity API key
-      - vericore: Link Vericore API key
-      - lunar-crush: Link LunarCrush API key
-      - lightning-rod: Link Lightning Rod API key
-      - numinous-signals: Link Numinous Signals API key
-      - unusual-whales: Link Unusual Whales API key
-
-    \b
     Examples:
       numi services link                      # Interactive mode
       numi services link desearch             # Link Desearch directly
       numi services link chutes               # Link Chutes directly
-      numi services link openai               # Link OpenAI directly
-      numi services link openrouter           # Link OpenRouter directly
-      numi services link perplexity           # Link Perplexity directly
-      numi services link vericore             # Link Vericore directly
-      numi services link lunar-crush          # Link LunarCrush directly
-      numi services link lightning-rod        # Link Lightning Rod directly
-      numi services link numinous-signals     # Link Numinous Signals directly
-      numi services link unusual-whales       # Link Unusual Whales directly
       numi services link chutes -t SIGNAL     # Link for SIGNAL track
     """
-    if not service_name:
-        console.print()
-        service_choice = Prompt.ask(
-            "[bold cyan]Select service to link[/bold cyan]",
-            choices=[
-                "desearch",
-                "chutes",
-                "openai",
-                "openrouter",
-                "perplexity",
-                "vericore",
-                "lunar-crush",
-                "lightning-rod",
-                "numinous-signals",
-                "unusual-whales",
-            ],
-            default="desearch",
+    if not env:
+        env_choice = Prompt.ask(
+            "[bold cyan]Select environment[/bold cyan]", choices=["test", "prod"], default="test"
         )
-        service_name = service_choice.lower()
+        env = env_choice.lower()
+
+    all_services = get_all_linkable_services(env)
+    service_names_by_cli_name = {"desearch": None}
+    for service in all_services:
+        cli_name = service.name.replace("_", "-")
+        service_names_by_cli_name[cli_name] = service
+
+    if not service_name:
+        cli_names = [*service_names_by_cli_name.keys()]
+        console.print()
+        for index, name in enumerate(cli_names, 1):
+            service_config = service_names_by_cli_name[name]
+            display = service_config.display_name if service_config else "Desearch"
+            console.print(f"  [cyan]{index:>2}.[/cyan] {display} [dim]({name})[/dim]")
+        console.print()
+
+        selection = Prompt.ask(
+            "[bold cyan]Select service number or name[/bold cyan]",
+            default="1",
+        )
+
+        if selection.isdigit():
+            idx = int(selection) - 1
+            if 0 <= idx < len(cli_names):
+                service_name = cli_names[idx]
+            else:
+                console.print(f"[red]✗ Invalid selection:[/red] {selection}")
+                raise click.Abort()
+        else:
+            service_name = selection.lower().strip()
         console.print()
 
     if not track:
@@ -250,24 +305,9 @@ def link(
 
     if service_name == "desearch":
         link_desearch_impl(wallet, hotkey, env, wallet_path, track)
-    elif service_name == "chutes":
-        link_chutes_impl(wallet, hotkey, env, wallet_path, track)
-    elif service_name == "openai":
-        link_openai_impl(wallet, hotkey, env, wallet_path, track)
-    elif service_name == "openrouter":
-        link_openrouter_impl(wallet, hotkey, env, wallet_path, track)
-    elif service_name == "perplexity":
-        link_perplexity_impl(wallet, hotkey, env, wallet_path, track)
-    elif service_name == "vericore":
-        link_vericore_impl(wallet, hotkey, env, wallet_path, track)
-    elif service_name == "lunar-crush":
-        link_lunar_crush_impl(wallet, hotkey, env, wallet_path, track)
-    elif service_name == "lightning-rod":
-        link_lightning_rod_impl(wallet, hotkey, env, wallet_path, track)
-    elif service_name == "numinous-signals":
-        link_numinous_signals_impl(wallet, hotkey, env, wallet_path, track)
-    elif service_name == "unusual-whales":
-        link_unusual_whales_impl(wallet, hotkey, env, wallet_path, track)
+    elif service_name in service_names_by_cli_name:
+        service_config = service_names_by_cli_name[service_name]
+        link_api_key_impl(service_config, wallet, hotkey, env, wallet_path, track)
     else:
         console.print(f"[red]✗ Unknown service:[/red] {service_name}")
         raise click.Abort()

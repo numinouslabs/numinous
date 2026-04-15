@@ -55,6 +55,9 @@ class OpenAIResponse(BaseModel):
 
 
 class OpenAIModelName(StrEnum):
+    GPT_5_4 = "gpt-5.4"
+    GPT_5_4_MINI = "gpt-5.4-mini"
+    GPT_5_4_NANO = "gpt-5.4-nano"
     GPT_5_2 = "gpt-5.2"
     GPT_5_2_CHAT_LATEST = "gpt-5.2-chat-latest"
     GPT_5_2_PRO = "gpt-5.2-pro"
@@ -73,6 +76,21 @@ class OpenAIModel(BaseModel):
 
 
 OPENAI_REGISTRY: dict[OpenAIModelName, OpenAIModel] = {
+    OpenAIModelName.GPT_5_4: OpenAIModel(
+        name=OpenAIModelName.GPT_5_4,
+        input_cost=2.50,
+        output_cost=15.00,
+    ),
+    OpenAIModelName.GPT_5_4_MINI: OpenAIModel(
+        name=OpenAIModelName.GPT_5_4_MINI,
+        input_cost=0.75,
+        output_cost=4.50,
+    ),
+    OpenAIModelName.GPT_5_4_NANO: OpenAIModel(
+        name=OpenAIModelName.GPT_5_4_NANO,
+        input_cost=0.20,
+        output_cost=1.25,
+    ),
     OpenAIModelName.GPT_5_2: OpenAIModel(
         name=OpenAIModelName.GPT_5_2,
         input_cost=1.75,
