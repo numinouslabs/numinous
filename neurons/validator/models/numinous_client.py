@@ -36,6 +36,7 @@ from neurons.validator.models.numinous_signals import (
 from neurons.validator.models.openai import OpenAIResponse
 from neurons.validator.models.openrouter import OpenRouterCompletion
 from neurons.validator.models.perplexity import PerplexityCompletion
+from neurons.validator.models.sources import SourceItem
 from neurons.validator.models.track import TrackEnum
 from neurons.validator.models.unusual_whales import NewsHeadlinesResponse
 from neurons.validator.models.vericore import VericoreResponse
@@ -188,6 +189,24 @@ class MinerReasoningSubmission(BaseModel):
 
 class PostReasoningRequestBody(BaseModel):
     reasonings: typing.List[MinerReasoningSubmission] = Field(..., min_length=1)
+
+
+class MinerSourceSubmission(BaseModel):
+    event_id: str
+    miner_uid: int
+    miner_hotkey: str
+    track: TrackEnum
+    validator_uid: int
+    validator_hotkey: str
+    run_id: UUID
+    submitted_at: datetime
+    sources: typing.List[SourceItem] = Field(..., min_length=1, max_length=20)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PostSourcesRequestBody(BaseModel):
+    submissions: typing.List[MinerSourceSubmission] = Field(..., min_length=1)
 
 
 class GatewayCall(BaseModel):

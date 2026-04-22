@@ -13,6 +13,7 @@ from neurons.validator.models.miner_agent import MinerAgentsModel
 from neurons.validator.models.numinous_client import CreateAgentRunRequest
 from neurons.validator.models.prediction import PredictionsModel
 from neurons.validator.models.reasoning import MAX_REASONING_CHARS, MISSING_REASONING_PREFIX
+from neurons.validator.models.sources import MAX_SOURCES_PER_RUN, SourceItem
 from neurons.validator.numinous_client.client import NuminousClient
 from neurons.validator.sandbox import SandboxManager
 from neurons.validator.sandbox.models import SandboxErrorType
@@ -448,6 +449,30 @@ class RunAgents(AbstractTask):
                 exc_info=True,
             )
 
+    async def _store_sources(
+        self, run_id: str, run_status: AgentRunStatus, result: dict | None
+    ) -> None:
+        if run_status != AgentRunStatus.SUCCESS:
+            return
+
+        raw_sources = result.get("output", {}).get("sources") if isinstance(result, dict) else None
+        if not raw_sources:
+            return
+
+        sources = [
+            SourceItem.model_validate(raw_source)
+            for raw_source in raw_sources[:MAX_SOURCES_PER_RUN]
+        ]
+
+        try:
+            await self.db_operations.insert_sources(run_id, sources)
+        except Exception as e:
+            self.logger.error(
+                "Failed to store sources",
+                extra={"run_id": run_id, "error": str(e)},
+                exc_info=True,
+            )
+
     async def execute_agent_for_event(
         self, event: EventsModel, agent: MinerAgentsModel, interval_start_minutes: int
     ) -> None:
@@ -560,6 +585,7 @@ class RunAgents(AbstractTask):
 
         if agent_run.is_final:
             await self._store_reasoning(run_id, run_status, result)
+            await self._store_sources(run_id, run_status, result)
 
         if run_status == AgentRunStatus.SUCCESS and prediction_value is not None:
             await self.store_prediction(

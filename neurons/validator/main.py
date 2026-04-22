@@ -19,6 +19,7 @@ from neurons.validator.tasks.export_agent_runs import ExportAgentRuns
 from neurons.validator.tasks.export_predictions import ExportPredictions
 from neurons.validator.tasks.export_reasonings import ExportReasonings
 from neurons.validator.tasks.export_scores import ExportScores
+from neurons.validator.tasks.export_sources import ExportSources
 from neurons.validator.tasks.pull_agents import PullAgents
 from neurons.validator.tasks.pull_events import PullEvents
 from neurons.validator.tasks.resolve_events import ResolveEvents
@@ -194,6 +195,16 @@ async def main():
         validator_hotkey=validator_hotkey,
     )
 
+    export_sources_task = ExportSources(
+        interval_seconds=300.0,
+        batch_size=500,
+        db_operations=db_operations,
+        api_client=numinous_api_client,
+        logger=logger,
+        validator_uid=validator_uid,
+        validator_hotkey=validator_hotkey,
+    )
+
     set_weights_task = SetWeights(
         interval_seconds=379.0,
         db_operations=db_operations,
@@ -228,6 +239,7 @@ async def main():
     scheduler.add(task=export_agent_runs_task)
     scheduler.add(task=export_agent_run_logs_task)
     scheduler.add(task=export_reasonings_task)
+    scheduler.add(task=export_sources_task)
     scheduler.add(task=scoring_task)
     scheduler.add(task=export_scores_task)
     scheduler.add(task=set_weights_task)

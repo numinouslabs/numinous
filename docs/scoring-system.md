@@ -46,6 +46,7 @@ The main metrics currently used for ranking are:
 
 - `PNL`
 - `Brier Score`
+- `Reasoning` — a separate quality+calibration score on miner-submitted reasoning. A substantial share of daily emissions is allocated to the Reasoning pool (currently 25% on the Information track, 20% on the Signals track). The `Reasoning` column on the leaderboard is a 70/30 weighted average of a rubric quality score and an implied-probability Brier score. See [reasoning-scoring.md](./reasoning-scoring.md) for the full rubric, the extractor prompt, and the 2,500-character reasoning length cap.
 
 ## PNL Metric
 

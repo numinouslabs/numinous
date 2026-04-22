@@ -1396,6 +1396,205 @@ class TestRunAgentsPredictionStorage:
         assert "Failed to store prediction" in call_args[0][0]
 
 
+class TestRunAgentsStoreSources:
+    def _make_task(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+    ):
+        return RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
+            api_client=mock_api_client,
+            logger=mock_logger,
+        )
+
+    def _valid_source(self, url: str = "https://example.com") -> dict:
+        return {
+            "url": url,
+            "source_type": "news",
+            "direction": "up",
+            "source_timestamp": "2024-01-01T12:00:00+00:00",
+            "impact_bucket": "high",
+            "persistence_bucket": "medium",
+            "reasoning": "supports outcome",
+        }
+
+    async def test_stores_valid_sources(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+    ):
+        task = self._make_task(
+            mock_db_operations,
+            mock_sandbox_manager,
+            mock_subtensor_cm,
+            mock_api_client,
+            mock_logger,
+        )
+        result = {
+            "output": {
+                "sources": [
+                    self._valid_source("https://a.com"),
+                    self._valid_source("https://b.com"),
+                ]
+            }
+        }
+
+        await task._store_sources("run_1", AgentRunStatus.SUCCESS, result)
+
+        mock_db_operations.insert_sources.assert_called_once()
+        run_id, sources = mock_db_operations.insert_sources.call_args[0]
+        assert run_id == "run_1"
+        assert len(sources) == 2
+        assert sources[0].url == "https://a.com"
+        assert sources[1].url == "https://b.com"
+
+    async def test_skips_when_status_not_success(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+    ):
+        task = self._make_task(
+            mock_db_operations,
+            mock_sandbox_manager,
+            mock_subtensor_cm,
+            mock_api_client,
+            mock_logger,
+        )
+        result = {"output": {"sources": [self._valid_source()]}}
+
+        await task._store_sources("run_1", AgentRunStatus.INVALID_SANDBOX_OUTPUT, result)
+
+        mock_db_operations.insert_sources.assert_not_called()
+
+    async def test_skips_when_result_is_none(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+    ):
+        task = self._make_task(
+            mock_db_operations,
+            mock_sandbox_manager,
+            mock_subtensor_cm,
+            mock_api_client,
+            mock_logger,
+        )
+
+        await task._store_sources("run_1", AgentRunStatus.SUCCESS, None)
+
+        mock_db_operations.insert_sources.assert_not_called()
+
+    async def test_skips_when_sources_missing(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+    ):
+        task = self._make_task(
+            mock_db_operations,
+            mock_sandbox_manager,
+            mock_subtensor_cm,
+            mock_api_client,
+            mock_logger,
+        )
+        result = {"output": {"prediction": 0.5}}
+
+        await task._store_sources("run_1", AgentRunStatus.SUCCESS, result)
+
+        mock_db_operations.insert_sources.assert_not_called()
+
+    async def test_skips_when_sources_empty(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+    ):
+        task = self._make_task(
+            mock_db_operations,
+            mock_sandbox_manager,
+            mock_subtensor_cm,
+            mock_api_client,
+            mock_logger,
+        )
+        result = {"output": {"sources": []}}
+
+        await task._store_sources("run_1", AgentRunStatus.SUCCESS, result)
+
+        mock_db_operations.insert_sources.assert_not_called()
+
+    async def test_truncates_to_max_per_run(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+    ):
+        from neurons.validator.models.sources import MAX_SOURCES_PER_RUN
+
+        task = self._make_task(
+            mock_db_operations,
+            mock_sandbox_manager,
+            mock_subtensor_cm,
+            mock_api_client,
+            mock_logger,
+        )
+        raw_sources = [
+            self._valid_source(f"https://{i}.com") for i in range(MAX_SOURCES_PER_RUN + 5)
+        ]
+        result = {"output": {"sources": raw_sources}}
+
+        await task._store_sources("run_1", AgentRunStatus.SUCCESS, result)
+
+        _, stored = mock_db_operations.insert_sources.call_args[0]
+        assert len(stored) == MAX_SOURCES_PER_RUN
+        assert stored[0].url == "https://0.com"
+        assert stored[-1].url == f"https://{MAX_SOURCES_PER_RUN - 1}.com"
+
+    async def test_handles_insert_failure(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+    ):
+        mock_db_operations.insert_sources = AsyncMock(side_effect=Exception("db broken"))
+        task = self._make_task(
+            mock_db_operations,
+            mock_sandbox_manager,
+            mock_subtensor_cm,
+            mock_api_client,
+            mock_logger,
+        )
+        result = {"output": {"sources": [self._valid_source()]}}
+
+        await task._store_sources("run_1", AgentRunStatus.SUCCESS, result)
+
+        mock_logger.error.assert_called()
+        assert "Failed to store sources" in mock_logger.error.call_args[0][0]
+
+
 class TestRunAgentsErrorLogging:
     async def test_logs_exported_on_agent_execution_error(
         self,

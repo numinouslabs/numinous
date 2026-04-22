@@ -12,6 +12,7 @@ This guide walks you through:
 For competition rules and constraints, see [subnet-rules.md](./subnet-rules.md).
 For system architecture details, see [architecture.md](./architecture.md).
 For gateway API reference (Chutes AI, Desearch AI, Numinous Indicia, etc.), see [gateway-guide.md](./gateway-guide.md).
+For how miner-submitted reasoning is scored (and why a large share of emissions depends on it), see [reasoning-scoring.md](./reasoning-scoring.md).
 
 The key rules to follow as a miner are the following:
 - **The sandbox times out after 240s**
@@ -497,6 +498,77 @@ def agent_main(event_data: Dict[str, Any]) -> Dict[str, Any]:
 ```
 
 A complete working agent combining Indicia signals with OpenAI web search is available at `neurons/miner/agents/indicia_openai_example.py`.
+
+### Using Indicia RSS Feeds
+
+Indicia also exposes a curated RSS aggregator at `https://indicia.numinouslabs.io/rss/articles`, reachable through the [public data proxy](./gateway-guide.md#public-data-proxy). The domain is whitelisted as `indicia_rss` (free, no API key linking). Use it to pull news articles grouped by pipeline, category, or feed variant.
+
+**Quick reference**
+
+| Need | Query params |
+|---|---|
+| All geopolitical news | `pipeline=geopolitical` |
+| One category only | `categories=crypto` |
+| Multi-category | `categories=middleeast,energy,intel` |
+| Specific variant (e.g. all intel) | `variants=intel` |
+| Pipeline with cap | `pipeline=middleeast&max_articles=50` |
+
+**Pipeline groups**
+
+| Pipeline | Categories included |
+|---|---|
+| `geopolitical` | politics, us, europe, middleeast, asia, africa, latam, gov, thinktanks, crisis, intel |
+| `middleeast` | middleeast, intel, crisis |
+| `commodity` | commodity_news, gold_silver, energy, mining_news, critical_minerals, base_metals, mining_companies, supply_chain, commodity_regulation |
+| `finance` | finance, markets, forex, bonds, commodities, crypto, centralbanks, economic, derivatives, fintech, regulation, institutional, analysis, gcc |
+| `tech` | tech, ai, startups, vcblogs, regional_startups, security, policy, cloud, dev, hardware |
+
+**Variants:** `full` (general news), `tech`, `finance`, `commodity`, `intel`.
+
+**Example**
+
+```python
+import json
+import os
+import httpx
+
+PROXY_URL = os.getenv("SANDBOX_PROXY_URL", "http://sandbox_proxy")
+RUN_ID = os.getenv("RUN_ID")
+
+INDICIA_RSS_URL = "https://indicia.numinouslabs.io/rss/articles"
+
+def fetch_indicia_rss(**query_params) -> list[dict]:
+    response = httpx.post(
+        f"{PROXY_URL}/api/gateway/public-data/fetch",
+        json={
+            "run_id": RUN_ID,
+            "url": INDICIA_RSS_URL,
+            "method": "GET",
+            "query_params": {k: str(v) for k, v in query_params.items()},
+            "timeout": 30.0,
+        },
+        timeout=60.0,
+    )
+    response.raise_for_status()
+    return json.loads(response.json()["response_body"])
+
+# By pipeline group
+geopolitical = fetch_indicia_rss(pipeline="geopolitical")
+
+# By category (single or comma-separated)
+crypto_news = fetch_indicia_rss(categories="crypto,fintech")
+
+# By variant
+intel_only = fetch_indicia_rss(variants="intel")
+
+# Pipeline with article cap
+middle_east = fetch_indicia_rss(pipeline="middleeast", max_articles=50)
+```
+
+Notes:
+- The proxy enforces a `https://indicia.numinouslabs.io/rss/articles` URL prefix — only this path is reachable, not other Indicia endpoints.
+- Responses are capped at 5MB; use `pipeline` or `max_articles` to keep payloads reasonable when pulling broad slices like `ALL_FEEDS` (~230 feeds).
+- Cost is `$0.00`. Run `numi services sources` to confirm the source is currently whitelisted.
 
 ## Important Notes
 

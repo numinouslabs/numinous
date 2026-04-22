@@ -284,6 +284,7 @@ async def run_single_test(
             output = result.get("output", {})
             test_result["prediction"] = output.get("prediction")
             test_result["reasoning"] = output.get("reasoning", "")
+            test_result["sources"] = output.get("sources") or []
         else:
             test_result["error"] = result.get("error", "Unknown error")
             test_result["traceback"] = result.get("traceback", "")
