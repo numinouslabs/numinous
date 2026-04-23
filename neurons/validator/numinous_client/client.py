@@ -40,6 +40,7 @@ from neurons.validator.models.numinous_client import (
     PostPredictionsRequestBody,
     PostReasoningRequestBody,
     PostScoresRequestBody,
+    PostSourcesRequestBody,
     VericoreCalculateRatingRequest,
 )
 from neurons.validator.models.openrouter import OpenRouterCompletion
@@ -262,6 +263,26 @@ class NuminousClient:
             other_headers={**auth_headers, "Content-Type": "application/json"}
         ) as session:
             path = "/api/v1/validators/reasoning"
+
+            async with session.post(path, data=data) as response:
+                response.raise_for_status()
+
+                return await response.json()
+
+    async def post_sources(self, body: PostSourcesRequestBody):
+        if not isinstance(body, PostSourcesRequestBody):
+            raise ValueError("Invalid parameter")
+
+        assert len(body.submissions) > 0
+
+        data = body.model_dump_json()
+
+        auth_headers = self.make_auth_headers(data=data)
+
+        async with self.create_session(
+            other_headers={**auth_headers, "Content-Type": "application/json"}
+        ) as session:
+            path = "/api/v1/validators/sources"
 
             async with session.post(path, data=data) as response:
                 response.raise_for_status()

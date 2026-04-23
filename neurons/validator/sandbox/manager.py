@@ -559,7 +559,7 @@ class SandboxManager:
 
             try:
                 agent_output = AgentOutput(**output.output)
-                result.output = agent_output.model_dump()
+                result.output = agent_output.model_dump(mode="json")
                 self.logger.debug(
                     "Validated agent output",
                     extra={

@@ -1,3 +1,4 @@
+import json
 from typing import Iterable, Optional, Type, TypeVar
 
 from pydantic import BaseModel
@@ -24,6 +25,7 @@ from neurons.validator.models.prediction import (
 )
 from neurons.validator.models.reasoning import ReasoningForExport
 from neurons.validator.models.score import SCORE_FIELDS, ScoresExportedStatus, ScoresModel
+from neurons.validator.models.sources import SourceItem, SourcesForExport
 from neurons.validator.utils.logger.logger import NuminousLogger
 
 GenericModel = TypeVar("GenericModel", bound=BaseModel)
@@ -625,6 +627,91 @@ class DatabaseOperations:
             [batch_size],
         )
 
+    async def insert_sources(self, run_id: str, sources: list[SourceItem]) -> None:
+        sources_json = json.dumps([source.model_dump(mode="json") for source in sources])
+
+        await self.__db_client.insert_many(
+            """
+                INSERT INTO sources (run_id, sources, exported)
+                VALUES (?, ?, ?)
+                ON CONFLICT (run_id)
+                DO UPDATE SET
+                    sources = excluded.sources,
+                    updated_at = CURRENT_TIMESTAMP
+            """,
+            [(run_id, sources_json, False)],
+        )
+
+    async def get_sources_for_export(self, limit: int = 200) -> list[SourcesForExport]:
+        rows = await self.__db_client.many(
+            """
+                SELECT
+                    s.run_id,
+                    s.sources,
+                    s.created_at,
+                    ar.unique_event_id AS event_id,
+                    ar.miner_uid,
+                    ar.miner_hotkey,
+                    ar.track
+                FROM sources s
+                JOIN agent_runs ar ON s.run_id = ar.run_id
+                WHERE s.exported = 0
+                ORDER BY s.created_at ASC
+                LIMIT ?
+            """,
+            parameters=[limit],
+            use_row_factory=True,
+        )
+
+        return self._parse_rows(model=SourcesForExport, rows=rows)
+
+    async def mark_sources_as_exported(self, run_ids: list[str]) -> None:
+        if not run_ids:
+            return
+
+        placeholders = ", ".join(["?" for _ in run_ids])
+
+        await self.__db_client.update(
+            f"""
+                UPDATE sources
+                SET
+                    exported = 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE run_id IN ({placeholders})
+            """,
+            run_ids,
+        )
+
+    async def delete_sources(self, batch_size: int) -> Iterable[tuple[int]]:
+        return await self.__db_client.delete(
+            """
+                WITH sources_to_delete AS (
+                    SELECT
+                        s.ROWID
+                    FROM
+                        sources s
+                    WHERE
+                        s.exported = 1
+                        AND datetime(s.created_at) < datetime(CURRENT_TIMESTAMP, '-7 day')
+                    ORDER BY
+                        s.ROWID ASC
+                    LIMIT ?
+                )
+                DELETE FROM
+                    sources
+                WHERE
+                    ROWID IN (
+                        SELECT
+                            ROWID
+                        FROM
+                            sources_to_delete
+                    )
+                RETURNING
+                    ROWID
+            """,
+            [batch_size],
+        )
+
     async def get_events_for_scoring(self, max_events=1000) -> list[EventsModel]:
         """
         Returns all events that were recently resolved and need to be scored
@@ -1187,11 +1274,14 @@ class DatabaseOperations:
                         agent_run_logs arl ON ar.run_id = arl.run_id
                     LEFT JOIN
                         reasoning re ON ar.run_id = re.run_id
+                    LEFT JOIN
+                        sources so ON ar.run_id = so.run_id
                     WHERE
                         ar.exported = ?
                         AND datetime(ar.created_at) < datetime(CURRENT_TIMESTAMP, '-7 day')
                         AND arl.run_id IS NULL
                         AND re.run_id IS NULL
+                        AND so.run_id IS NULL
                     ORDER BY
                         ar.ROWID ASC
                     LIMIT ?

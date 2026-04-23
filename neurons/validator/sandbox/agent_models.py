@@ -3,6 +3,8 @@ from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field
 
+from neurons.validator.models.sources import SourceItem
+
 
 class AgentInput(BaseModel):
     event_id: str = Field(..., description="Unique event identifier")
@@ -15,6 +17,9 @@ class AgentOutput(BaseModel):
     event_id: str = Field(..., description="Event ID this prediction is for")
     prediction: float = Field(..., description="Probability prediction (0.0 to 1.0)", ge=0, le=1)
     reasoning: Optional[str] = Field(None, description="Explanation of prediction")
+    sources: Optional[list[SourceItem]] = Field(
+        None, description="Optional list of structured sources supporting the prediction"
+    )
 
 
 class RunStatus(StrEnum):

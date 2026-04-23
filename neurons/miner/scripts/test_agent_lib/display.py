@@ -60,6 +60,7 @@ def show_results(results: dict) -> None:
     table.add_column("Status", width=10, no_wrap=True)
     table.add_column("Prediction", width=12, justify="right", no_wrap=True)
     table.add_column("Reasoning", style="dim", max_width=60, no_wrap=False)
+    table.add_column("Sources", width=8, justify="right", no_wrap=True)
     table.add_column("Time", width=8, justify="right", no_wrap=True)
 
     for idx, test in enumerate(tests, 1):
@@ -80,15 +81,26 @@ def show_results(results: dict) -> None:
         reasoning = test.get("reasoning", "")
         reasoning_display = reasoning if reasoning else "[dim]N/A[/dim]"
 
+        sources = test.get("sources") or []
+        sources_str = f"[cyan]{len(sources)}[/cyan]" if sources else "[dim]0[/dim]"
+
         duration_val = test.get("duration", 0)
         duration_str = f"{duration_val:.2f}s"
 
         table.add_row(
-            str(idx), event_title, status_str, prediction_str, reasoning_display, duration_str
+            str(idx),
+            event_title,
+            status_str,
+            prediction_str,
+            reasoning_display,
+            sources_str,
+            duration_str,
         )
 
     console.print(table)
     console.print()
+
+    show_sources(tests)
 
     errors = [t for t in tests if t.get("status") != "success"]
     if errors:
@@ -123,6 +135,46 @@ def show_results(results: dict) -> None:
 
     show_logs_interactive(tests)
     save_results_to_file(results)
+
+
+def show_sources(tests: list) -> None:
+    tests_with_sources = [t for t in tests if t.get("sources")]
+    if not tests_with_sources:
+        return
+
+    console.print("[cyan]📎 Sources:[/cyan]")
+    console.print()
+
+    for idx, test in enumerate(tests, 1):
+        sources = test.get("sources") or []
+        if not sources:
+            continue
+
+        event_title = test.get("event_title", "Unknown")[:60]
+        console.print(f"[bold cyan]Test {idx}:[/bold cyan] {event_title}")
+
+        src_table = Table(show_header=True, header_style="bold cyan", box=box.SIMPLE)
+        src_table.add_column("#", style="dim", width=3, no_wrap=True)
+        src_table.add_column("URL", style="white", max_width=50, no_wrap=False)
+        src_table.add_column("Type", style="dim", width=10, no_wrap=True)
+        src_table.add_column("Dir", width=8, no_wrap=True)
+        src_table.add_column("Impact", width=8, no_wrap=True)
+        src_table.add_column("Persistence", width=11, no_wrap=True)
+        src_table.add_column("Reasoning", style="dim", max_width=60, no_wrap=False)
+
+        for source_idx, source in enumerate(sources, 1):
+            src_table.add_row(
+                str(source_idx),
+                str(source.get("url", "")),
+                str(source.get("source_type", "")),
+                str(source.get("direction", "")),
+                str(source.get("impact_bucket", "")),
+                str(source.get("persistence_bucket", "")),
+                str(source.get("reasoning", "")),
+            )
+
+        console.print(src_table)
+        console.print()
 
 
 def show_logs_interactive(tests: list) -> None:
@@ -256,6 +308,7 @@ def write_text_report(file: TextIO, results: dict) -> None:
         if status == "success":
             prediction = test.get("prediction")
             reasoning = test.get("reasoning", "")
+            sources = test.get("sources") or []
             file.write(f"  Prediction: {prediction:.4f}\n")
             if reasoning:
                 file.write("  Reasoning:\n")
@@ -263,6 +316,25 @@ def write_text_report(file: TextIO, results: dict) -> None:
                     reasoning, width=74, initial_indent="    ", subsequent_indent="    "
                 )
                 file.write(wrapped + "\n")
+            if sources:
+                file.write(f"  Sources ({len(sources)}):\n")
+                for source_idx, source in enumerate(sources, 1):
+                    file.write(f"    [{source_idx}] {source.get('url', '')}\n")
+                    file.write(
+                        f"        type={source.get('source_type', '')} "
+                        f"direction={source.get('direction', '')} "
+                        f"impact={source.get('impact_bucket', '')} "
+                        f"persistence={source.get('persistence_bucket', '')}\n"
+                    )
+                    source_reasoning = source.get("reasoning", "")
+                    if source_reasoning:
+                        wrapped = textwrap.fill(
+                            source_reasoning,
+                            width=70,
+                            initial_indent="        ",
+                            subsequent_indent="        ",
+                        )
+                        file.write(wrapped + "\n")
         else:
             error = test.get("error", "Unknown error")
             file.write(f"  Error:      {error}\n")

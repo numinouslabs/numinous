@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 
 from neurons.validator.db.client import DatabaseClient
@@ -8,6 +9,13 @@ from neurons.validator.models.event import EventsModel, EventStatus
 from neurons.validator.models.miner_agent import MinerAgentsModel
 from neurons.validator.models.reasoning import ReasoningForExport
 from neurons.validator.models.score import ScoresModel
+from neurons.validator.models.sources import (
+    ImpactBucket,
+    PersistenceBucket,
+    SourceDirection,
+    SourceItem,
+    SourcesForExport,
+)
 
 
 class TestDbOperationsPart3(TestDbOperationsBase):
@@ -515,4 +523,165 @@ class TestDbOperationsPart3(TestDbOperationsBase):
         assert len(deleted) == 0
 
         rows = await db_client.many("SELECT run_id FROM reasoning")
+        assert rows == [("run_1",)]
+
+    def _build_source(self, url: str = "https://example.com") -> SourceItem:
+        return SourceItem(
+            url=url,
+            source_type="news",
+            direction=SourceDirection.UP,
+            source_timestamp=datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc),
+            impact_bucket=ImpactBucket.HIGH,
+            persistence_bucket=PersistenceBucket.MEDIUM,
+            reasoning="supports outcome",
+        )
+
+    async def test_insert_sources(
+        self, db_operations: DatabaseOperations, db_client: DatabaseClient
+    ):
+        sources = [self._build_source("https://a.com"), self._build_source("https://b.com")]
+
+        await db_operations.insert_sources("run_1", sources)
+
+        rows = await db_client.many("SELECT run_id, sources, exported FROM sources")
+
+        assert len(rows) == 1
+        assert rows[0][0] == "run_1"
+        assert rows[0][2] == 0
+
+        parsed = json.loads(rows[0][1])
+        assert len(parsed) == 2
+        assert parsed[0]["url"] == "https://a.com"
+        assert parsed[1]["url"] == "https://b.com"
+
+    async def test_insert_sources_upsert(
+        self, db_operations: DatabaseOperations, db_client: DatabaseClient
+    ):
+        await db_operations.insert_sources("run_1", [self._build_source("https://a.com")])
+        await db_operations.insert_sources("run_1", [self._build_source("https://b.com")])
+
+        rows = await db_client.many("SELECT run_id, sources FROM sources")
+
+        assert len(rows) == 1
+        parsed = json.loads(rows[0][1])
+        assert len(parsed) == 1
+        assert parsed[0]["url"] == "https://b.com"
+
+    async def test_get_sources_for_export(
+        self, db_operations: DatabaseOperations, db_client: DatabaseClient
+    ):
+        await self._setup_agent_run(db_operations, "run_1", "event_1", 10, "hotkey_1")
+        await self._setup_agent_run(db_operations, "run_2", "event_2", 20, "hotkey_2")
+
+        await db_operations.insert_sources(
+            "run_1", [self._build_source("https://a.com"), self._build_source("https://b.com")]
+        )
+        await db_operations.insert_sources("run_2", [self._build_source("https://c.com")])
+
+        result = await db_operations.get_sources_for_export(limit=100)
+
+        assert len(result) == 2
+        assert all(isinstance(r, SourcesForExport) for r in result)
+
+        assert result[0].run_id == "run_1"
+        assert len(result[0].sources) == 2
+        assert result[0].sources[0].url == "https://a.com"
+        assert result[0].event_id == "event_1"
+        assert result[0].miner_uid == 10
+        assert result[0].miner_hotkey == "hotkey_1"
+        assert result[0].track == "MAIN"
+
+        assert result[1].run_id == "run_2"
+        assert len(result[1].sources) == 1
+        assert result[1].sources[0].url == "https://c.com"
+        assert result[1].event_id == "event_2"
+
+    async def test_get_sources_for_export_empty(self, db_operations: DatabaseOperations):
+        result = await db_operations.get_sources_for_export(limit=100)
+        assert len(result) == 0
+
+    async def test_get_sources_for_export_skips_exported(
+        self, db_operations: DatabaseOperations, db_client: DatabaseClient
+    ):
+        await self._setup_agent_run(db_operations, "run_1", "event_1", 10, "hotkey_1")
+        await self._setup_agent_run(db_operations, "run_2", "event_2", 20, "hotkey_2")
+
+        await db_operations.insert_sources("run_1", [self._build_source()])
+        await db_operations.insert_sources("run_2", [self._build_source()])
+
+        await db_operations.mark_sources_as_exported(run_ids=["run_1"])
+
+        result = await db_operations.get_sources_for_export(limit=100)
+
+        assert len(result) == 1
+        assert result[0].run_id == "run_2"
+
+    async def test_mark_sources_as_exported(
+        self, db_operations: DatabaseOperations, db_client: DatabaseClient
+    ):
+        await db_operations.insert_sources("run_1", [self._build_source()])
+        await db_operations.insert_sources("run_2", [self._build_source()])
+        await db_operations.insert_sources("run_3", [self._build_source()])
+
+        await db_operations.mark_sources_as_exported(run_ids=["run_1", "run_3"])
+
+        rows = await db_client.many("SELECT run_id, exported FROM sources ORDER BY run_id")
+
+        assert rows == [("run_1", 1), ("run_2", 0), ("run_3", 1)]
+
+    async def test_mark_sources_as_exported_empty_list(
+        self, db_operations: DatabaseOperations, db_client: DatabaseClient
+    ):
+        await db_operations.insert_sources("run_1", [self._build_source()])
+
+        await db_operations.mark_sources_as_exported(run_ids=[])
+
+        rows = await db_client.many("SELECT exported FROM sources")
+        assert rows == [(0,)]
+
+    async def test_delete_sources(
+        self, db_operations: DatabaseOperations, db_client: DatabaseClient
+    ):
+        await db_operations.insert_sources("run_old", [self._build_source()])
+        await db_operations.insert_sources("run_new", [self._build_source()])
+
+        await db_operations.mark_sources_as_exported(run_ids=["run_old", "run_new"])
+
+        # Backdate the old one
+        await db_client.update(
+            """
+                UPDATE sources
+                SET created_at = datetime(CURRENT_TIMESTAMP, '-8 day')
+                WHERE run_id = ?
+            """,
+            ["run_old"],
+        )
+
+        deleted = await db_operations.delete_sources(batch_size=100)
+
+        assert len(deleted) == 1
+
+        rows = await db_client.many("SELECT run_id FROM sources")
+        assert rows == [("run_new",)]
+
+    async def test_delete_sources_skips_unexported(
+        self, db_operations: DatabaseOperations, db_client: DatabaseClient
+    ):
+        await db_operations.insert_sources("run_1", [self._build_source()])
+
+        # Backdate but don't export
+        await db_client.update(
+            """
+                UPDATE sources
+                SET created_at = datetime(CURRENT_TIMESTAMP, '-8 day')
+                WHERE run_id = ?
+            """,
+            ["run_1"],
+        )
+
+        deleted = await db_operations.delete_sources(batch_size=100)
+
+        assert len(deleted) == 0
+
+        rows = await db_client.many("SELECT run_id FROM sources")
         assert rows == [("run_1",)]

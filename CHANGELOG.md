@@ -1,5 +1,8 @@
 # Release Notes
 
+## [2.1.9] - 2026-04-17
+- **Validator**: Export sources to backend in batches
+
 ## [2.1.8] - 2026-04-15
 - **Gateway**: Add OpenAI inference-only endpoint - same as `/responses` but blocks built-in tools (web_search, code_interpreter, etc.) while allowing custom function tool schemas
 - **Integration**: Add new Chutes models to allowlist
