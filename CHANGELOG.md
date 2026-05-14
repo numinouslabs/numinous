@@ -1,5 +1,10 @@
 # Release Notes
 
+## [2.2.0] - 2026-05-14
+- **Bittensor Upgrade**: Upgraded to Bittensor version 10.3.1
+- **Bittensor CLI Upgrade**: Upgraded to Bittensor CLI version 9.21.1
+- **Gateway**: Allow same-host redirects in public data proxy
+
 ## [2.1.9] - 2026-04-17
 - **Validator**: Export sources to backend in batches
 
