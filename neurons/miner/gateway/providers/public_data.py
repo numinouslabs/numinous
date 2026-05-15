@@ -5,7 +5,7 @@ import os
 import socket
 from enum import StrEnum
 from typing import Literal
-from urllib.parse import parse_qs, urlparse, urlunparse
+from urllib.parse import parse_qs, urljoin, urlparse, urlunparse
 
 import aiohttp
 from pydantic import BaseModel
@@ -13,6 +13,8 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 MAX_RESPONSE_SIZE_BYTES = 5 * 1024 * 1024  # 5MB
+MAX_REDIRECTS = 3
+REDIRECT_STATUSES = (301, 302, 303, 307, 308)
 DEFAULT_SOURCES_URL = "https://numinous.earth/api/v3/miner/public-data/sources"
 ALLOWED_RESPONSE_HEADERS = ("content-type", "date", "last-modified", "etag", "cache-control")
 
@@ -100,6 +102,15 @@ async def validate_and_match_source(
     return source
 
 
+def _ensure_same_host_redirect(next_url: str, original_host: str) -> None:
+    parsed = urlparse(next_url)
+    if parsed.scheme not in ("http", "https"):
+        raise UrlValidationError(f"Redirect to non-http(s) scheme blocked: {parsed.scheme}")
+    next_host = (parsed.hostname or "").lower()
+    if next_host != original_host:
+        raise UrlValidationError(f"Cross-host redirect blocked: {original_host} -> {next_host}")
+
+
 def _inject_auth(
     source: PublicDataSourceInfo,
     api_key: str | None,
@@ -147,6 +158,63 @@ def _get_api_key_for_source(source: PublicDataSourceInfo) -> str | None:
     return os.getenv(_get_env_var_name(source))
 
 
+def _downgrade_method_after_redirect(
+    status_code: int, current_method: str, current_body: bytes | None
+) -> tuple[str, bytes | None]:
+    if status_code == 303 or (status_code in (301, 302) and current_method == "POST"):
+        return "GET", None
+    return current_method, current_body
+
+
+async def _fetch_with_redirects(
+    session: aiohttp.ClientSession,
+    initial_url: str,
+    initial_method: str,
+    initial_body: str | None,
+    headers: dict[str, str],
+    extra_params: dict[str, str],
+    source: PublicDataSourceInfo,
+    api_key: str | None,
+    allowed_sources: list[PublicDataSourceInfo],
+) -> tuple[int, dict[str, str], str]:
+    original_host = (urlparse(initial_url).hostname or "").lower()
+    current_url = initial_url
+    current_method = initial_method.upper()
+    current_body = initial_body.encode() if initial_body else None
+    current_extra_params = extra_params
+
+    for _ in range(MAX_REDIRECTS + 1):
+        clean_url, merged_params = _extract_url_and_params(current_url, current_extra_params)
+        async with session.request(
+            method=current_method,
+            url=clean_url,
+            headers=headers,
+            params=merged_params,
+            data=current_body,
+            allow_redirects=False,
+        ) as response:
+            response_status = response.status
+            response_headers = dict(response.headers)
+            response_url = str(response.url)
+            location = response_headers.get("Location")
+            is_terminal = response_status not in REDIRECT_STATUSES or not location
+            if is_terminal:
+                response_text = await response.text()
+                return response_status, response_headers, response_text
+
+        next_url = urljoin(response_url, location)
+        _ensure_same_host_redirect(next_url, original_host)
+        await validate_and_match_source(next_url, allowed_sources)
+
+        current_method, current_body = _downgrade_method_after_redirect(
+            response_status, current_method, current_body
+        )
+        current_url = next_url
+        _, current_extra_params = _inject_auth(source, api_key, {}, {})
+
+    raise UrlValidationError(f"Too many redirects (max {MAX_REDIRECTS})")
+
+
 class PublicDataProxyClient:
     def __init__(self, allowed_sources: list[PublicDataSourceInfo]) -> None:
         self.__allowed_sources = allowed_sources
@@ -175,20 +243,19 @@ class PublicDataProxyClient:
             source, api_key, request_headers, request_params
         )
 
-        clean_url, merged_params = _extract_url_and_params(url, request_params)
-
         request_timeout = aiohttp.ClientTimeout(total=min(timeout, 60.0))
         async with aiohttp.ClientSession(timeout=request_timeout) as session:
-            async with session.request(
-                method=method.upper(),
-                url=clean_url,
+            response_status, response_headers, response_text = await _fetch_with_redirects(
+                session=session,
+                initial_url=url,
+                initial_method=method,
+                initial_body=body,
                 headers=request_headers,
-                params=merged_params,
-                data=body.encode() if body else None,
-                allow_redirects=False,
-            ) as response:
-                response_text = await response.text()
-                response_headers = dict(response.headers)
+                extra_params=request_params,
+                source=source,
+                api_key=api_key,
+                allowed_sources=self.__allowed_sources,
+            )
 
         if len(response_text) > MAX_RESPONSE_SIZE_BYTES:
             logger.warning(
@@ -199,7 +266,7 @@ class PublicDataProxyClient:
             response_text = response_text[:MAX_RESPONSE_SIZE_BYTES]
 
         return PublicDataProxyResponse(
-            status_code=response.status,
+            status_code=response_status,
             response_headers=_filter_response_headers(response_headers),
             response_body=response_text,
             content_type=response_headers.get("Content-Type"),
