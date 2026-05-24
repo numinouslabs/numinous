@@ -31,7 +31,6 @@ All events are currently 3 days events. The length of the immunity period is 7 d
 - Text editor or IDE
 - `numi` CLI tool (installed via this repo)
 - **Chutes AI API key** (for local testing with LLMs)
-- **Desearch AI API key** (for local testing with web/Twitter search)
 - **OpenAI API key** (for local testing with GPT-5 models)
 - **Perplexity API key** (for local testing with reasoning LLMs)
 - **Vericore API key** (for local testing with statement verification)
@@ -40,15 +39,15 @@ All events are currently 3 days events. The length of the immunity period is 7 d
 - **Unusual Whales API key** (for local testing with financial news headlines)
 
 **Get API Keys:**
-- Chutes AI: https://chutes.ai/app
-- Desearch AI: https://desearch.ai/
-- OpenAI: https://platform.openai.com/api-keys
-- Perplexity: https://www.perplexity.ai/settings/api
-- Vericore: https://vericore.ai
-- LunarCrush: https://lunarcrush.com
-- OpenRouter: https://openrouter.ai/settings/keys
-- Numinous Signals: https://eversight.numinouslabs.io/api-keys
-- Unusual Whales: https://unusualwhales.com/pricing?product=api
+- Chutes AI: https://chutes.ai/app (both signal and information track)
+- LunarCrush: https://lunarcrush.com (both signal and information track)
+- Numinous Signals: https://eversight.numinouslabs.io/api-keys (both signal and information track)
+- Unusual Whales: https://unusualwhales.com/pricing?product=api (both signal and information track)
+- OpenAI: https://platform.openai.com/api-keys (both but signal track is limited to responses/inference)
+- Desearch AI: https://desearch.ai/ (information track)
+- Perplexity: https://www.perplexity.ai/settings/api (information track)
+- Vericore: https://vericore.ai (information track)
+- OpenRouter: https://openrouter.ai/settings/keys (information track)
 
 **⚠️ OpenAI Security Recommendation:**
 
