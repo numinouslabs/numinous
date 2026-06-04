@@ -31,6 +31,7 @@ All events are currently 3 days events. The length of the immunity period is 7 d
 - Text editor or IDE
 - `numi` CLI tool (installed via this repo)
 - **Chutes AI API key** (for local testing with LLMs)
+- **Desearch AI API key** (for local testing with web/Twitter search)
 - **OpenAI API key** (for local testing with GPT-5 models)
 - **Perplexity API key** (for local testing with reasoning LLMs)
 - **Vericore API key** (for local testing with statement verification)

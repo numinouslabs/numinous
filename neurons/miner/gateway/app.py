@@ -417,12 +417,7 @@ async def vericore_calculate_rating(
     return models.GatewayVericoreResponse(**result.model_dump(), cost=calculate_vericore_cost())
 
 
-@gateway_router.post(
-    "/openrouter/chat/completions", response_model=models.GatewayOpenRouterCompletion
-)
-@cached_gateway_call
-@handle_provider_errors("OpenRouter")
-async def openrouter_chat_completion(
+async def _run_openrouter_request(
     request: models.OpenRouterInferenceRequest,
 ) -> models.GatewayOpenRouterCompletion:
     api_key = os.getenv("OPENROUTER_API_KEY")
@@ -447,6 +442,65 @@ async def openrouter_chat_completion(
     return models.GatewayOpenRouterCompletion(
         **result.model_dump(), cost=calculate_openrouter_cost(result)
     )
+
+
+@gateway_router.post(
+    "/openrouter/chat/completions", response_model=models.GatewayOpenRouterCompletion
+)
+@cached_gateway_call
+@handle_provider_errors("OpenRouter")
+async def openrouter_chat_completion(
+    request: models.OpenRouterInferenceRequest,
+) -> models.GatewayOpenRouterCompletion:
+    return await _run_openrouter_request(request)
+
+
+_OPENROUTER_WEB_SEARCH_MODEL_SUFFIX = ":online"
+
+
+def _reject_openrouter_builtin_tools(request: models.OpenRouterInferenceRequest) -> None:
+    if request.model.endswith(_OPENROUTER_WEB_SEARCH_MODEL_SUFFIX):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"The '{_OPENROUTER_WEB_SEARCH_MODEL_SUFFIX}' model suffix enables web search "
+                f"and is not supported on this endpoint."
+            ),
+        )
+
+    if (request.model_extra or {}).get("plugins"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "The 'plugins' field is not supported on this endpoint; "
+                "only custom function tools are allowed."
+            ),
+        )
+
+    if request.tools:
+        builtin_tools = [
+            tool.get("type") for tool in request.tools if tool.get("type") != "function"
+        ]
+        if builtin_tools:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Only custom function tools are supported on this endpoint. "
+                    f"Disallowed built-in tools: {builtin_tools}"
+                ),
+            )
+
+
+@gateway_router.post(
+    "/openrouter/chat/completions/inference", response_model=models.GatewayOpenRouterCompletion
+)
+@cached_gateway_call
+@handle_provider_errors("OpenRouter")
+async def openrouter_chat_completion_inference(
+    request: models.OpenRouterInferenceRequest,
+) -> models.GatewayOpenRouterCompletion:
+    _reject_openrouter_builtin_tools(request)
+    return await _run_openrouter_request(request)
 
 
 @gateway_router.post(
@@ -788,4 +842,5 @@ app.include_router(gateway_router)
 if __name__ == "__main__":
     import uvicorn
 
+    uvicorn.run(app, host="0.0.0.0", port=8000)
     uvicorn.run(app, host="0.0.0.0", port=8000)

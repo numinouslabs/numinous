@@ -40,6 +40,7 @@ class TestGatewayApp:
         assert "/api/gateway/perplexity/chat/completions" in routes
         assert "/api/gateway/vericore/calculate-rating" in routes
         assert "/api/gateway/openrouter/chat/completions" in routes
+        assert "/api/gateway/openrouter/chat/completions/inference" in routes
 
 
 class TestHealthEndpoint:
@@ -656,6 +657,120 @@ class TestOpenRouterEndpoint:
 
         assert response.status_code == 500
         assert "OpenRouter API error" in response.json()["detail"]
+
+
+class TestOpenRouterInferenceEndpoint:
+    _INFERENCE_PATH = "/api/gateway/openrouter/chat/completions/inference"
+
+    @staticmethod
+    def _mock_response() -> OpenRouterCompletion:
+        return OpenRouterCompletion(
+            id="gen-abc123",
+            object="chat.completion",
+            created=1709000000,
+            model="anthropic/claude-sonnet-4-6",
+            choices=[
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "Test response"},
+                    "finish_reason": "stop",
+                }
+            ],
+            usage={
+                "prompt_tokens": 50,
+                "completion_tokens": 100,
+                "total_tokens": 150,
+                "cost": 0.00165,
+            },
+        )
+
+    @patch("neurons.miner.gateway.app.OpenRouterClient")
+    @patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"})
+    def test_inference_success(self, mock_client_class, client: TestClient):
+        mock_instance = mock_client_class.return_value
+        mock_instance.chat_completion = AsyncMock(return_value=self._mock_response())
+
+        request_body = {
+            "run_id": str(uuid4()),
+            "model": "anthropic/claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "Hello"}],
+        }
+
+        response = client.post(self._INFERENCE_PATH, json=request_body)
+
+        assert response.status_code == 200
+        result = response.json()
+        assert result["id"] == "gen-abc123"
+        assert "cost" in result
+
+    @patch("neurons.miner.gateway.app.OpenRouterClient")
+    @patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"})
+    def test_inference_accepts_custom_function_tool(self, mock_client_class, client: TestClient):
+        mock_instance = mock_client_class.return_value
+        mock_instance.chat_completion = AsyncMock(return_value=self._mock_response())
+
+        request_body = {
+            "run_id": str(uuid4()),
+            "model": "anthropic/claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "What's the weather?"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "description": "Get weather",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ],
+        }
+
+        response = client.post(self._INFERENCE_PATH, json=request_body)
+
+        assert response.status_code == 200
+        assert "cost" in response.json()
+
+    @pytest.mark.parametrize(
+        "bypass,expected_detail",
+        [
+            ({"model": "anthropic/claude-sonnet-4-6:online"}, ":online"),
+            ({"tools": [{"type": "openrouter:web_search"}]}, "openrouter:web_search"),
+            ({"plugins": [{"id": "web"}]}, "plugins"),
+        ],
+    )
+    @patch("neurons.miner.gateway.app.OpenRouterClient")
+    @patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"})
+    def test_inference_rejects_builtin_provider_tools(
+        self, mock_client_class, bypass, expected_detail, client: TestClient
+    ):
+        mock_instance = mock_client_class.return_value
+        mock_instance.chat_completion = AsyncMock()
+
+        request_body = {
+            "run_id": str(uuid4()),
+            "model": "anthropic/claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "Hello"}],
+            **bypass,
+        }
+
+        response = client.post(self._INFERENCE_PATH, json=request_body)
+
+        assert response.status_code == 400
+        assert expected_detail in response.json()["detail"]
+        mock_instance.chat_completion.assert_not_called()
+
+    @patch.dict("os.environ", {"OPENROUTER_API_KEY": ""})
+    def test_inference_missing_api_key(self, client: TestClient):
+        request_body = {
+            "run_id": str(uuid4()),
+            "model": "anthropic/claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "Test"}],
+        }
+
+        response = client.post(self._INFERENCE_PATH, json=request_body)
+
+        assert response.status_code == 401
+        assert "OPENROUTER_API_KEY not configured" in response.json()["detail"]
 
 
 class TestRequestValidation:
