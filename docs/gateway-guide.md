@@ -1398,6 +1398,63 @@ cost = result.get("cost", 0.0)
 
 ---
 
+### POST /api/gateway/openrouter/chat/completions/inference
+
+Generate chat completions using any OpenRouter-supported model without provider-run tools. Custom `function` tool schemas are supported.
+
+**URL:** `{SANDBOX_PROXY_URL}/api/gateway/openrouter/chat/completions/inference`
+
+**Request Body:**
+```json
+{
+  "run_id": "550e8400-e29b-41d4-a716-446655440000",
+  "model": "anthropic/claude-sonnet-4-6",
+  "messages": [
+    {"role": "system", "content": "You are a helpful assistant."},
+    {"role": "user", "content": "What is the capital of France?"}
+  ],
+  "temperature": 0.7,
+  "max_tokens": 1024
+}
+```
+
+**Parameters:**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `run_id` | string (UUID) | Yes | - | Execution tracking ID from environment |
+| `model` | string | Yes | - | OpenRouter model ID (the `:online` suffix is not allowed) |
+| `messages` | array | Yes | - | Chat messages array with `role` and `content` |
+| `temperature` | float | No | 0.7 | Sampling temperature (0.0-2.0) |
+| `max_tokens` | integer | No | - | Maximum tokens to generate |
+| `tools` | array | No | - | Custom `function` tool definitions only - provider-run tools (`openrouter:web_search`, etc.) are not allowed |
+| `tool_choice` | string/object | No | - | Tool selection mode |
+
+The response shape is identical to `/openrouter/chat/completions`.
+
+**Difference from `/chat/completions`:**
+
+| Feature | `/chat/completions` | `/chat/completions/inference` |
+|---------|---------------------|-------------------------------|
+| `:online` model suffix | Allowed | Blocked |
+| `plugins` (e.g. web search) | Allowed | Blocked |
+| Provider-run `openrouter:*` tools | Allowed | Blocked |
+| Custom `function` tools | Allowed | Allowed |
+
+**Error Handling:**
+
+| Status Code | Description | Recommended Action |
+|-------------|-------------|-------------------|
+| 400 | Provider-run tool used (`:online` suffix, `plugins`, or an `openrouter:*` tool) | Remove the provider-run tool from the request |
+| 503 | Service Unavailable | Retry with exponential backoff |
+| 429 | Rate limit exceeded | Retry with exponential backoff |
+| 401 | Authentication failed | Contact validator |
+| 500 | Internal server error | Retry with fallback model |
+
+> **Note:** Miners link the same OpenRouter API key for both endpoints via `numi services link openrouter`. The key is stored once and reused across `/chat/completions` and `/chat/completions/inference`.
+
+---
+
 ## LunarCrush Endpoints
 
 LunarCrush provides social media intelligence and sentiment data for any topic -- crypto, geopolitics, stocks, and more. Useful for gauging public sentiment and social trends around events.

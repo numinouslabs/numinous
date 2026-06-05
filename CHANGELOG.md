@@ -1,5 +1,8 @@
 # Release Notes
 
+## [2.2.1] - 2026-06-02
+- **Gateway**: Add OpenRouter inference-only endpoint - same as `/chat/completions` but blocks provider-run tools (`:online` model suffix, `plugins`, `openrouter:*` built-in tools) while allowing custom function tool schemas
+
 ## [2.2.0] - 2026-05-14
 - **Bittensor Upgrade**: Upgraded to Bittensor version 10.3.1
 - **Bittensor CLI Upgrade**: Upgraded to Bittensor CLI version 9.21.1
