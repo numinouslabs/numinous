@@ -914,7 +914,7 @@ numi services link numinous-signals
 You'll be prompted for:
 - Your Numinous Signals API key (get from https://eversight.numinouslabs.io/api-keys)
 
-**Note:** Numinous Signals has no free tier. You must link your Eversight account. Uses your Eversight credits.
+**Note:** Numinous Signals has no free tier. You must link your Eversight account. Uses your Eversight credits. The same link also unlocks the causal-drivers, deep-research, and corpus search/fetch endpoints (all free, but authentication is required). See the [gateway guide](gateway-guide.md#numinous-signals-endpoints) for the full endpoint list.
 
 ### Unusual Whales (News Headlines)
 

@@ -1,7 +1,12 @@
+from datetime import datetime
+from uuid import UUID
+
 import aiohttp
 
 from neurons.validator.models.numinous_signals import (
     CausalDriversResponse,
+    CorpusFetchResponse,
+    CorpusSearchResponse,
     DeepResearchReportResponse,
     SignalsResponse,
 )
@@ -90,3 +95,31 @@ class NuminousSignalsClient:
                 response.raise_for_status()
                 data = await response.json()
                 return DeepResearchReportResponse.model_validate(data)
+
+    async def search_corpus(
+        self,
+        query: str,
+        max_results: int = 10,
+        published_after: datetime | None = None,
+        published_before: datetime | None = None,
+    ) -> CorpusSearchResponse:
+        body: dict = {"query": query, "max_results": max_results}
+        if published_after is not None:
+            body["published_after"] = published_after.isoformat()
+        if published_before is not None:
+            body["published_before"] = published_before.isoformat()
+
+        url = f"{self.__base_url}/api/v1/corpus/search"
+        async with aiohttp.ClientSession(timeout=self.__timeout, headers=self.__headers) as session:
+            async with session.post(url, json=body) as response:
+                response.raise_for_status()
+                data = await response.json()
+                return CorpusSearchResponse.model_validate(data)
+
+    async def fetch_corpus_source(self, source_id: UUID) -> CorpusFetchResponse:
+        url = f"{self.__base_url}/api/v1/corpus/fetch/{source_id}"
+        async with aiohttp.ClientSession(timeout=self.__timeout, headers=self.__headers) as session:
+            async with session.get(url) as response:
+                response.raise_for_status()
+                data = await response.json()
+                return CorpusFetchResponse.model_validate(data)

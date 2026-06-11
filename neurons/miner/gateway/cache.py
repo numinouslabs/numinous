@@ -37,7 +37,7 @@ def generate_request_hash(endpoint: str, request_payload: dict) -> str:
 def cached_gateway_call(func: typing.Callable[..., T]) -> typing.Callable[..., T]:
     @wraps(func)
     async def wrapper(request: BaseModel, *args: typing.Any, **kwargs: typing.Any) -> T:
-        request_payload = request.model_dump(exclude_none=True, exclude=("run_id",))
+        request_payload = request.model_dump(mode="json", exclude_none=True, exclude=("run_id",))
         request_hash = generate_request_hash(func.__name__, request_payload)
 
         with _cache_lock:

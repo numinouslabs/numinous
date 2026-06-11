@@ -449,6 +449,7 @@ def _fetch_linked_services(env: str, keypair) -> Optional[typing.List[dict]]:
 
 
 def _unlink_service(env: str, keypair, service_name: str, track: str) -> bool:
+    service_name = service_name.replace("-", "_")
     api_url = ENV_URLS[env]
     timestamp = int(time.time())
     payload = f"{keypair.ss58_address}:{timestamp}"

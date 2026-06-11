@@ -15,6 +15,11 @@ from neurons.validator.models.desearch import (
     XPostSummary,
     XUser,
 )
+from neurons.validator.models.numinous_signals import (
+    CorpusFetchResponse,
+    CorpusSearchResponse,
+    CorpusSearchResult,
+)
 from neurons.validator.models.openrouter import OpenRouterCompletion
 
 
@@ -41,6 +46,8 @@ class TestGatewayApp:
         assert "/api/gateway/vericore/calculate-rating" in routes
         assert "/api/gateway/openrouter/chat/completions" in routes
         assert "/api/gateway/openrouter/chat/completions/inference" in routes
+        assert "/api/gateway/numinous-signals/corpus/search" in routes
+        assert "/api/gateway/numinous-signals/corpus/fetch" in routes
 
 
 class TestHealthEndpoint:
@@ -785,5 +792,94 @@ class TestRequestValidation:
         request_body = {}
 
         response = client.post("/api/gateway/desearch/ai/search", json=request_body)
+
+        assert response.status_code == 422
+
+
+class TestNuminousCorpusEndpoints:
+    @patch("neurons.miner.gateway.app.NuminousSignalsClient")
+    @patch.dict("os.environ", {"NUMINOUS_SIGNALS_API_KEY": "test-key"})
+    def test_corpus_search_success(self, mock_client_class, client: TestClient):
+        source_id = uuid4()
+        mock_response = CorpusSearchResponse(
+            results=[
+                CorpusSearchResult(
+                    source_id=source_id,
+                    url="https://example.com/article",
+                    title="Carrier group repositions",
+                    snippet="...the carrier strike group was observed moving...",
+                )
+            ]
+        )
+
+        mock_instance = mock_client_class.return_value
+        mock_instance.search_corpus = AsyncMock(return_value=mock_response)
+
+        request_body = {
+            "run_id": str(uuid4()),
+            "query": "carrier group movement",
+            "max_results": 10,
+        }
+
+        response = client.post("/api/gateway/numinous-signals/corpus/search", json=request_body)
+
+        assert response.status_code == 200
+        result = response.json()
+        assert result["cost"] == 0.0
+        assert len(result["results"]) == 1
+        assert result["results"][0]["source_id"] == str(source_id)
+        assert result["results"][0]["snippet"].startswith("...the carrier")
+
+    @patch.dict("os.environ", {"NUMINOUS_SIGNALS_API_KEY": ""})
+    def test_corpus_search_missing_api_key(self, client: TestClient):
+        request_body = {"run_id": str(uuid4()), "query": "anything"}
+
+        response = client.post("/api/gateway/numinous-signals/corpus/search", json=request_body)
+
+        assert response.status_code == 401
+        assert "NUMINOUS_SIGNALS_API_KEY not configured" in response.json()["detail"]
+
+    def test_corpus_search_invalid_request_body(self, client: TestClient):
+        response = client.post("/api/gateway/numinous-signals/corpus/search", json={})
+
+        assert response.status_code == 422
+
+    @patch("neurons.miner.gateway.app.NuminousSignalsClient")
+    @patch.dict("os.environ", {"NUMINOUS_SIGNALS_API_KEY": "test-key"})
+    def test_corpus_fetch_success(self, mock_client_class, client: TestClient):
+        source_id = uuid4()
+        mock_response = CorpusFetchResponse(
+            source_id=source_id,
+            url="https://example.com/article",
+            title="Carrier group repositions",
+            content="Full scraped article text...",
+        )
+
+        mock_instance = mock_client_class.return_value
+        mock_instance.fetch_corpus_source = AsyncMock(return_value=mock_response)
+
+        request_body = {"run_id": str(uuid4()), "source_id": str(source_id)}
+
+        response = client.post("/api/gateway/numinous-signals/corpus/fetch", json=request_body)
+
+        assert response.status_code == 200
+        result = response.json()
+        assert result["cost"] == 0.0
+        assert result["source_id"] == str(source_id)
+        assert result["content"] == "Full scraped article text..."
+
+    @patch.dict("os.environ", {"NUMINOUS_SIGNALS_API_KEY": ""})
+    def test_corpus_fetch_missing_api_key(self, client: TestClient):
+        request_body = {"run_id": str(uuid4()), "source_id": str(uuid4())}
+
+        response = client.post("/api/gateway/numinous-signals/corpus/fetch", json=request_body)
+
+        assert response.status_code == 401
+        assert "NUMINOUS_SIGNALS_API_KEY not configured" in response.json()["detail"]
+
+    def test_corpus_fetch_invalid_source_id(self, client: TestClient):
+        request_body = {"run_id": str(uuid4()), "source_id": "not-a-uuid"}
+
+        response = client.post("/api/gateway/numinous-signals/corpus/fetch", json=request_body)
 
         assert response.status_code == 422
