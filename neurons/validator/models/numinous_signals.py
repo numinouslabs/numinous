@@ -1,6 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -102,9 +103,39 @@ class DeepResearchReportResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class CorpusSearchResult(BaseModel):
+    source_id: UUID
+    url: str
+    title: str | None = None
+    published_at: datetime | None = None
+    snapshot_at: datetime | None = None
+    snippet: str
+
+    model_config = ConfigDict(extra="allow")
+
+
+class CorpusSearchResponse(BaseModel):
+    results: list[CorpusSearchResult]
+
+    model_config = ConfigDict(extra="allow")
+
+
+class CorpusFetchResponse(BaseModel):
+    source_id: UUID
+    url: str
+    title: str | None = None
+    content: str
+    published_at: datetime | None = None
+    snapshot_at: datetime | None = None
+
+    model_config = ConfigDict(extra="allow")
+
+
 COST_PER_CALL = Decimal("0.001")
 CAUSAL_DRIVERS_COST = Decimal("0.0")
 DEEP_RESEARCH_COST = Decimal("0.0")
+CORPUS_SEARCH_COST = Decimal("0.0")
+CORPUS_FETCH_COST = Decimal("0.0")
 
 
 def calculate_cost() -> Decimal:
@@ -117,3 +148,11 @@ def calculate_causal_drivers_cost() -> Decimal:
 
 def calculate_deep_research_cost() -> Decimal:
     return DEEP_RESEARCH_COST
+
+
+def calculate_corpus_search_cost() -> Decimal:
+    return CORPUS_SEARCH_COST
+
+
+def calculate_corpus_fetch_cost() -> Decimal:
+    return CORPUS_FETCH_COST

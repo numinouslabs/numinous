@@ -15,7 +15,7 @@ The Gateway API provides miner agents with access to external services during sa
 - **OpenRouter**: Model router with access to hundreds of LLM models (Claude, Gemini, Llama, etc.)
 - **LunarCrush**: Social media intelligence and sentiment data for any topic
 - **Numinous Indicia**: Geopolitical and OSINT signals intelligence (X/Twitter, LiveUAMap)
-- **Numinous Signals**: Event-relevant news signals scored by relevance and impact, causal driver graphs, and deep research reports
+- **Numinous Signals**: Event-relevant news signals scored by relevance and impact, causal driver graphs, deep research reports, and semantic search/fetch over the research corpus
 - **Unusual Whales**: Financial news headlines with filtering by source, ticker, and sentiment
 - **Public Data Proxy**: Generic proxy any number of free public APIs across sports, economics, weather, finance, and more. No cost. Run `numi services sources` to see what's available. See [Public Data Proxy](#public-data-proxy) below.
 
@@ -2148,6 +2148,161 @@ else:
 ```
 
 **Note:** Deep research requires linking your Eversight API key (same as Numinous Signals). The endpoint is free ($0.00 per call) but authentication is required. Reports are precomputed and cover recent storylines (up to 7 days old). If `matched_via` is `"none"`, no report was found for the given event.
+
+### POST /api/gateway/numinous-signals/corpus/search
+
+Search the Numinous research corpus — a curated, time-stamped archive of sources (news, analysis, primary documents) captured at discovery and indexed for relevance-ranked search. Returns the most relevant sources for a free-text query, each with a snippet. Use the `source_id` from a result to pull the full content via the `corpus/fetch` endpoint.
+
+**URL:** `{SANDBOX_PROXY_URL}/api/gateway/numinous-signals/corpus/search`
+
+**Request Body:**
+```json
+{
+  "run_id": "550e8400-e29b-41d4-a716-446655440000",
+  "query": "US strike on Venezuela military buildup",
+  "max_results": 10
+}
+```
+
+**Parameters:**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `run_id` | string (UUID) | Yes | - | Execution tracking ID from environment |
+| `query` | string | Yes | - | Free-text search query over the corpus |
+| `max_results` | integer | No | 10 | Number of results to return (min 5, max 25) |
+| `published_after` | string (ISO datetime) | No | - | Only return sources published at or after this time |
+| `published_before` | string (ISO datetime) | No | - | Only return sources published at or before this time |
+
+**Response:**
+```json
+{
+  "results": [
+    {
+      "source_id": "b1e4a94c-0dbb-4ac5-82cd-6a5928a6aa94",
+      "url": "https://example.com/article",
+      "title": "Tensions rise as carrier group repositions",
+      "published_at": "2026-05-30T14:00:00Z",
+      "snapshot_at": "2026-05-30T15:12:00Z",
+      "snippet": "...the carrier strike group was observed moving toward..."
+    }
+  ],
+  "cost": 0.0
+}
+```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `results` | array | Matching corpus sources, most relevant first |
+| `results[].source_id` | string (UUID) | Stable ID for the source — pass to `corpus/fetch` to read full content |
+| `results[].url` | string | Original source URL |
+| `results[].title` | string | Source title (may be null) |
+| `results[].published_at` | string | When the source was originally published (may be null) |
+| `results[].snapshot_at` | string | When this snapshot of the source was captured into the corpus (may be null) |
+| `results[].snippet` | string | Short excerpt matching the query |
+| `cost` | float | Cost for this request ($0.00 — free) |
+
+**Example (using httpx):**
+```python
+import os
+import httpx
+
+PROXY_URL = os.getenv("SANDBOX_PROXY_URL")
+RUN_ID = os.getenv("RUN_ID")
+
+SIGNALS_URL = f"{PROXY_URL}/api/gateway/numinous-signals"
+
+response = httpx.post(
+    f"{SIGNALS_URL}/corpus/search",
+    json={
+        "run_id": RUN_ID,
+        "query": "US strike on Venezuela military buildup",
+        "max_results": 10,
+    },
+    timeout=30.0,
+)
+
+data = response.json()
+for result in data["results"]:
+    print(f"{result['title']} ({result['source_id']})")
+    print(result["snippet"])
+```
+
+**Note:** Corpus search requires linking your Eversight API key (same as Numinous Signals). The endpoint is free ($0.00 per call) but authentication is required.
+
+### POST /api/gateway/numinous-signals/corpus/fetch
+
+Fetch the full content of a single corpus source by its `source_id` (obtained from `corpus/search`). Returns the full captured content of the source plus metadata.
+
+**URL:** `{SANDBOX_PROXY_URL}/api/gateway/numinous-signals/corpus/fetch`
+
+**Request Body:**
+```json
+{
+  "run_id": "550e8400-e29b-41d4-a716-446655440000",
+  "source_id": "b1e4a94c-0dbb-4ac5-82cd-6a5928a6aa94"
+}
+```
+
+**Parameters:**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `run_id` | string (UUID) | Yes | - | Execution tracking ID from environment |
+| `source_id` | string (UUID) | Yes | - | Corpus source ID to fetch (from a `corpus/search` result) |
+
+**Response:**
+```json
+{
+  "source_id": "b1e4a94c-0dbb-4ac5-82cd-6a5928a6aa94",
+  "url": "https://example.com/article",
+  "title": "Tensions rise as carrier group repositions",
+  "content": "Full captured article text...",
+  "published_at": "2026-05-30T14:00:00Z",
+  "snapshot_at": "2026-05-30T15:12:00Z",
+  "cost": 0.0
+}
+```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `source_id` | string (UUID) | The requested source ID |
+| `url` | string | Original source URL |
+| `title` | string | Source title (may be null) |
+| `content` | string | Full captured content of the source |
+| `published_at` | string | When the source was originally published (may be null) |
+| `snapshot_at` | string | When this snapshot of the source was captured into the corpus (may be null) |
+| `cost` | float | Cost for this request ($0.00 — free) |
+
+**Example (using httpx):**
+```python
+import os
+import httpx
+
+PROXY_URL = os.getenv("SANDBOX_PROXY_URL")
+RUN_ID = os.getenv("RUN_ID")
+
+SIGNALS_URL = f"{PROXY_URL}/api/gateway/numinous-signals"
+
+response = httpx.post(
+    f"{SIGNALS_URL}/corpus/fetch",
+    json={
+        "run_id": RUN_ID,
+        "source_id": "b1e4a94c-0dbb-4ac5-82cd-6a5928a6aa94",
+    },
+    timeout=30.0,
+)
+
+data = response.json()
+print(data["title"])
+print(data["content"])
+```
+
+**Note:** Corpus fetch requires linking your Eversight API key (same as Numinous Signals). The endpoint is free ($0.00 per call) but authentication is required. A `404` is returned if the `source_id` does not exist in the corpus.
 
 ---
 

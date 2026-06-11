@@ -30,6 +30,8 @@ from neurons.validator.models.lunar_crush import (
 from neurons.validator.models.numinous_indicia import IndiciaSignalsResponse
 from neurons.validator.models.numinous_signals import (
     CausalDriversResponse,
+    CorpusFetchResponse,
+    CorpusSearchResponse,
     DeepResearchReportResponse,
     SignalsResponse,
 )
@@ -594,6 +596,29 @@ class DeepResearchReportRequest(GatewayCall):
 
 
 class GatewayDeepResearchReportResponse(DeepResearchReportResponse, GatewayCallResponse):
+    pass
+
+
+class CorpusSearchRequest(GatewayCall):
+    query: str = Field(..., description="Free-text search query over the corpus")
+    max_results: int = Field(10, ge=5, le=25, description="Number of results to return")
+    published_after: typing.Optional[datetime] = Field(
+        None, description="Only return sources published at or after this time"
+    )
+    published_before: typing.Optional[datetime] = Field(
+        None, description="Only return sources published at or before this time"
+    )
+
+
+class GatewayCorpusSearchResponse(CorpusSearchResponse, GatewayCallResponse):
+    pass
+
+
+class CorpusFetchRequest(GatewayCall):
+    source_id: UUID = Field(..., description="Corpus source ID to fetch the full snapshot for")
+
+
+class GatewayCorpusFetchResponse(CorpusFetchResponse, GatewayCallResponse):
     pass
 
 

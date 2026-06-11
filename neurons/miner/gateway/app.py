@@ -36,7 +36,11 @@ from neurons.validator.models.lunar_crush import calculate_cost as calculate_lun
 from neurons.validator.models.numinous_indicia import (
     calculate_cost as calculate_numinous_indicia_cost,
 )
-from neurons.validator.models.numinous_signals import calculate_causal_drivers_cost
+from neurons.validator.models.numinous_signals import (
+    calculate_causal_drivers_cost,
+    calculate_corpus_fetch_cost,
+    calculate_corpus_search_cost,
+)
 from neurons.validator.models.numinous_signals import (
     calculate_cost as calculate_numinous_signals_cost,
 )
@@ -768,6 +772,59 @@ async def numinous_signals_deep_research(
 
     return models.GatewayDeepResearchReportResponse(
         **result.model_dump(), cost=float(calculate_deep_research_cost())
+    )
+
+
+@gateway_router.post(
+    "/numinous-signals/corpus/search",
+    response_model=models.GatewayCorpusSearchResponse,
+)
+@cached_gateway_call
+@handle_provider_errors("NuminousSignals")
+async def numinous_signals_corpus_search(
+    request: models.CorpusSearchRequest,
+) -> models.GatewayCorpusSearchResponse:
+    api_key = os.getenv("NUMINOUS_SIGNALS_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="NUMINOUS_SIGNALS_API_KEY not configured",
+        )
+
+    client = NuminousSignalsClient(api_key=api_key)
+    result = await client.search_corpus(
+        query=request.query,
+        max_results=request.max_results,
+        published_after=request.published_after,
+        published_before=request.published_before,
+    )
+
+    return models.GatewayCorpusSearchResponse(
+        **result.model_dump(), cost=float(calculate_corpus_search_cost())
+    )
+
+
+@gateway_router.post(
+    "/numinous-signals/corpus/fetch",
+    response_model=models.GatewayCorpusFetchResponse,
+)
+@cached_gateway_call
+@handle_provider_errors("NuminousSignals")
+async def numinous_signals_corpus_fetch(
+    request: models.CorpusFetchRequest,
+) -> models.GatewayCorpusFetchResponse:
+    api_key = os.getenv("NUMINOUS_SIGNALS_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="NUMINOUS_SIGNALS_API_KEY not configured",
+        )
+
+    client = NuminousSignalsClient(api_key=api_key)
+    result = await client.fetch_corpus_source(request.source_id)
+
+    return models.GatewayCorpusFetchResponse(
+        **result.model_dump(), cost=float(calculate_corpus_fetch_cost())
     )
 
 
