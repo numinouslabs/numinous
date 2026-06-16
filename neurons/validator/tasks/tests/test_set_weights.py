@@ -7,7 +7,9 @@ import aiohttp
 import numpy as np
 import pandas as pd
 import pytest
+from async_substrate_interface.errors import SubstrateRequestException
 from bittensor import AsyncSubtensor
+from bittensor.core.config import Config
 from bittensor.core.types import ExtrinsicResponse
 from bittensor_wallet import Wallet
 from freezegun import freeze_time
@@ -44,11 +46,7 @@ class TestSetWeights:
         return bt_wallet
 
     @pytest.fixture
-    def set_weights_task(
-        self,
-        db_operations: DatabaseOperations,
-        bt_wallet: Wallet,
-    ):
+    def mock_subtensor(self):
         metagraph = MagicMock(spec=IfMetagraph)
 
         # Mock metagraph attributes
@@ -57,15 +55,32 @@ class TestSetWeights:
         metagraph.n = np.array(3, dtype=np.int64)
 
         # Mock subtensor methods
-        subtensor_cm = AsyncMock(spec=AsyncSubtensor)
+        subtensor = AsyncMock(spec=AsyncSubtensor)
 
-        subtensor_cm.metagraph = AsyncMock(return_value=metagraph)
-        subtensor_cm.min_allowed_weights.return_value = 1  # Set minimum allowed weights
-        subtensor_cm.max_weight_limit.return_value = 10  # Set maximum weight limit
-        subtensor_cm.weights_rate_limit = AsyncMock(return_value=100)  # Set weights rate limit
+        subtensor.metagraph = AsyncMock(return_value=metagraph)
+        subtensor.min_allowed_weights.return_value = 1  # Set minimum allowed weights
+        subtensor.max_weight_limit.return_value = 10  # Set maximum weight limit
+        subtensor.weights_rate_limit = AsyncMock(return_value=100)  # Set weights rate limit
 
-        subtensor_cm.__aenter__ = AsyncMock(return_value=subtensor_cm)
-        subtensor_cm.__aexit__ = AsyncMock(return_value=False)
+        subtensor.__aenter__ = AsyncMock(return_value=subtensor)
+        subtensor.__aexit__ = AsyncMock(return_value=False)
+
+        return subtensor
+
+    @pytest.fixture
+    def set_weights_task(
+        self,
+        db_operations: DatabaseOperations,
+        bt_wallet: Wallet,
+        mock_subtensor: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        # run() builds a fresh AsyncSubtensor(config=...) each tick; patch the constructor so it
+        # returns our mock connection instead of opening a real websocket.
+        monkeypatch.setattr(
+            "neurons.validator.tasks.set_weights.AsyncSubtensor",
+            MagicMock(return_value=mock_subtensor),
+        )
 
         api_client = MagicMock(spec=NuminousClient)
 
@@ -77,7 +92,7 @@ class TestSetWeights:
                 db_operations=db_operations,
                 logger=logger,
                 netuid=155,
-                subtensor=subtensor_cm,
+                config=MagicMock(spec=Config),
                 wallet=bt_wallet,
                 api_client=api_client,
             )
@@ -91,7 +106,7 @@ class TestSetWeights:
         assert unit.db_operations is not None
         assert unit.logger is not None
         assert unit.netuid == 155
-        assert unit.subtensor_cm is not None
+        assert unit.config is not None
         assert unit.wallet is not None
         assert unit.api_client is not None
 
@@ -125,9 +140,11 @@ class TestSetWeights:
             (101 * BLOCK_DURATION, True),
         ],
     )
-    async def test_time_to_set_weights(self, set_weights_task: SetWeights, delta, expected):
+    async def test_time_to_set_weights(
+        self, set_weights_task: SetWeights, mock_subtensor: AsyncMock, delta, expected
+    ):
         # Set internal instances
-        async with set_weights_task.subtensor_cm as st:
+        async with mock_subtensor as st:
             set_weights_task.subtensor = st
 
         now = time.time()
@@ -137,9 +154,11 @@ class TestSetWeights:
 
         assert result is expected
 
-    async def test_merge_weights_with_metagraph(self, set_weights_task: SetWeights):
+    async def test_merge_weights_with_metagraph(
+        self, set_weights_task: SetWeights, mock_subtensor: AsyncMock
+    ):
         # Set internal instances
-        async with set_weights_task.subtensor_cm as st:
+        async with mock_subtensor as st:
             set_weights_task.subtensor = st
             set_weights_task.metagraph = await st.metagraph(
                 netuid=set_weights_task.netuid, lite=True
@@ -229,9 +248,11 @@ class TestSetWeights:
             ),
         ],
     )
-    async def test_check_scores_insanity(self, set_weights_task: SetWeights, data, raises):
+    async def test_check_scores_insanity(
+        self, set_weights_task: SetWeights, mock_subtensor: AsyncMock, data, raises
+    ):
         # Set internal instances
-        async with set_weights_task.subtensor_cm as st:
+        async with mock_subtensor as st:
             set_weights_task.subtensor = st
             set_weights_task.metagraph = await st.metagraph(
                 netuid=set_weights_task.netuid, lite=True
@@ -274,9 +295,11 @@ class TestSetWeights:
         )
         assert set_weights_task.logger.debug.call_args[1]["extra"]["sum_scores"] == total
 
-    async def test_preprocess_weights_success(self, set_weights_task: SetWeights, monkeypatch):
+    async def test_preprocess_weights_success(
+        self, set_weights_task: SetWeights, mock_subtensor: AsyncMock, monkeypatch
+    ):
         # Set internal instances
-        async with set_weights_task.subtensor_cm as st:
+        async with mock_subtensor as st:
             set_weights_task.subtensor = st
             set_weights_task.metagraph = await st.metagraph(
                 netuid=set_weights_task.netuid, lite=True
@@ -295,9 +318,11 @@ class TestSetWeights:
         np.testing.assert_allclose(weights, np.array(data[SWNames.raw_weights], dtype=np.float32))
         np.testing.assert_array_equal(uids, np.array(data[SWNames.miner_uid], dtype=np.int64))
 
-    async def test_preprocess_weights_edge_cases(self, set_weights_task, monkeypatch):
+    async def test_preprocess_weights_edge_cases(
+        self, set_weights_task, mock_subtensor: AsyncMock, monkeypatch
+    ):
         # Set internal instances
-        async with set_weights_task.subtensor_cm as st:
+        async with mock_subtensor as st:
             set_weights_task.subtensor = st
             set_weights_task.metagraph = await st.metagraph(
                 netuid=set_weights_task.netuid, lite=True
@@ -498,7 +523,9 @@ class TestSetWeights:
         assert result[1].miner_hotkey == "hk2"
         assert result[1].metagraph_score == 0.4
 
-    async def test_run_successful_x(self, set_weights_task: SetWeights, monkeypatch, db_client):
+    async def test_run_successful_x(
+        self, set_weights_task: SetWeights, mock_subtensor: AsyncMock, monkeypatch, db_client
+    ):
         unit = set_weights_task
 
         unit.last_set_weights_at = time.time() - 101 * BLOCK_DURATION
@@ -520,10 +547,10 @@ class TestSetWeights:
         metagraph.hotkeys = ["hk0", "hk1", "hk2", "hk3", "hk4"]
         metagraph.n = np.array(5, dtype=np.int64)
 
-        unit.subtensor_cm.set_weights = AsyncMock(
+        mock_subtensor.set_weights = AsyncMock(
             return_value=ExtrinsicResponse(success=True, message="Weights set", error=None)
         )
-        unit.subtensor_cm.metagraph = AsyncMock(return_value=metagraph)
+        mock_subtensor.metagraph = AsyncMock(return_value=metagraph)
 
         unit.api_client.get_weights = AsyncMock(return_value=mock_api_response)
 
@@ -549,20 +576,22 @@ class TestSetWeights:
         assert debug_calls[6][0][0] == "Top 5 and bottom 5 miners by raw_weights"
         assert debug_calls[7][0][0] == "Weights set successfully."
 
-        assert unit.subtensor_cm.set_weights.call_count == 1
-        assert unit.subtensor_cm.set_weights.call_args.kwargs["uids"].tolist() == [3, 4]
+        assert mock_subtensor.set_weights.call_count == 1
+        assert mock_subtensor.set_weights.call_args.kwargs["uids"].tolist() == [3, 4]
         np.testing.assert_allclose(
-            unit.subtensor_cm.set_weights.call_args.kwargs["weights"],
+            mock_subtensor.set_weights.call_args.kwargs["weights"],
             np.array([0.835, 0.165], dtype=np.float32),
             rtol=1e-5,
         )
 
         # Check subtensor and metagraph context manager setup
-        unit.subtensor_cm.__aenter__.assert_awaited_once()
-        unit.subtensor_cm.__aexit__.assert_awaited_once()
-        unit.subtensor_cm.metagraph.assert_awaited_once_with(netuid=unit.netuid, lite=True)
+        mock_subtensor.__aenter__.assert_awaited_once()
+        mock_subtensor.__aexit__.assert_awaited_once()
+        mock_subtensor.metagraph.assert_awaited_once_with(netuid=unit.netuid, lite=True)
 
-    async def test_run_with_api_weights(self, set_weights_task: SetWeights):
+    async def test_run_with_api_weights(
+        self, set_weights_task: SetWeights, mock_subtensor: AsyncMock
+    ):
         unit = set_weights_task
 
         mock_api_response = GetWeightsResponse(
@@ -575,7 +604,7 @@ class TestSetWeights:
             count=3,
         )
 
-        unit.subtensor_cm.set_weights = AsyncMock(
+        mock_subtensor.set_weights = AsyncMock(
             return_value=ExtrinsicResponse(success=True, message="Success", error=None)
         )
 
@@ -584,7 +613,7 @@ class TestSetWeights:
         await unit.run()
 
         unit.api_client.get_weights.assert_called_once()
-        unit.subtensor_cm.set_weights.assert_called_once()
+        mock_subtensor.set_weights.assert_called_once()
 
     async def test_run_raises_http_errors(self, set_weights_task: SetWeights):
         unit = set_weights_task
@@ -600,7 +629,9 @@ class TestSetWeights:
         with pytest.raises(aiohttp.ClientResponseError):
             await unit.run()
 
-    async def test_run_set_weights_timeout(self, set_weights_task: SetWeights):
+    async def test_run_set_weights_timeout(
+        self, set_weights_task: SetWeights, mock_subtensor: AsyncMock
+    ):
         unit = set_weights_task
 
         unit.last_set_weights_at = time.time() - 101 * BLOCK_DURATION
@@ -620,11 +651,117 @@ class TestSetWeights:
 
             return ExtrinsicResponse(success=True, message="Message", error=None)
 
-        unit.subtensor_cm.set_weights = AsyncMock(side_effect=set_weights_mock)
+        mock_subtensor.set_weights = AsyncMock(side_effect=set_weights_mock)
 
         unit.timeout_seconds = 0.01
 
         with pytest.raises(asyncio.TimeoutError):
             await unit.run()
 
-        unit.subtensor_cm.__aexit__.assert_awaited_once()
+        mock_subtensor.__aexit__.assert_awaited_once()
+
+    def _build_connection(self, set_weights_behaviour):
+        metagraph = MagicMock(spec=IfMetagraph)
+        metagraph.uids = np.array([1, 2, 3], dtype=np.int64)
+        metagraph.hotkeys = ["hotkey1", "hotkey2", "hotkey3"]
+        metagraph.n = np.array(3, dtype=np.int64)
+
+        connection = AsyncMock(spec=AsyncSubtensor)
+        connection.metagraph = AsyncMock(return_value=metagraph)
+        connection.min_allowed_weights.return_value = 1
+        connection.max_weight_limit.return_value = 10
+        connection.weights_rate_limit = AsyncMock(return_value=100)
+        connection.__aenter__ = AsyncMock(return_value=connection)
+        connection.__aexit__ = AsyncMock(return_value=False)
+        connection.set_weights = AsyncMock(side_effect=set_weights_behaviour)
+        return connection
+
+    @staticmethod
+    def _weights_api_response() -> GetWeightsResponse:
+        return GetWeightsResponse(
+            aggregated_at=datetime.now(timezone.utc) - timedelta(days=1),
+            weights=[
+                MinerWeight(miner_uid=1, miner_hotkey="hotkey1", aggregated_weight=0.5),
+                MinerWeight(miner_uid=2, miner_hotkey="hotkey2", aggregated_weight=0.5),
+            ],
+            count=2,
+        )
+
+    async def test_run_builds_fresh_subtensor_each_tick(
+        self, set_weights_task: SetWeights, monkeypatch
+    ):
+        unit = set_weights_task
+
+        constructed = []
+
+        def subtensor_factory(config):
+            connection = self._build_connection(
+                lambda **kwargs: ExtrinsicResponse(success=True, message="ok", error=None)
+            )
+            constructed.append(connection)
+            return connection
+
+        monkeypatch.setattr("neurons.validator.tasks.set_weights.AsyncSubtensor", subtensor_factory)
+
+        unit.api_client.get_weights = AsyncMock(return_value=self._weights_api_response())
+
+        unit.last_set_weights_at = time.time() - 101 * BLOCK_DURATION
+        await unit.run()
+
+        unit.last_set_weights_at = time.time() - 101 * BLOCK_DURATION
+        await unit.run()
+
+        # Two ticks -> two distinct connections, neither reused.
+        assert len(constructed) == 2
+        assert constructed[0] is not constructed[1]
+        constructed[0].set_weights.assert_awaited_once()
+        constructed[1].set_weights.assert_awaited_once()
+
+    @pytest.mark.parametrize(
+        "wedge_error",
+        [
+            # Subscription wedge
+            SubstrateRequestException(
+                "Websocket sending exception: Unable to reconnect because there are "
+                "currently open subscriptions."
+            ),
+            # Stale-nonce wedge
+            SubstrateRequestException(
+                "{'code': 1010, 'message': 'Invalid Transaction', 'data': 'Transaction is outdated'}"
+            ),
+        ],
+    )
+    async def test_run_recovers_from_wedged_connection_next_tick(
+        self, set_weights_task: SetWeights, monkeypatch, wedge_error
+    ):
+        unit = set_weights_task
+
+        wedged_connection = self._build_connection(wedge_error)
+        healthy_connection = self._build_connection(
+            lambda **kwargs: ExtrinsicResponse(success=True, message="ok", error=None)
+        )
+
+        connections = iter([wedged_connection, healthy_connection])
+        constructed = []
+
+        def subtensor_factory(config):
+            connection = next(connections)
+            constructed.append(connection)
+            return connection
+
+        monkeypatch.setattr("neurons.validator.tasks.set_weights.AsyncSubtensor", subtensor_factory)
+
+        unit.api_client.get_weights = AsyncMock(return_value=self._weights_api_response())
+
+        # First tick: wedged connection -> extrinsic rejected, error propagates.
+        unit.last_set_weights_at = time.time() - 101 * BLOCK_DURATION
+        with pytest.raises(SubstrateRequestException):
+            await unit.run()
+
+        # Next tick: fresh connection with no inherited state -> recovers automatically.
+        unit.last_set_weights_at = time.time() - 101 * BLOCK_DURATION
+        await unit.run()
+
+        assert constructed == [wedged_connection, healthy_connection]
+        wedged_connection.set_weights.assert_awaited_once()
+        healthy_connection.set_weights.assert_awaited_once()

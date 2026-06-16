@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 from bittensor import AsyncSubtensor
+from bittensor.core.config import Config
 from bittensor.utils.weight_utils import process_weights
 from bittensor_wallet.wallet import Wallet
 
@@ -39,7 +40,7 @@ class SetWeights(AbstractTask):
     db_operations: DatabaseOperations
     logger: NuminousLogger
     netuid: int
-    subtensor_cm: AsyncSubtensor
+    config: Config
     wallet: Wallet
     timeout_seconds: float
 
@@ -49,7 +50,7 @@ class SetWeights(AbstractTask):
         db_operations: DatabaseOperations,
         logger: NuminousLogger,
         netuid: int,
-        subtensor: AsyncSubtensor,
+        config: Config,
         wallet: Wallet,
         api_client: NuminousClient,
         timeout_seconds: float = 60.0 * 15,
@@ -74,7 +75,7 @@ class SetWeights(AbstractTask):
         self.logger = logger
 
         self.netuid = netuid
-        self.subtensor_cm = subtensor
+        self.config = config
         self.wallet = wallet
         self.api_client = api_client
         self.timeout_seconds = timeout_seconds
@@ -380,7 +381,7 @@ class SetWeights(AbstractTask):
 
     async def run(self):
         async with asyncio.timeout(delay=self.timeout_seconds):
-            async with self.subtensor_cm as st:
+            async with AsyncSubtensor(config=self.config) as st:
                 self.subtensor = st
 
                 self.metagraph = await st.metagraph(netuid=self.netuid, lite=True)

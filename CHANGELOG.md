@@ -1,5 +1,8 @@
 # Release Notes
 
+## [2.2.2] - 2026-06-15
+- **Weights**: Open a fresh subtensor connection for each set-weights run. Reusing one connection across ticks let stale per-instance state wedge weight-setting until a restart - leaked websocket finalization subscriptions ("Unable to reconnect ... open subscriptions") and a stale cached nonce ("Transaction is outdated"). A new connection per run inherits neither.
+
 ## [2.2.1] - 2026-06-02
 - **Gateway**: Add OpenRouter inference-only endpoint - same as `/chat/completions` but blocks provider-run tools (`:online` model suffix, `plugins`, `openrouter:*` built-in tools) while allowing custom function tool schemas
 
