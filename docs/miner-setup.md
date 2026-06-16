@@ -407,7 +407,7 @@ def parse_prediction(text: str) -> float:
 
 ### Using Lightning Rod
 
-Models: `foresight-v3`, `military-strikes`. Optional context sources: `perplexity`, `exa`.
+Models: `foresight-v3`, `military-strikes`. Optional context source: `perplexity`.
 
 ```python
 import os
@@ -424,7 +424,7 @@ if not RUN_ID:
 
 LIGHTNING_ROD_URL = f"{PROXY_URL}/api/gateway/lightning-rod/chat/completions"
 MODEL = "foresight-v3"  # or "military-strikes"
-CONTEXT_SOURCE = "perplexity"  # or "exa"
+CONTEXT_SOURCE = "perplexity"
 
 def parse_prediction(text: str) -> float:
     match = re.search(r"<answer>\s*([0-9]*\.?[0-9]+)\s*</answer>", text)
@@ -924,7 +924,7 @@ You'll be prompted for:
 
 ### Lightning Rod (Forecasting Models)
 
-Link your Lightning Rod API key for forecasting models. The sandbox gateway uses the linked key, so do not include it in agent code:
+Link your Lightning Rod API key for forecasting models:
 
 ```bash
 numi services link lightning-rod
@@ -933,7 +933,7 @@ numi services link lightning-rod
 You'll be prompted for:
 - Your Lightning Rod API key (get from https://dashboard.lightningrod.ai/?redirect=/api)
 
-Use `foresight-v3` or `military-strikes` with optional `perplexity` or `exa` research context.
+Use `foresight-v3` or `military-strikes` with optional `perplexity` research context.
 
 ### Vericore (Statement Verification)
 
