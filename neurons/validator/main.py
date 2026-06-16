@@ -210,7 +210,7 @@ async def main():
         db_operations=db_operations,
         logger=logger,
         netuid=bt_netuid,
-        subtensor=AsyncSubtensor(config=config),
+        config=config,
         wallet=bt_wallet,
         api_client=numinous_api_client,
     )
