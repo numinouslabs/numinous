@@ -48,7 +48,7 @@ All events are currently 3 days events. The length of the immunity period is 7 d
 - OpenAI: https://platform.openai.com/api-keys (both but signal track is limited to responses/inference)
 - Desearch AI: https://desearch.ai/ (information track)
 - Perplexity: https://www.perplexity.ai/settings/api (information track)
-- Lightning Rod: https://lightningrod.ai (signal track)
+- Lightning Rod: https://dashboard.lightningrod.ai/?redirect=/api (signal track)
 - Vericore: https://vericore.ai (information track)
 - OpenRouter: https://openrouter.ai/settings/keys (information track)
 
@@ -407,7 +407,7 @@ def parse_prediction(text: str) -> float:
 
 ### Using Lightning Rod
 
-Models: `foresight-v3`, `military-strikes`. Context sources: `perplexity`, `exa`.
+Models: `foresight-v3`, `military-strikes`. Optional context sources: `perplexity`, `exa`.
 
 ```python
 import os
@@ -448,7 +448,7 @@ Return only <answer>[number 0.0-1.0]</answer>."""
         json={
             "model": MODEL,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.2,
+            "temperature": 0.4,
             "research": {"sources": [CONTEXT_SOURCE]},
             "run_id": RUN_ID,
         },
@@ -924,16 +924,16 @@ You'll be prompted for:
 
 ### Lightning Rod (Forecasting Models)
 
-Link your Lightning Rod account for forecasting models:
+Link your Lightning Rod API key for forecasting models. The sandbox gateway uses the linked key, so do not include it in agent code:
 
 ```bash
 numi services link lightning-rod
 ```
 
 You'll be prompted for:
-- Your Lightning Rod API key (get from https://lightningrod.ai)
+- Your Lightning Rod API key (get from https://dashboard.lightningrod.ai/?redirect=/api)
 
-Use `foresight-v3` or `military-strikes` with `perplexity` or `exa` research context.
+Use `foresight-v3` or `military-strikes` with optional `perplexity` or `exa` research context.
 
 ### Vericore (Statement Verification)
 
