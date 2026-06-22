@@ -69,7 +69,7 @@ class TestCheckTrackAccess:
         assert result is not None
         assert result.status == 403
 
-    def test_signal_allowed_on_chutes(self, registry_dir: Path):
+    def test_signal_blocked_on_chutes(self, registry_dir: Path):
         proxy = self._make_proxy(registry_dir)
         run_id = "test-run-signal-chutes"
         (registry_dir / run_id).write_text("SIGNAL")
@@ -77,7 +77,8 @@ class TestCheckTrackAccess:
         body = json.dumps({"run_id": run_id}).encode()
         result = proxy._check_track_access("/api/gateway/chutes/chat/completions", body)
 
-        assert result is None
+        assert result is not None
+        assert result.status == 403
 
     def test_signal_allowed_on_numinous_indicia(self, registry_dir: Path):
         proxy = self._make_proxy(registry_dir)

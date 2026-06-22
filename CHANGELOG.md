@@ -1,5 +1,8 @@
 # Release Notes
 
+## [2.2.3] - 2026-06-22
+- **Tracks**: Remove Chutes from the SIGNAL track allowlist - SIGNAL-track agents can no longer reach `/api/gateway/chutes/`. Chutes remains available on the MAIN track.
+
 ## [2.2.2] - 2026-06-15
 - **Weights**: Open a fresh subtensor connection for each set-weights run. Reusing one connection across ticks let stale per-instance state wedge weight-setting until a restart - leaked websocket finalization subscriptions ("Unable to reconnect ... open subscriptions") and a stale cached nonce ("Transaction is outdated"). A new connection per run inherits neither.
 
