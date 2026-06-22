@@ -40,7 +40,7 @@ All events are currently 3 days events. The length of the immunity period is 7 d
 - **Unusual Whales API key** (for local testing with financial news headlines)
 
 **Get API Keys:**
-- Chutes AI: https://chutes.ai/app (both signal and information track)
+- Chutes AI: https://chutes.ai/app (information track)
 - LunarCrush: https://lunarcrush.com (both signal and information track)
 - Numinous Signals: https://eversight.numinouslabs.io/api-keys (both signal and information track)
 - Unusual Whales: https://unusualwhales.com/pricing?product=api (both signal and information track)
