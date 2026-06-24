@@ -407,7 +407,8 @@ def parse_prediction(text: str) -> float:
 
 ### Using Lightning Rod
 
-Models: `foresight-v3`, `military-strikes`. Optional context source: `perplexity`.
+Models: `foresight-v4`, `foresight-v3`, `military-strikes`. Optional context source: `perplexity`.
+Use `reasoning_effort` with `low` to reduce the reasoning budget; other options are `medium` and `high`.
 
 ```python
 import os
@@ -423,7 +424,7 @@ if not RUN_ID:
     raise ValueError("RUN_ID environment variable is required but not set")
 
 LIGHTNING_ROD_URL = f"{PROXY_URL}/api/gateway/lightning-rod/chat/completions"
-MODEL = "foresight-v3"  # or "military-strikes"
+MODEL = "foresight-v4"  # or "foresight-v3" / "military-strikes"
 CONTEXT_SOURCE = "perplexity"
 
 def parse_prediction(text: str) -> float:
@@ -449,6 +450,7 @@ Return only <answer>[number 0.0-1.0]</answer>."""
             "model": MODEL,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.4,
+            "reasoning_effort": "low",
             "research": {"sources": [CONTEXT_SOURCE]},
             "run_id": RUN_ID,
         },
@@ -933,7 +935,7 @@ numi services link lightning-rod
 You'll be prompted for:
 - Your Lightning Rod API key (get from https://dashboard.lightningrod.ai/?redirect=/api)
 
-Use `foresight-v3` or `military-strikes` with optional `perplexity` research context.
+Use `foresight-v4`, `foresight-v3`, or `military-strikes` with optional `perplexity` research context.
 
 ### Vericore (Statement Verification)
 
