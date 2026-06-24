@@ -449,7 +449,6 @@ Return only <answer>[number 0.0-1.0]</answer>."""
         json={
             "model": MODEL,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.4,
             "reasoning_effort": "low",
             "research": {"sources": [CONTEXT_SOURCE]},
             "run_id": RUN_ID,
