@@ -408,7 +408,7 @@ def parse_prediction(text: str) -> float:
 ### Using Lightning Rod
 
 Models: `foresight-v4`, `foresight-v3`, `military-strikes`. Optional context source: `perplexity`.
-Use `reasoning_effort` with `low` to reduce the reasoning budget; other options are `medium` and `high`.
+Use `reasoning_effort` with `low` to reduce the reasoning budget.
 
 ```python
 import os
