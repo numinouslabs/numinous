@@ -34,6 +34,7 @@ All events are currently 3 days events. The length of the immunity period is 7 d
 - **Desearch AI API key** (for local testing with web/Twitter search)
 - **OpenAI API key** (for local testing with GPT-5 models)
 - **Perplexity API key** (for local testing with reasoning LLMs)
+- **Lightning Rod API key** (for local testing with forecasting models)
 - **Vericore API key** (for local testing with statement verification)
 - **OpenRouter API key** (for local testing with multi-provider LLM access)
 - **Numinous Signals API key** (for local testing with scored news signals)
@@ -47,6 +48,7 @@ All events are currently 3 days events. The length of the immunity period is 7 d
 - OpenAI: https://platform.openai.com/api-keys (both but signal track is limited to responses/inference)
 - Desearch AI: https://desearch.ai/ (information track)
 - Perplexity: https://www.perplexity.ai/settings/api (information track)
+- Lightning Rod: https://dashboard.lightningrod.ai/?redirect=/api (signal track)
 - Vericore: https://vericore.ai (information track)
 - OpenRouter: https://openrouter.ai/settings/keys (information track)
 
@@ -401,6 +403,65 @@ def parse_prediction(text: str) -> float:
             pred = float(line.replace("PREDICTION:", "").strip())
             return max(0.0, min(1.0, pred))
     return 0.5
+```
+
+### Using Lightning Rod
+
+Models: `foresight-v4`, `foresight-v3`, `military-strikes`. Optional context source: `perplexity`.
+Use `reasoning_effort` with `low` to reduce the reasoning budget.
+
+```python
+import os
+import re
+from typing import Dict, Any
+
+import httpx
+
+PROXY_URL = os.getenv("SANDBOX_PROXY_URL", "http://sandbox_proxy")
+RUN_ID = os.getenv("RUN_ID")
+
+if not RUN_ID:
+    raise ValueError("RUN_ID environment variable is required but not set")
+
+LIGHTNING_ROD_URL = f"{PROXY_URL}/api/gateway/lightning-rod/chat/completions"
+MODEL = "foresight-v4"  # or "foresight-v3" / "military-strikes"
+CONTEXT_SOURCE = "perplexity"
+
+def parse_prediction(text: str) -> float:
+    match = re.search(r"<answer>\s*([0-9]*\.?[0-9]+)\s*</answer>", text)
+    if not match:
+        return 0.5
+    return max(0.0, min(1.0, float(match.group(1))))
+
+def agent_main(event_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Uses Lightning Rod forecasting models."""
+
+    prompt = f"""Forecast the probability (0.0-1.0) of this event occurring:
+
+Event: {event_data['title']}
+Description: {event_data['description']}
+Deadline: {event_data['cutoff']}
+
+Return only <answer>[number 0.0-1.0]</answer>."""
+
+    response = httpx.post(
+        LIGHTNING_ROD_URL,
+        json={
+            "model": MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "reasoning_effort": "low",
+            "research": {"sources": [CONTEXT_SOURCE]},
+            "run_id": RUN_ID,
+        },
+        timeout=120.0,
+    )
+    response.raise_for_status()
+
+    text = response.json()["choices"][0]["message"]["content"]
+    return {
+        "event_id": event_data["event_id"],
+        "prediction": parse_prediction(text),
+    }
 ```
 
 ### Using Vericore (Statement Verification)
@@ -862,6 +923,19 @@ You'll be prompted for:
 
 **Note:** Perplexity has no free tier. You must link your account to use Perplexity models.
 
+### Lightning Rod (Forecasting Models)
+
+Link your Lightning Rod API key for forecasting models:
+
+```bash
+numi services link lightning-rod
+```
+
+You'll be prompted for:
+- Your Lightning Rod API key (get from https://dashboard.lightningrod.ai/?redirect=/api)
+
+Use `foresight-v4`, `foresight-v3`, or `military-strikes` with optional `perplexity` research context.
+
 ### Vericore (Statement Verification)
 
 Link your Vericore account for evidence-based statement verification:
@@ -952,8 +1026,9 @@ numi inspect-agent         # View/download agent code
 numi services link chutes     # Link Chutes API key
 numi services link desearch   # Link Desearch API key
 numi services link openai     # Link OpenAI API key
-numi services link perplexity # Link Perplexity API key
-numi services link vericore   # Link Vericore API key
+numi services link perplexity    # Link Perplexity API key
+numi services link lightning-rod # Link Lightning Rod API key
+numi services link vericore      # Link Vericore API key
 numi services link openrouter          # Link OpenRouter API key
 numi services link numinous-signals    # Link Numinous Signals API key
 numi services list                     # Check linked services
