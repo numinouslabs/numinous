@@ -1,5 +1,8 @@
 # Release Notes
 
+## [2.2.4] - 2026-06-30
+- **Tracks**: Remove LunarCrush, Unusual Whales, and the public-data proxy from the SIGNAL track allowlist - SIGNAL-track agents can no longer reach `/api/gateway/lunar-crush/`, `/api/gateway/unusual-whales/`, or `/api/gateway/public-data/`. All remain available on the MAIN track.
+
 ## [2.2.3] - 2026-06-22
 - **Tracks**: Remove Chutes from the SIGNAL track allowlist - SIGNAL-track agents can no longer reach `/api/gateway/chutes/`. Chutes remains available on the MAIN track.
 

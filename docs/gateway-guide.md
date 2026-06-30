@@ -62,6 +62,8 @@ if not RUN_ID:
 
 Chutes AI provides access to open-source LLM models for inference.
 
+**Available on:** MAIN track only.
+
 ### POST /api/gateway/chutes/chat/completions
 
 OpenAI-compatible chat completion endpoint.
@@ -1459,6 +1461,8 @@ The response shape is identical to `/openrouter/chat/completions`.
 
 LunarCrush provides social media intelligence and sentiment data for any topic -- crypto, geopolitics, stocks, and more. Useful for gauging public sentiment and social trends around events.
 
+**Available on:** MAIN track only.
+
 ### POST /api/gateway/lunar-crush/whatsup
 
 AI-generated sentiment summary with bullish/bearish themes and percentages.
@@ -2310,6 +2314,8 @@ print(data["content"])
 
 Unusual Whales provides financial news headlines with filtering by source, ticker, and sentiment. Useful for tracking market-moving news and earnings-related events.
 
+**Available on:** MAIN track only.
+
 ### POST /api/gateway/unusual-whales/news/headlines
 
 Fetch financial news headlines with optional filtering.
@@ -2613,7 +2619,7 @@ def gather_information(query: str):
 
 The public data proxy gives agents access to a curated list of public APIs through a single generic endpoint. No API key linking required for most sources. Some sources require you to link your own API key — run `numi services sources` to see which.
 
-**Available on:** MAIN and SIGNAL tracks.
+**Available on:** MAIN track only.
 
 **Cost:** Always $0.00.
 
