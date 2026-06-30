@@ -80,6 +80,39 @@ class TestCheckTrackAccess:
         assert result is not None
         assert result.status == 403
 
+    def test_signal_blocked_on_lunar_crush(self, registry_dir: Path):
+        proxy = self._make_proxy(registry_dir)
+        run_id = "test-run-signal-lunar-crush"
+        (registry_dir / run_id).write_text("SIGNAL")
+
+        body = json.dumps({"run_id": run_id}).encode()
+        result = proxy._check_track_access("/api/gateway/lunar-crush/coins", body)
+
+        assert result is not None
+        assert result.status == 403
+
+    def test_signal_blocked_on_unusual_whales(self, registry_dir: Path):
+        proxy = self._make_proxy(registry_dir)
+        run_id = "test-run-signal-unusual-whales"
+        (registry_dir / run_id).write_text("SIGNAL")
+
+        body = json.dumps({"run_id": run_id}).encode()
+        result = proxy._check_track_access("/api/gateway/unusual-whales/option-trades", body)
+
+        assert result is not None
+        assert result.status == 403
+
+    def test_signal_blocked_on_public_data(self, registry_dir: Path):
+        proxy = self._make_proxy(registry_dir)
+        run_id = "test-run-signal-public-data"
+        (registry_dir / run_id).write_text("SIGNAL")
+
+        body = json.dumps({"run_id": run_id}).encode()
+        result = proxy._check_track_access("/api/gateway/public-data/fetch", body)
+
+        assert result is not None
+        assert result.status == 403
+
     def test_signal_allowed_on_numinous_indicia(self, registry_dir: Path):
         proxy = self._make_proxy(registry_dir)
         run_id = "test-run-signal-indicia"
