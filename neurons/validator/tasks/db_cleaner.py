@@ -61,14 +61,6 @@ class DbCleaner(AbstractTask):
 
         await asyncio.sleep(1)
 
-        # Delete scores
-        deleted_scores = await self.db_operations.delete_scores(self.batch_size)
-
-        if len(deleted_scores) > 0:
-            self.logger.debug("Scores deleted", extra={"deleted_count": len(deleted_scores)})
-
-        await asyncio.sleep(1)
-
         # Delete reasonings
         deleted_reasonings = await self.db_operations.delete_reasonings(self.batch_size)
 
@@ -84,6 +76,16 @@ class DbCleaner(AbstractTask):
 
         if len(deleted_sources) > 0:
             self.logger.debug("Sources deleted", extra={"deleted_count": len(deleted_sources)})
+
+        await asyncio.sleep(1)
+
+        # Delete reforecast memories
+        deleted_memories = await self.db_operations.delete_reforecast_memories(self.batch_size)
+
+        if len(deleted_memories) > 0:
+            self.logger.debug(
+                "Reforecast memories deleted", extra={"deleted_count": len(deleted_memories)}
+            )
 
         await asyncio.sleep(1)
 

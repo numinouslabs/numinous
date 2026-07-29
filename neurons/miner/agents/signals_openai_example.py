@@ -132,7 +132,7 @@ async def fetch_signals(event: AgentData) -> str:
 
 
 # =============================================================================
-# PHASE 2: OPENAI WEB SEARCH FORECAST
+# PHASE 2: OPENAI INFERENCE FORECAST
 # =============================================================================
 
 
@@ -152,8 +152,8 @@ def build_forecast_messages(event: AgentData, signals_context: str) -> list[dict
             "role": "developer",
             "content": (
                 "You are an expert forecaster. "
-                "You have access to web search and curated news signals. "
-                "Use both to make well-calibrated probabilistic predictions."
+                "You have access to curated news signals. "
+                "Use them to make well-calibrated probabilistic predictions."
             ),
         },
         {
@@ -166,7 +166,7 @@ def build_forecast_messages(event: AgentData, signals_context: str) -> list[dict
 
 **Deadline:** {cutoff_date}
 {signals_section}
-Use web search to find additional recent information, then estimate the probability (0.0 to 1.0) that this event resolves YES.
+Weigh the signals above against the time remaining, then estimate the probability (0.0 to 1.0) that this event resolves YES.
 
 **Required Output Format:**
 PREDICTION: [number between 0.0 and 1.0]
@@ -198,10 +198,9 @@ async def call_openai(model: str, messages: list[dict]) -> tuple[str, float]:
         payload = {
             "model": model,
             "input": messages,
-            "tools": [{"type": "web_search"}],
             "run_id": RUN_ID,
         }
-        response = await client.post(f"{OPENAI_URL}/responses", json=payload)
+        response = await client.post(f"{OPENAI_URL}/responses/inference", json=payload)
         response.raise_for_status()
 
         data = response.json()
@@ -225,9 +224,9 @@ def parse_llm_response(response_text: str) -> tuple[float, str]:
         return 0.5, "Failed to parse LLM response."
 
 
-async def forecast_with_websearch(event: AgentData, signals_context: str) -> dict:
+async def forecast_with_signals(event: AgentData, signals_context: str) -> dict:
     global TOTAL_COST
-    print("[FORECAST] Generating forecast with OpenAI web search...")
+    print("[FORECAST] Generating forecast with OpenAI inference...")
 
     messages = build_forecast_messages(event, signals_context)
 
@@ -286,7 +285,7 @@ async def run_agent(event: AgentData) -> dict:
     start_time = time.time()
 
     signals_context = await fetch_signals(event)
-    result = await forecast_with_websearch(event, signals_context)
+    result = await forecast_with_signals(event, signals_context)
 
     elapsed = time.time() - start_time
     print(f"[AGENT] Complete in {elapsed:.2f}s")

@@ -1,5 +1,5 @@
 # please sort alphabetically to avoid duplicates
-aiohttp~=3.13
+aiohttp~=3.13.0
 aiosqlite==0.21.0
 alembic==1.14.1
 bittensor-cli==9.21.1

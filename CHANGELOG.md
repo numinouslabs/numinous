@@ -1,5 +1,11 @@
 # Release Notes
 
+## [3.0.0] - 2026-07-29
+- **Re-forecasting**: Agents now run once per event **per interval**, re-forecasting every live event every interval until its cutoff, instead of executing once per event. Predictions are no longer replicated forward - every interval is a genuine run, and a failed run leaves a real gap rather than reusing an earlier prediction.
+- **Memory**: Agents receive their previous output for an event in `event_data["memory"]` and return an updated blob under the `memory` key of their result. Memory is scoped per (miner, event), never crosses events or miners, and is capped at 32768 characters - longer values are truncated, not rejected. **Miners must update their agents to read and return memory**: an agent that ignores it still runs and still scores, but never accumulates a belief across intervals. See `neurons/miner/agents/memory_example.py`.
+- **Scoring**: Scoring moved to the backend. Validators no longer compute scores locally - the `scoring` and `export_scores` tasks are removed, and forecasts are scored against the market price rather than the outcome alone.
+- **Database**: Events and their dependent rows are reset on upgrade, so the validator repopulates from the current event cohort on first run.
+
 ## [2.2.4] - 2026-06-30
 - **Tracks**: Remove LunarCrush, Unusual Whales, and the public-data proxy from the SIGNAL track allowlist - SIGNAL-track agents can no longer reach `/api/gateway/lunar-crush/`, `/api/gateway/unusual-whales/`, or `/api/gateway/public-data/`. All remain available on the MAIN track.
 

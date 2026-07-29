@@ -27,11 +27,16 @@ from neurons.validator.models.numinous_client import (
     GetEventsResolvedResponse,
     GetEventsResponse,
     GetWeightsResponse,
+    MemoryCommitRequestBody,
+    MemoryCommitResponse,
+    MemoryEntry,
+    MemoryPairKey,
+    MemoryPullRequestBody,
+    MemoryPullResponse,
     OpenRouterInferenceRequest,
     PostAgentLogsRequestBody,
     PostAgentRunsRequestBody,
     PostPredictionsRequestBody,
-    PostScoresRequestBody,
     UpdateAgentRunRequest,
 )
 from neurons.validator.models.openrouter import OpenRouterCompletion
@@ -573,33 +578,30 @@ class TestNuminousClient:
             # Assert the exception
             assert e.value.status == status_code
 
-    async def test_post_scores(self, client_test_env: NuminousClient):
-        # Define mock response data
-        mock_response_data = {"fake_response": "ok"}
+    async def test_pull_memory_invalid_param(self, client_test_env: NuminousClient):
+        with pytest.raises(ValueError, match="Invalid parameter"):
+            await client_test_env.pull_memory(body={"pairs": []})
 
-        request_body = PostScoresRequestBody.model_validate(
-            {
-                "results": [
-                    {
-                        "event_id": "event_id",
-                        "prediction": 1,
-                        "answer": 1,
-                        "miner_hotkey": "miner_hotkey",
-                        "miner_uid": 1,
-                        "track": "MAIN",
-                        "miner_score": 1,
-                        "validator_hotkey": "validator_hotkey",
-                        "validator_uid": 2,
-                        "spec_version": "1.3.3",
-                        "registered_date": datetime.now(timezone.utc),
-                        "scored_at": datetime.now(timezone.utc),
-                    }
-                ]
-            }
+    async def test_pull_memory_response(self, client_test_env: NuminousClient):
+        request_body = MemoryPullRequestBody(
+            pairs=[MemoryPairKey(miner_uid=1, miner_hotkey="hk1", event_id="ifgames-event-1")],
+            interval_datetime=datetime(2026, 7, 27, tzinfo=timezone.utc),
         )
+        mock_response_data = {
+            "items": [
+                {
+                    "miner_uid": 1,
+                    "miner_hotkey": "hk1",
+                    "event_id": "ifgames-event-1",
+                    "interval_datetime": "2026-07-23T00:00:00+00:00",
+                    "memory": "belief blob",
+                }
+            ],
+            "count": 1,
+        }
 
         with aioresponses() as mocked:
-            url_path = "/api/v1/validators/results"
+            url_path = "/api/v1/validators/memory/pull"
 
             mocked.post(
                 url_path,
@@ -607,60 +609,142 @@ class TestNuminousClient:
                 body=json.dumps(mock_response_data).encode("utf-8"),
             )
 
-            result = await client_test_env.post_scores(body=request_body)
+            result = await client_test_env.pull_memory(body=request_body)
 
             mocked.assert_called_with(
                 url=url_path, method="POST", data=request_body.model_dump_json()
             )
 
-            # Verify the response matches
-            assert result == mock_response_data
+            assert result == MemoryPullResponse.model_validate(mock_response_data)
 
-    async def test_post_scores_error_raised(self, client_test_env: NuminousClient):
-        # Define mock response data
-        mock_response_data = {"fake_response": "ok"}
+    async def test_pull_memory_batches_requests(self, client_test_env: NuminousClient, monkeypatch):
+        # Force a tiny batch size so 3 pairs split into 2 requests.
+        monkeypatch.setattr("neurons.validator.numinous_client.client.MEMORY_PULL_BATCH_SIZE", 2)
 
-        request_body = PostScoresRequestBody.model_validate(
-            {
-                "results": [
-                    {
-                        "event_id": "event_id",
-                        "prediction": 1,
-                        "answer": 1,
-                        "miner_hotkey": "miner_hotkey",
-                        "miner_uid": 1,
-                        "track": "MAIN",
-                        "miner_score": 1,
-                        "validator_hotkey": "validator_hotkey",
-                        "validator_uid": 2,
-                        "spec_version": "1.3.3",
-                        "registered_date": datetime.now(timezone.utc),
-                        "scored_at": datetime.now(timezone.utc),
-                    }
-                ]
-            }
+        request_body = MemoryPullRequestBody(
+            pairs=[
+                MemoryPairKey(miner_uid=i, miner_hotkey=f"hk{i}", event_id=f"event-{i}")
+                for i in range(3)
+            ],
+            interval_datetime=datetime(2026, 7, 27, tzinfo=timezone.utc),
         )
 
-        status_code = 500
+        first_batch = {
+            "items": [
+                {
+                    "miner_uid": 0,
+                    "miner_hotkey": "hk0",
+                    "event_id": "event-0",
+                    "interval_datetime": "2026-07-23T00:00:00+00:00",
+                    "memory": "blob-0",
+                }
+            ],
+            "count": 1,
+        }
+        second_batch = {
+            "items": [
+                {
+                    "miner_uid": 2,
+                    "miner_hotkey": "hk2",
+                    "event_id": "event-2",
+                    "interval_datetime": "2026-07-23T00:00:00+00:00",
+                    "memory": "blob-2",
+                }
+            ],
+            "count": 1,
+        }
 
         with aioresponses() as mocked:
-            url_path = "/api/v1/validators/results"
+            url_path = "/api/v1/validators/memory/pull"
+            mocked.post(url_path, status=200, body=json.dumps(first_batch).encode("utf-8"))
+            mocked.post(url_path, status=200, body=json.dumps(second_batch).encode("utf-8"))
 
+            result = await client_test_env.pull_memory(body=request_body)
+
+        # Both batches consumed -> items accumulated, count recomputed from items.
+        assert len(result.items) == 2
+        assert result.count == 2
+        assert [item.memory for item in result.items] == ["blob-0", "blob-2"]
+
+    async def test_pull_memory_error_raised(self, client_test_env: NuminousClient):
+        request_body = MemoryPullRequestBody(
+            pairs=[MemoryPairKey(miner_uid=1, miner_hotkey="hk1", event_id="event-1")],
+            interval_datetime=datetime(2026, 7, 27, tzinfo=timezone.utc),
+        )
+
+        with aioresponses() as mocked:
+            url_path = "/api/v1/validators/memory/pull"
             mocked.post(
                 url_path,
-                status=status_code,
-                body=json.dumps(mock_response_data).encode("utf-8"),
+                status=500,
+                body=json.dumps({"message": "error"}).encode("utf-8"),
             )
 
             with pytest.raises(ClientResponseError) as e:
-                await client_test_env.post_scores(body=request_body)
+                await client_test_env.pull_memory(body=request_body)
+
+            assert e.value.status == 500
+
+    async def test_commit_memory_invalid_param(self, client_test_env: NuminousClient):
+        with pytest.raises(ValueError, match="Invalid parameter"):
+            await client_test_env.commit_memory(body={"entries": []})
+
+    async def test_commit_memory_response(self, client_test_env: NuminousClient):
+        request_body = MemoryCommitRequestBody(
+            entries=[
+                MemoryEntry(
+                    miner_uid=1,
+                    miner_hotkey="hk1",
+                    event_id="ifgames-event-1",
+                    interval_datetime=datetime(2026, 7, 23, tzinfo=timezone.utc),
+                    memory="belief blob",
+                )
+            ]
+        )
+        mock_response_data = {"inserted": 1}
+
+        with aioresponses() as mocked:
+            url_path = "/api/v1/validators/memory/commit"
+
+            mocked.post(
+                url_path,
+                status=200,
+                body=json.dumps(mock_response_data).encode("utf-8"),
+            )
+
+            result = await client_test_env.commit_memory(body=request_body)
 
             mocked.assert_called_with(
                 url=url_path, method="POST", data=request_body.model_dump_json()
             )
 
-            # Assert the exception
-            assert e.value.status == status_code
+            assert result == MemoryCommitResponse.model_validate(mock_response_data)
+
+    async def test_commit_memory_error_raised(self, client_test_env: NuminousClient):
+        request_body = MemoryCommitRequestBody(
+            entries=[
+                MemoryEntry(
+                    miner_uid=1,
+                    miner_hotkey="hk1",
+                    event_id="event-1",
+                    interval_datetime=datetime(2026, 7, 23, tzinfo=timezone.utc),
+                    memory="belief blob",
+                )
+            ]
+        )
+
+        with aioresponses() as mocked:
+            url_path = "/api/v1/validators/memory/commit"
+            mocked.post(
+                url_path,
+                status=500,
+                body=json.dumps({"message": "error"}).encode("utf-8"),
+            )
+
+            with pytest.raises(ClientResponseError) as e:
+                await client_test_env.commit_memory(body=request_body)
+
+            assert e.value.status == 500
 
     async def test_post_agent_logs(self, client_test_env: NuminousClient):
         mock_response_data = {}
@@ -816,6 +900,7 @@ class TestNuminousClient:
         mock_response_data = {"run_id": "723e4567-e89b-12d3-a456-426614174006"}
 
         request_body = CreateAgentRunRequest(
+            interval_datetime=datetime(2026, 7, 24, tzinfo=timezone.utc),
             miner_uid=10,
             miner_hotkey="miner_hotkey_1",
             track="MAIN",
@@ -847,6 +932,7 @@ class TestNuminousClient:
         mock_response_data = {"error": "Failed to create agent run"}
 
         request_body = CreateAgentRunRequest(
+            interval_datetime=datetime(2026, 7, 24, tzinfo=timezone.utc),
             miner_uid=10,
             miner_hotkey="miner_hotkey_1",
             track="MAIN",

@@ -15,6 +15,7 @@ class TestAgentRunsModel:
     def test_create_minimal(self):
         # Minimal required fields
         model = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id="run_123",
             unique_event_id="event_456",
             agent_version_id="agent_v1",
@@ -42,6 +43,7 @@ class TestAgentRunsModel:
         updated = datetime(2024, 1, 1, 12, 30, 0)
 
         model = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id="run_abc_123",
             unique_event_id="event_xyz_456",
             agent_version_id="agent_version_1",
@@ -68,6 +70,7 @@ class TestAgentRunsModel:
 
     def test_create_with_error_status(self):
         model = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id="run_error_1",
             unique_event_id="event_1",
             agent_version_id="agent_v1",
@@ -82,6 +85,7 @@ class TestAgentRunsModel:
     def test_exported_int_to_bool(self):
         # exported as integer should convert to bool
         model = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id="run_1",
             unique_event_id="event_1",
             agent_version_id="agent_v1",
@@ -94,6 +98,7 @@ class TestAgentRunsModel:
         assert model.exported is True
 
         model2 = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id="run_2",
             unique_event_id="event_1",
             agent_version_id="agent_v1",
@@ -108,6 +113,7 @@ class TestAgentRunsModel:
     def test_exported_bool_passthrough(self):
         # exported as boolean should pass through
         model = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id="run_1",
             unique_event_id="event_1",
             agent_version_id="agent_v1",
@@ -122,6 +128,7 @@ class TestAgentRunsModel:
     def test_is_final_int_to_bool(self):
         # is_final as integer should convert to bool
         model = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id="run_1",
             unique_event_id="event_1",
             agent_version_id="agent_v1",
@@ -134,6 +141,7 @@ class TestAgentRunsModel:
         assert model.is_final is True
 
         model2 = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id="run_2",
             unique_event_id="event_1",
             agent_version_id="agent_v1",
@@ -156,6 +164,7 @@ class TestAgentRunsModel:
 
         for status in statuses_to_test:
             model = AgentRunsModel(
+                interval_start_minutes=1000,
                 run_id=f"run_{status.value}",
                 unique_event_id="event_1",
                 agent_version_id="agent_v1",
@@ -170,6 +179,7 @@ class TestAgentRunsModel:
         # status must be AgentRunStatus enum
         with pytest.raises(ValidationError):
             AgentRunsModel(
+                interval_start_minutes=1000,
                 run_id="run_1",
                 unique_event_id="event_1",
                 agent_version_id="agent_v1",
@@ -183,6 +193,7 @@ class TestAgentRunsModel:
         # miner_uid must be integer
         with pytest.raises(ValidationError):
             AgentRunsModel(
+                interval_start_minutes=1000,
                 run_id="run_1",
                 unique_event_id="event_1",
                 agent_version_id="agent_v1",
@@ -194,6 +205,7 @@ class TestAgentRunsModel:
 
     def test_primary_key_property(self):
         model = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id="run_123",
             unique_event_id="event_456",
             agent_version_id="agent_v1",
@@ -207,6 +219,7 @@ class TestAgentRunsModel:
     def test_retry_scenario(self):
         # Simulate retry scenario: first two attempts not final, third is final
         run1 = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id="run_attempt_1",
             unique_event_id="event_1",
             agent_version_id="agent_v1",
@@ -220,6 +233,7 @@ class TestAgentRunsModel:
         assert run1.status == AgentRunStatus.SANDBOX_TIMEOUT
 
         run2 = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id="run_attempt_2",
             unique_event_id="event_1",
             agent_version_id="agent_v1",
@@ -232,6 +246,7 @@ class TestAgentRunsModel:
         assert run2.is_final is False
 
         run3 = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id="run_attempt_3",
             unique_event_id="event_1",
             agent_version_id="agent_v1",

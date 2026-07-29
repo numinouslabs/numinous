@@ -126,27 +126,6 @@ class PostPredictionsRequestBody(BaseModel):
     events: typing.Optional[None] = Field(None)
 
 
-class MinerScore(BaseModel):
-    event_id: str
-    prediction: float
-    answer: float = Field(..., json_schema_extra={"ge": 0, "le": 1})
-    miner_hotkey: str
-    miner_uid: int
-    track: TrackEnum
-    miner_score: float
-    validator_hotkey: str
-    validator_uid: int
-    spec_version: typing.Optional[str] = "0.0.0"
-    registered_date: typing.Optional[datetime]
-    scored_at: typing.Optional[datetime]
-
-    model_config = ConfigDict(from_attributes=True, extra="forbid")
-
-
-class PostScoresRequestBody(BaseModel):
-    results: typing.List[MinerScore] = Field(..., min_length=1)
-
-
 class MinerAgentWithCode(BaseModel):
     version_id: UUID
     miner_hotkey: str
@@ -211,6 +190,44 @@ class PostSourcesRequestBody(BaseModel):
     submissions: typing.List[MinerSourceSubmission] = Field(..., min_length=1)
 
 
+class MemoryPairKey(BaseModel):
+    miner_uid: int
+    miner_hotkey: str
+    event_id: str
+
+
+class MemoryPullRequestBody(BaseModel):
+    pairs: typing.List[MemoryPairKey] = Field(..., min_length=1)
+    interval_datetime: datetime
+
+
+class MemoryEntry(BaseModel):
+    miner_uid: int
+    miner_hotkey: str
+    event_id: str
+    interval_datetime: datetime
+    memory: str = Field(..., max_length=32_768)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MemoryPullResponse(BaseModel):
+    items: typing.List[MemoryEntry]
+    count: int
+
+    model_config = ConfigDict(from_attributes=True, extra="ignore")
+
+
+class MemoryCommitRequestBody(BaseModel):
+    entries: typing.List[MemoryEntry] = Field(..., min_length=1)
+
+
+class MemoryCommitResponse(BaseModel):
+    inserted: int
+
+    model_config = ConfigDict(from_attributes=True, extra="ignore")
+
+
 class GatewayCall(BaseModel):
     run_id: UUID
 
@@ -240,6 +257,7 @@ class CreateAgentRunRequest(BaseModel):
     vali_hotkey: str
     event_id: str
     version_id: UUID
+    interval_datetime: datetime
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -1,5 +1,7 @@
 # Reasoning Scoring
 
+> **Not currently scored — expected to return in the near future.** At launch the only pool allocating emissions is the re-forecasting pool on the SIGNAL track (see [scoring-system.md](./scoring-system.md)). Agents may already return `reasoning` and it is stored, so adding one now costs nothing and prepares you for the pool's return. This document describes how it will be scored.
+
 Miners can submit free-form reasoning alongside their numeric prediction for an event. That reasoning is evaluated through **two independent scores**, which are then combined into a single reasoning score.
 
 A **substantial share of daily emissions is allocated to the Reasoning pool** — currently **25% on the Information track** and **20% on the Signals track** (visible under "Current Pool alphas" on the [leaderboard](https://leaderboard.numinouslabs.io/)). On the leaderboard's per-miner table, the **`Reasoning` column is exactly the weighted average defined below** — i.e., `0.70 * rubric quality + 0.30 * implied-probability Brier`. Click into your hotkey to inspect the rubric breakdown, the underlying reasoning text, and the per-event scores that fed into it.

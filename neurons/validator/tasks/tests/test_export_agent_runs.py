@@ -106,6 +106,7 @@ class TestExportAgentRuns:
     def test_prepare_runs_payload_single_run(self, export_agent_runs_task: ExportAgentRuns):
         db_runs = [
             AgentRunsModel(
+                interval_start_minutes=1000,
                 run_id="123e4567-e89b-12d3-a456-426614174000",
                 unique_event_id="event_123",
                 agent_version_id="223e4567-e89b-12d3-a456-426614174001",
@@ -132,6 +133,7 @@ class TestExportAgentRuns:
     def test_prepare_runs_payload_multiple_runs(self, export_agent_runs_task: ExportAgentRuns):
         db_runs = [
             AgentRunsModel(
+                interval_start_minutes=1000,
                 run_id="323e4567-e89b-12d3-a456-426614174002",
                 unique_event_id="event_1",
                 agent_version_id="423e4567-e89b-12d3-a456-426614174003",
@@ -143,6 +145,7 @@ class TestExportAgentRuns:
                 is_final=True,
             ),
             AgentRunsModel(
+                interval_start_minutes=1000,
                 run_id="523e4567-e89b-12d3-a456-426614174004",
                 unique_event_id="event_2",
                 agent_version_id="623e4567-e89b-12d3-a456-426614174005",
@@ -154,6 +157,7 @@ class TestExportAgentRuns:
                 is_final=False,
             ),
             AgentRunsModel(
+                interval_start_minutes=1000,
                 run_id="723e4567-e89b-12d3-a456-426614174006",
                 unique_event_id="event_3",
                 agent_version_id="823e4567-e89b-12d3-a456-426614174007",
@@ -230,6 +234,7 @@ class TestExportAgentRuns:
 
         runs = [
             AgentRunsModel(
+                interval_start_minutes=1000,
                 run_id="b23e4567-e89b-12d3-a456-42661417400a",
                 unique_event_id="event_1",
                 agent_version_id="c23e4567-e89b-12d3-a456-42661417400b",
@@ -241,6 +246,7 @@ class TestExportAgentRuns:
                 is_final=True,
             ),
             AgentRunsModel(
+                interval_start_minutes=1000,
                 run_id="d23e4567-e89b-12d3-a456-42661417400c",
                 unique_event_id="event_2",
                 agent_version_id="e23e4567-e89b-12d3-a456-42661417400d",
@@ -289,6 +295,7 @@ class TestExportAgentRuns:
         )
 
         run = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id="f23e4567-e89b-12d3-a456-42661417400e",
             unique_event_id="event_error",
             agent_version_id="023e4567-e89b-12d3-a456-42661417400f",

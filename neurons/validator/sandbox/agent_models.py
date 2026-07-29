@@ -1,8 +1,9 @@
 from enum import StrEnum
 from typing import Any, Dict, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
+from neurons.validator.models.reforecast_memory import MAX_MEMORY_CHARS
 from neurons.validator.models.sources import SourceItem
 
 
@@ -20,6 +21,16 @@ class AgentOutput(BaseModel):
     sources: Optional[list[SourceItem]] = Field(
         None, description="Optional list of structured sources supporting the prediction"
     )
+    memory: Optional[str] = Field(
+        None, description="Updated per-(miner, event) memory blob for re-forecasting"
+    )
+
+    @field_validator("memory")
+    @classmethod
+    def _cap_memory(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and len(value) > MAX_MEMORY_CHARS:
+            return value[:MAX_MEMORY_CHARS]
+        return value
 
 
 class RunStatus(StrEnum):

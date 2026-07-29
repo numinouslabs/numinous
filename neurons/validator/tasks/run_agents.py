@@ -10,7 +10,11 @@ from neurons.validator.db.operations import DatabaseOperations
 from neurons.validator.models.agent_runs import AgentRunsModel, AgentRunStatus
 from neurons.validator.models.event import EventsModel
 from neurons.validator.models.miner_agent import MinerAgentsModel
-from neurons.validator.models.numinous_client import CreateAgentRunRequest
+from neurons.validator.models.numinous_client import (
+    CreateAgentRunRequest,
+    MemoryPairKey,
+    MemoryPullRequestBody,
+)
 from neurons.validator.models.prediction import PredictionsModel
 from neurons.validator.models.reasoning import MAX_REASONING_CHARS, MISSING_REASONING_PREFIX
 from neurons.validator.models.sources import MAX_SOURCES_PER_RUN, SourceItem
@@ -18,7 +22,10 @@ from neurons.validator.numinous_client.client import NuminousClient
 from neurons.validator.sandbox import SandboxManager
 from neurons.validator.sandbox.models import SandboxErrorType
 from neurons.validator.scheduler.task import AbstractTask
-from neurons.validator.utils.common.interval import get_interval_start_minutes
+from neurons.validator.utils.common.interval import (
+    get_interval_iso_datetime,
+    get_interval_start_minutes,
+)
 from neurons.validator.utils.logger.logger import NuminousLogger
 
 TITLE_SEPARATOR = " ==Further Information==: "
@@ -133,7 +140,11 @@ class RunAgents(AbstractTask):
             "Synced metagraph", extra={"block": block, "neurons": len(self.metagraph.uids)}
         )
 
-        events = await self.db_operations.get_events_to_predict()
+        interval_start_minutes = get_interval_start_minutes()
+
+        events = await self.db_operations.get_events_to_predict(
+            interval_start_datetime=get_interval_iso_datetime(interval_start_minutes)
+        )
         if not events:
             self.logger.debug("No events to predict")
             return
@@ -147,8 +158,6 @@ class RunAgents(AbstractTask):
         if not len(valid_agents):
             self.logger.warning("No valid agents after metagraph filtering")
             return
-
-        interval_start_minutes = get_interval_start_minutes()
 
         self.logger.info(
             "Starting to run agents",
@@ -399,6 +408,7 @@ class RunAgents(AbstractTask):
         event_id: str,
         agent: MinerAgentsModel,
         status: AgentRunStatus,
+        interval_start_minutes: int,
     ) -> AgentRunsModel:
         if status != AgentRunStatus.SANDBOX_TIMEOUT:
             is_final = True
@@ -406,6 +416,7 @@ class RunAgents(AbstractTask):
             timeout_count = await self.db_operations.count_runs_for_event_and_agent(
                 unique_event_id=event_id,
                 agent_version_id=agent.version_id,
+                interval_start_minutes=interval_start_minutes,
                 status=AgentRunStatus.SANDBOX_TIMEOUT,
                 is_final=False,
             )
@@ -419,6 +430,7 @@ class RunAgents(AbstractTask):
             miner_hotkey=agent.miner_hotkey,
             track=agent.track,
             status=status,
+            interval_start_minutes=interval_start_minutes,
             exported=False,
             is_final=is_final,
         )
@@ -473,8 +485,37 @@ class RunAgents(AbstractTask):
                 exc_info=True,
             )
 
+    async def _store_memory(
+        self,
+        run_id: str,
+        run_status: AgentRunStatus,
+        result: dict | None,
+        interval_start_minutes: int,
+    ) -> None:
+        if run_status != AgentRunStatus.SUCCESS:
+            return
+
+        memory = result.get("output", {}).get("memory") if isinstance(result, dict) else None
+        if not memory:
+            return
+
+        try:
+            await self.db_operations.insert_reforecast_memory(
+                run_id, memory, interval_start_minutes
+            )
+        except Exception as e:
+            self.logger.error(
+                "Failed to store memory",
+                extra={"run_id": run_id, "error": str(e)},
+                exc_info=True,
+            )
+
     async def execute_agent_for_event(
-        self, event: EventsModel, agent: MinerAgentsModel, interval_start_minutes: int
+        self,
+        event: EventsModel,
+        agent: MinerAgentsModel,
+        interval_start_minutes: int,
+        memory_by_pair: dict[tuple[int, str, str], str],
     ) -> None:
         event_id = event.unique_event_id
 
@@ -487,6 +528,7 @@ class RunAgents(AbstractTask):
                 vali_hotkey=self.validator_hotkey,
                 event_id=event_id,
                 version_id=agent.version_id,
+                interval_datetime=get_interval_iso_datetime(interval_start_minutes),
             )
 
             create_run_response = await self.api_client.create_agent_run(create_run_request)
@@ -538,6 +580,9 @@ class RunAgents(AbstractTask):
             "description": description,
             "cutoff": event.cutoff.isoformat(),
             "metadata": metadata,
+            "memory": memory_by_pair.get(
+                (agent.miner_uid, agent.miner_hotkey, event.unique_event_id)
+            ),
         }
 
         try:
@@ -571,6 +616,7 @@ class RunAgents(AbstractTask):
             event_id=event_id,
             agent=agent,
             status=run_status,
+            interval_start_minutes=interval_start_minutes,
         )
         await self.db_operations.upsert_agent_runs([agent_run])
 
@@ -587,6 +633,8 @@ class RunAgents(AbstractTask):
             await self._store_reasoning(run_id, run_status, result)
             await self._store_sources(run_id, run_status, result)
 
+        await self._store_memory(run_id, run_status, result, interval_start_minutes)
+
         if run_status == AgentRunStatus.SUCCESS and prediction_value is not None:
             await self.store_prediction(
                 event_id, agent, prediction_value, run_id, interval_start_minutes
@@ -602,41 +650,56 @@ class RunAgents(AbstractTask):
                 },
             )
 
+    async def _pull_memory(
+        self, pairs: List[tuple[EventsModel, MinerAgentsModel]], interval_start_minutes: int
+    ) -> dict[tuple[int, str, str], str]:
+        if not pairs:
+            return {}
+
+        keys = [
+            MemoryPairKey(
+                miner_uid=agent.miner_uid,
+                miner_hotkey=agent.miner_hotkey,
+                event_id=event.unique_event_id,
+            )
+            for event, agent in pairs
+        ]
+
+        try:
+            response = await self.api_client.pull_memory(
+                MemoryPullRequestBody(
+                    pairs=keys,
+                    interval_datetime=get_interval_iso_datetime(interval_start_minutes),
+                )
+            )
+        except Exception as e:
+            self.logger.error("Failed to pull memory", extra={"error": str(e)})
+            return {}
+
+        return {
+            (item.miner_uid, item.miner_hotkey, item.event_id): item.memory
+            for item in response.items
+        }
+
     async def execute_all(
         self, events: List[EventsModel], agents: List[MinerAgentsModel], interval_start_minutes: int
     ) -> None:
+        pairs = [
+            (event, agent) for event in events for agent in agents if agent.track in event.tracks
+        ]
+
+        memory_by_pair = await self._pull_memory(pairs, interval_start_minutes)
+
         semaphore = asyncio.Semaphore(self.max_concurrent_sandboxes)
 
-        tasks = []
-        for event in events:
-            for agent in agents:
-                if agent.track not in event.tracks:
-                    continue
-
-                task = self.execute_with_semaphore(semaphore, event, agent, interval_start_minutes)
-                tasks.append(task)
+        tasks = [
+            self.execute_with_semaphore(
+                semaphore, event, agent, interval_start_minutes, memory_by_pair
+            )
+            for event, agent in pairs
+        ]
 
         await asyncio.gather(*tasks, return_exceptions=True)
-
-    async def replicate_prediction_to_interval(
-        self,
-        existing_prediction: PredictionsModel,
-        interval_start_minutes: int,
-    ) -> None:
-        new_prediction = PredictionsModel(
-            unique_event_id=existing_prediction.unique_event_id,
-            miner_uid=existing_prediction.miner_uid,
-            miner_hotkey=existing_prediction.miner_hotkey,
-            track=existing_prediction.track,
-            latest_prediction=existing_prediction.latest_prediction,
-            interval_start_minutes=interval_start_minutes,
-            interval_agg_prediction=existing_prediction.latest_prediction,
-            interval_count=1,
-            run_id=existing_prediction.run_id,
-            version_id=existing_prediction.version_id,
-        )
-
-        await self.db_operations.upsert_predictions([new_prediction])
 
     async def execute_with_semaphore(
         self,
@@ -644,6 +707,7 @@ class RunAgents(AbstractTask):
         event: EventsModel,
         agent: MinerAgentsModel,
         interval_start_minutes: int,
+        memory_by_pair: dict[tuple[int, str, str], str],
     ) -> None:
         async with semaphore:
             event_id = event.unique_event_id
@@ -658,32 +722,17 @@ class RunAgents(AbstractTask):
                 )
             )
 
-            if existing_prediction is not None:
-                # Prediction exists - check if already in current interval
-                if existing_prediction.interval_start_minutes == interval_start_minutes:
-                    self.logger.debug(
-                        "Skipping execution - prediction exists",
-                        extra={
-                            "event_id": event_id,
-                            "agent_version_id": agent.version_id,
-                            "miner_uid": agent.miner_uid,
-                        },
-                    )
-                    return
-
-                # Replicate to current interval
-                await self.replicate_prediction_to_interval(
-                    existing_prediction=existing_prediction,
-                    interval_start_minutes=interval_start_minutes,
-                )
+            if (
+                existing_prediction is not None
+                and existing_prediction.interval_start_minutes == interval_start_minutes
+            ):
                 self.logger.debug(
-                    "Replicated existing prediction to new interval",
+                    "Skipping execution - prediction exists for interval",
                     extra={
                         "event_id": event_id,
                         "agent_version_id": agent.version_id,
                         "miner_uid": agent.miner_uid,
-                        "from_interval": existing_prediction.interval_start_minutes,
-                        "to_interval": interval_start_minutes,
+                        "interval_start_minutes": interval_start_minutes,
                     },
                 )
                 return
@@ -691,14 +740,16 @@ class RunAgents(AbstractTask):
             has_final_run = await self.db_operations.has_final_run(
                 unique_event_id=event_id,
                 agent_version_id=agent.version_id,
+                interval_start_minutes=interval_start_minutes,
             )
 
             if has_final_run:
                 self.logger.debug(
-                    "Skipping execution - final run exists",
+                    "Skipping execution - final run exists for interval",
                     extra={
                         "event_id": event_id,
                         "agent_version_id": agent.version_id,
+                        "interval_start_minutes": interval_start_minutes,
                     },
                 )
                 return
@@ -707,4 +758,5 @@ class RunAgents(AbstractTask):
                 event=event,
                 agent=agent,
                 interval_start_minutes=interval_start_minutes,
+                memory_by_pair=memory_by_pair,
             )

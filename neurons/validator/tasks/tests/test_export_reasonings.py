@@ -63,6 +63,7 @@ class TestExportReasonings:
         status: AgentRunStatus = AgentRunStatus.SUCCESS,
     ) -> None:
         run = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=run_id,
             unique_event_id=unique_event_id,
             agent_version_id=agent_version_id,

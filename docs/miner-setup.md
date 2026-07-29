@@ -1,5 +1,13 @@
 # Miner Setup Guide
 
+**Start here.** This is the entry point to the Numinous documentation — it walks you end to end, and links out to everything else.
+
+## One track, one pool
+
+There is currently **one track and one pool**: the re-forecasting pool on the **SIGNAL** track. It receives the entire daily emission.
+
+The MAIN (information) track still accepts an agent and still executes it, but it is unscored and earns nothing. Everything in this guide therefore assumes SIGNAL. The **Reasoning pool is expected to return in the near future** — your agent can already return a `reasoning` string alongside its forecast, and it is stored, so adding one now costs nothing and prepares you for that.
+
 ## Overview
 
 This guide walks you through:
@@ -9,18 +17,28 @@ This guide walks you through:
 4. Testing your agent locally
 5. Submitting your agent to the network
 
-For competition rules and constraints, see [subnet-rules.md](./subnet-rules.md).
-For system architecture details, see [architecture.md](./architecture.md).
-For gateway API reference (Chutes AI, Desearch AI, Numinous Indicia, etc.), see [gateway-guide.md](./gateway-guide.md).
-For how miner-submitted reasoning is scored (and why a large share of emissions depends on it), see [reasoning-scoring.md](./reasoning-scoring.md).
+**The rest of the documentation:**
+
+| Document | What it covers |
+|---|---|
+| [subnet-rules.md](./subnet-rules.md) | Competition rules: execution limits, memory, event selection, penalties, deregistration |
+| [scoring-system.md](./scoring-system.md) | How you are scored and paid — the formula, coverage, and how the pool is split |
+| [gateway-guide.md](./gateway-guide.md) | Every API endpoint your agent can call, with request/response reference |
+| [architecture.md](./architecture.md) | How the subnet works end to end: sandboxes, validators, scoring mechanics |
+| [wallet-setup.md](./wallet-setup.md) | Creating and registering a Bittensor wallet |
+| [reasoning-scoring.md](./reasoning-scoring.md) | How reasoning is scored — inactive today, returning soon |
+| [validator-setup.md](./validator-setup.md) | For validators, not miners |
 
 The key rules to follow as a miner are the following:
+- **Your agent re-forecasts every live event, every interval** — and carries [memory](./subnet-rules.md#memory) between runs
+- **You are scored against the market price, not the outcome alone.** Matching the market scores exactly 0; beating it scores negative
+- **Missing forecasts are never imputed or retried** — they cost you coverage, and falling below 85% zeroes your rewards
 - **The sandbox times out after 240s**
 - **The total cost limit on API calls depends on each service and its paid by the miner**
 - **DO NOT include dynamic timestamps or random data in prompts to make sure our caching system is hit across different validator executions**.
 - **A forecasting agent can only be updated at most once every 3 days**
 
-All events are currently 3 days events. The length of the immunity period is 7 days to ensure any time before registration.
+Events have no fixed length — each one runs until the underlying market resolves. A newly registered miner is immune from deregistration until it enters the ranking, which takes until roughly `T+10` from registration — the 7-day scoring horizon, then three scored days before you can rank.
 
 ---
 
@@ -30,25 +48,21 @@ All events are currently 3 days events. The length of the immunity period is 7 d
 - Python 3.11+
 - Text editor or IDE
 - `numi` CLI tool (installed via this repo)
-- **Chutes AI API key** (for local testing with LLMs)
-- **Desearch AI API key** (for local testing with web/Twitter search)
-- **OpenAI API key** (for local testing with GPT-5 models)
-- **Perplexity API key** (for local testing with reasoning LLMs)
-- **Vericore API key** (for local testing with statement verification)
-- **OpenRouter API key** (for local testing with multi-provider LLM access)
-- **Numinous Signals API key** (for local testing with scored news signals)
-- **Unusual Whales API key** (for local testing with financial news headlines)
+- An API key for whichever gateway services your agent uses (see below)
 
-**Get API Keys:**
-- Chutes AI: https://chutes.ai/app (information track)
-- LunarCrush: https://lunarcrush.com (information track)
-- Numinous Signals: https://eversight.numinouslabs.io/api-keys (both signal and information track)
-- Unusual Whales: https://unusualwhales.com/pricing?product=api (information track)
-- OpenAI: https://platform.openai.com/api-keys (both but signal track is limited to responses/inference)
-- Desearch AI: https://desearch.ai/ (information track)
-- Perplexity: https://www.perplexity.ai/settings/api (information track)
-- Vericore: https://vericore.ai (information track)
-- OpenRouter: https://openrouter.ai/settings/keys (information track)
+**Get API Keys**
+
+These are the only services reachable on the SIGNAL track. Anything else returns **403** — the authoritative allowlist is [`track_config.py`](../neurons/validator/sandbox/signing_proxy/track_config.py).
+
+| Service | Key | Notes |
+|---|---|---|
+| OpenAI | https://platform.openai.com/api-keys | Limited to `/responses/inference` — no web search |
+| OpenRouter | https://openrouter.ai/settings/keys | Limited to `/chat/completions/inference` |
+| Lightning Rod | https://lightningrod.ai | OpenAI-compatible chat completions |
+| Numinous Signals | https://eversight.numinouslabs.io/api-keys | Scored news signals, causal drivers, deep research, corpus search |
+| Numinous Indicia | — | Free, no key or linking required |
+
+Full request/response reference for each: [gateway-guide.md](./gateway-guide.md).
 
 **⚠️ OpenAI Security Recommendation:**
 
@@ -118,28 +132,40 @@ def agent_main(event_data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Forecast binary event probability.
 
+    Called once per event, per interval — the same event reaches your agent
+    again every interval until its cutoff.
+
     Args:
         event_data: {
             "event_id": str,        # Unique event identifier
             "title": str,           # Short event title
             "description": str,     # Full event description
             "cutoff": str,          # ISO 8601 datetime (prediction deadline)
-            "metadata": dict        # Event-specific data
+            "metadata": dict,       # Event-specific data
+            "memory": str | None    # What you returned last interval, None on the first run
         }
 
     Returns:
         {
             "event_id": str,        # Echo back from input
-            "prediction": float     # Probability in [0.0, 1.0]
+            "prediction": float,    # Probability in [0.0, 1.0]
+            "memory": str | None,   # Optional, <= 32768 chars, handed back next interval
+            "reasoning": str | None,      # Optional
+            "sources": list[str] | None   # Optional
         }
     """
+    previous_memory = event_data.get("memory")
+
     prediction = 0.5  # Your logic here
 
     return {
         "event_id": event_data["event_id"],
-        "prediction": prediction
+        "prediction": prediction,
+        "memory": f"last forecast: {prediction}"
     }
 ```
+
+**Memory:** `memory` is the only channel that carries state between intervals. It is scoped per `(miner, event)` — it never crosses events and never crosses miners — and values over 32,768 characters are truncated rather than rejected. Omit the key and you receive `None` every interval. See [`memory_example.py`](../neurons/miner/agents/memory_example.py) for a worked belief-updating agent.
 
 **Constraints:** See [subnet-rules.md](./subnet-rules.md) for execution timeouts, code size limits, and available libraries.
 
@@ -160,107 +186,9 @@ def agent_main(event_data: Dict[str, Any]) -> Dict[str, Any]:
     }
 ```
 
-### LLM-Based Agent (Using Chutes AI)
+### Using OpenAI (LLM Inference)
 
-**Important:** All agents MUST use the proxy URL and include `RUN_ID` in their requests.
-
-```python
-import os
-from typing import Dict, Any
-from langchain_openai import ChatOpenAI
-
-# Required: Get proxy URL and run ID from environment
-PROXY_URL = os.getenv("SANDBOX_PROXY_URL", "http://sandbox_proxy")
-RUN_ID = os.getenv("RUN_ID")  # Required - validator provides this
-
-# Validate required environment variables
-if not RUN_ID:
-    raise ValueError("RUN_ID environment variable is required but not set")
-
-# Initialize LLM pointing to gateway
-CHUTES_URL = f"{PROXY_URL}/api/gateway/chutes"
-
-llm = ChatOpenAI(
-    model="deepseek-ai/DeepSeek-V3-0324",
-    base_url=CHUTES_URL,
-    api_key="not-needed",
-    extra_body={"run_id": RUN_ID},
-)
-
-def agent_main(event_data: Dict[str, Any]) -> Dict[str, Any]:
-    """LLM-based forecasting agent."""
-
-    prompt = f"""You are a forecasting expert. Analyze this event and provide a probability between 0 and 1.
-
-    Event: {event_data['description']}
-    Cutoff: {event_data['cutoff']}
-
-    Return ONLY a number between 0 and 1."""
-
-    response = llm.invoke(prompt)
-    prediction_text = response.content.strip()
-    prediction = float(prediction_text)
-
-    # Ensure valid range
-    prediction = max(0.0, min(1.0, prediction))
-
-    return {
-        "event_id": event_data["event_id"],
-        "prediction": prediction
-    }
-```
-
-### Using Desearch (Web/Twitter Search)
-
-```python
-import os
-import httpx
-from typing import Dict, Any
-
-# Required: Get proxy URL and run ID
-PROXY_URL = os.getenv("SANDBOX_PROXY_URL", "http://sandbox_proxy")
-RUN_ID = os.getenv("RUN_ID")
-
-if not RUN_ID:
-    raise ValueError("RUN_ID environment variable is required but not set")
-
-DESEARCH_URL = f"{PROXY_URL}/api/gateway/desearch"
-
-def agent_main(event_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Uses Desearch to gather information."""
-
-    # Search for relevant information
-    payload = {
-        "prompt": f"Search for information about: {event_data['title']}",
-        "tools": ["WEB"],  # or ["TWITTER"]
-        "model": "NOVA",
-        "streaming": False,
-        "count": 10,
-        "run_id": str(RUN_ID),
-    }
-
-    response = httpx.post(
-        f"{DESEARCH_URL}/ai/search",
-        json=payload,
-        timeout=60.0,
-    )
-
-    results = response.json()
-
-    # Analyze results and compute prediction
-    prediction = analyze_results(results, event_data)
-
-    return {
-        "event_id": event_data["event_id"],
-        "prediction": prediction
-    }
-
-def analyze_results(results, event_data):
-    # Your analysis logic here
-    return 0.5
-```
-
-### Using OpenAI (LLM with Web Search)
+The SIGNAL track allows the **inference** route only — `web_search` and other built-in tools return 400. Gather evidence through the signals endpoints and pass it in as context.
 
 ```python
 import os
@@ -277,7 +205,7 @@ if not RUN_ID:
 OPENAI_URL = f"{PROXY_URL}/api/gateway/openai"
 
 def agent_main(event_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Uses OpenAI with built-in web search for forecasting."""
+    """Uses OpenAI inference for forecasting."""
 
     # Build forecast prompt
     prompt = f"""Forecast the probability (0.0-1.0) of this event occurring:
@@ -286,25 +214,20 @@ Event: {event_data['title']}
 Description: {event_data['description']}
 Deadline: {event_data['cutoff']}
 
-Before making your forecast, systematically research:
-1. Search for recent news and developments
-2. Search for expert analysis and predictions
-3. Search for historical data or precedents
+Weigh the base rate, the time remaining, and any evidence provided above.
 
 Return only:
 PREDICTION: [number 0.0-1.0]
 REASONING: [2-4 sentences]"""
 
-    # Call OpenAI with web_search tool
     response = httpx.post(
-        f"{OPENAI_URL}/responses",
+        f"{OPENAI_URL}/responses/inference",
         json={
             "model": "gpt-5-mini",
             "input": [
                 {"role": "developer", "content": "You are an expert forecaster."},
                 {"role": "user", "content": prompt}
             ],
-            "tools": [{"type": "web_search"}],  # Enable web search
             "run_id": RUN_ID,
         },
         timeout=120.0,
@@ -337,121 +260,6 @@ def parse_prediction(text: str) -> float:
             pred = float(line.replace("PREDICTION:", "").strip())
             return max(0.0, min(1.0, pred))
     return 0.5
-```
-
-### Using Perplexity
-
-```python
-import os
-import httpx
-from typing import Dict, Any
-
-PROXY_URL = os.getenv("SANDBOX_PROXY_URL", "http://sandbox_proxy")
-RUN_ID = os.getenv("RUN_ID")
-
-if not RUN_ID:
-    raise ValueError("RUN_ID environment variable is required but not set")
-
-PERPLEXITY_URL = f"{PROXY_URL}/api/gateway/perplexity"
-
-def agent_main(event_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Uses Perplexity reasoning LLM with web search for forecasting."""
-
-    prompt = f"""Forecast the probability (0.0-1.0) of this event occurring:
-
-Event: {event_data['title']}
-Description: {event_data['description']}
-Deadline: {event_data['cutoff']}
-
-Search for recent information and provide:
-PREDICTION: [number 0.0-1.0]
-REASONING: [2-4 sentences]"""
-
-    response = httpx.post(
-        f"{PERPLEXITY_URL}/chat/completions",
-        json={
-            "model": "sonar-reasoning-pro",
-            "messages": [
-                {"role": "system", "content": "You are an expert forecaster."},
-                {"role": "user", "content": prompt}
-            ],
-            "temperature": 0.2,
-            "search_recency_filter": "week",
-            "run_id": RUN_ID,
-        },
-        timeout=120.0,
-    )
-
-    result = response.json()
-
-    text = result["choices"][0]["message"]["content"]
-    citations = result.get("citations", [])
-
-    prediction = parse_prediction(text)
-
-    return {
-        "event_id": event_data["event_id"],
-        "prediction": prediction
-    }
-
-def parse_prediction(text: str) -> float:
-    """Parse PREDICTION: value from response."""
-    for line in text.split("\n"):
-        if line.startswith("PREDICTION:"):
-            pred = float(line.replace("PREDICTION:", "").strip())
-            return max(0.0, min(1.0, pred))
-    return 0.5
-```
-
-### Using Vericore (Statement Verification)
-
-```python
-import os
-import httpx
-from typing import Dict, Any
-
-PROXY_URL = os.getenv("SANDBOX_PROXY_URL", "http://sandbox_proxy")
-RUN_ID = os.getenv("RUN_ID")
-
-if not RUN_ID:
-    raise ValueError("RUN_ID environment variable is required but not set")
-
-VERICORE_URL = f"{PROXY_URL}/api/gateway/vericore"
-
-def agent_main(event_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Uses Vericore to verify event statement against web evidence."""
-
-    statement = f"{event_data['title']}. {event_data['description']}"
-
-    response = httpx.post(
-        f"{VERICORE_URL}/calculate-rating",
-        json={
-            "statement": statement,
-            "run_id": RUN_ID,
-        },
-        timeout=120.0,
-    )
-
-    result = response.json()
-    summary = result["evidence_summary"]
-
-    # Use evidence metrics to derive prediction
-    entailment = summary.get("entailment", 0.0)
-    contradiction = summary.get("contradiction", 0.0)
-    neutral = summary.get("neutral", 0.0)
-
-    total = entailment + contradiction + neutral
-    if total > 0:
-        prediction = entailment / total
-    else:
-        prediction = 0.5
-
-    prediction = max(0.0, min(1.0, prediction))
-
-    return {
-        "event_id": event_data["event_id"],
-        "prediction": prediction
-    }
 ```
 
 ### Using Numinous Indicia (Geopolitical Signals)
@@ -497,95 +305,38 @@ def agent_main(event_data: Dict[str, Any]) -> Dict[str, Any]:
     }
 ```
 
-A complete working agent combining Indicia signals with OpenAI web search is available at `neurons/miner/agents/indicia_openai_example.py`.
+A complete working agent combining Indicia signals with an LLM is available at [`indicia_openai_example.py`](../neurons/miner/agents/indicia_openai_example.py), and the equivalent for Numinous Signals at [`signals_openai_example.py`](../neurons/miner/agents/signals_openai_example.py). Both call the SIGNAL-reachable `/responses/inference` route.
 
-### Using Indicia RSS Feeds
+## Example Agents in This Repo
 
-Indicia also exposes a curated RSS aggregator at `https://indicia.numinouslabs.io/rss/articles`, reachable through the [public data proxy](./gateway-guide.md#public-data-proxy). The domain is whitelisted as `indicia_rss` (free, no API key linking). Use it to pull news articles grouped by pipeline, category, or feed variant.
+| File | What it shows | SIGNAL-ready |
+|---|---|---|
+| `memory_example.py` | Belief updating across intervals via `memory` | Yes |
+| `lightning_rod_example.py` | Lightning Rod chat completions with retry/backoff | Yes |
+| `signals_openai_example.py` | Numinous Signals + OpenAI inference | Yes |
+| `indicia_openai_example.py` | Indicia OSINT signals + OpenAI inference | Yes |
+| `openrouter_example.py` | OpenRouter chat completions | Switch to the `/inference` route |
 
-**Quick reference**
-
-| Need | Query params |
-|---|---|
-| All geopolitical news | `pipeline=geopolitical` |
-| One category only | `categories=crypto` |
-| Multi-category | `categories=middleeast,energy,intel` |
-| Specific variant (e.g. all intel) | `variants=intel` |
-| Pipeline with cap | `pipeline=middleeast&max_articles=50` |
-
-**Pipeline groups**
-
-| Pipeline | Categories included |
-|---|---|
-| `geopolitical` | politics, us, europe, middleeast, asia, africa, latam, gov, thinktanks, crisis, intel |
-| `middleeast` | middleeast, intel, crisis |
-| `commodity` | commodity_news, gold_silver, energy, mining_news, critical_minerals, base_metals, mining_companies, supply_chain, commodity_regulation |
-| `finance` | finance, markets, forex, bonds, commodities, crypto, centralbanks, economic, derivatives, fintech, regulation, institutional, analysis, gcc |
-| `tech` | tech, ai, startups, vcblogs, regional_startups, security, policy, cloud, dev, hardware |
-
-**Variants:** `full` (general news), `tech`, `finance`, `commodity`, `intel`.
-
-**Example**
-
-```python
-import json
-import os
-import httpx
-
-PROXY_URL = os.getenv("SANDBOX_PROXY_URL", "http://sandbox_proxy")
-RUN_ID = os.getenv("RUN_ID")
-
-INDICIA_RSS_URL = "https://indicia.numinouslabs.io/rss/articles"
-
-def fetch_indicia_rss(**query_params) -> list[dict]:
-    response = httpx.post(
-        f"{PROXY_URL}/api/gateway/public-data/fetch",
-        json={
-            "run_id": RUN_ID,
-            "url": INDICIA_RSS_URL,
-            "method": "GET",
-            "query_params": {k: str(v) for k, v in query_params.items()},
-            "timeout": 30.0,
-        },
-        timeout=60.0,
-    )
-    response.raise_for_status()
-    return json.loads(response.json()["response_body"])
-
-# By pipeline group
-geopolitical = fetch_indicia_rss(pipeline="geopolitical")
-
-# By category (single or comma-separated)
-crypto_news = fetch_indicia_rss(categories="crypto,fintech")
-
-# By variant
-intel_only = fetch_indicia_rss(variants="intel")
-
-# Pipeline with article cap
-middle_east = fetch_indicia_rss(pipeline="middleeast", max_articles=50)
-```
-
-Notes:
-- The proxy enforces a `https://indicia.numinouslabs.io/rss/articles` URL prefix — only this path is reachable, not other Indicia endpoints.
-- Responses are capped at 5MB; use `pipeline` or `max_articles` to keep payloads reasonable when pulling broad slices like `ALL_FEEDS` (~230 feeds).
-- Cost is `$0.00`. Run `numi services sources` to confirm the source is currently whitelisted.
+Anything else in that directory targets a MAIN-only service and will return 403 on SIGNAL.
 
 ## Important Notes
 
 1. **Always use `SANDBOX_PROXY_URL`** - Never hardcode API URLs
 2. **Always include `RUN_ID`** - Required for tracking and authentication
-3. **Check hot models** - Visit https://chutes.ai/app to see available models before using them
+3. **Stay on the allowlist** - Only the five SIGNAL prefixes resolve; anything else returns 403
 4. **Implement retry logic** - Handle API errors with proper fallback strategies
+5. **Never raise** - Return a fallback forecast instead, so the coverage cell stays filled
 
 ## Best Practices
 
 ### Error Handling
 
-Always implement robust error handling for API calls. Chutes AI can return these errors:
+Always implement robust error handling for API calls. Providers commonly return:
 
-- **503 Service Unavailable** - Cold model (no active instances), implement exponential backoff
-- **404 Not Found** - Model doesn't exist, check https://chutes.ai/app for available models
+- **503 Service Unavailable** - Provider temporarily unavailable, implement exponential backoff
+- **404 Not Found** - Model doesn't exist, verify the identifier with the provider
 - **429 Too Many Requests** - Rate limit exceeded, implement exponential backoff
+- **403 Forbidden** - Endpoint is not on the SIGNAL allowlist
 
 **Example retry logic:**
 
@@ -741,19 +492,16 @@ The CLI will prompt you for:
 
 # Tracks
 
-A miner can participate in multiple **tracks** simultaneously. Each track is an independent competition — you upload a separate agent per track, and each one is scored and weighted independently against other agents on that same track. Think of it as running multiple miners from a single registration.
-
+The subnet supports multiple **tracks**, but only **SIGNAL** is scored — it receives the entire daily emission through the re-forecasting pool. MAIN still runs your agent but earns nothing, so upload to SIGNAL.
 
 **Key points:**
 - You can have **one active agent per track** — uploading to a track replaces only that track's agent
-- Each track has its own **scoring pool** — you compete only against other miners on the same track
-- Tracks may have different **sandbox rules** (e.g. which gateway endpoints are accessible)
-- Service credentials linked for the MAIN track **fall back** to all other tracks — you only need track-specific credentials if you want separate API keys
+- Each track has its own **sandbox rules**. SIGNAL is restricted to five endpoint prefixes; anything else returns 403
 - If you don't submit an agent for a track, you simply don't participate in it — no penalty
 
-Available tracks are defined in [`neurons/validator/models/track.py`](../neurons/validator/models/track.py). Per-track sandbox rules (endpoint allowlists) are in [`neurons/validator/sandbox/signing_proxy/track_config.py`](../neurons/validator/sandbox/signing_proxy/track_config.py).
+Available tracks are defined in [`neurons/validator/models/track.py`](../neurons/validator/models/track.py). Per-track endpoint allowlists are in [`neurons/validator/sandbox/signing_proxy/track_config.py`](../neurons/validator/sandbox/signing_proxy/track_config.py).
 
-When uploading, testing, or linking services, the CLI will prompt you to select a track. You can also pass `--track` explicitly to any command.
+When uploading, testing, or linking services, the CLI will prompt you to select a track. You can also pass `--track` explicitly to any command — use `-t SIGNAL`.
 
 ---
 
@@ -799,46 +547,15 @@ Run: numi services link
 
 ## Linking Services
 
-After uploading your agent, link your API accounts to cover API costs for LLM inference and search.
+After uploading your agent, link your API accounts to cover API costs. Only the services below are reachable on SIGNAL — Numinous Indicia is free and needs no linking.
 
-**Tracks & credentials:** Credentials linked for the MAIN track are used as a fallback for all other tracks. You only need to link track-specific credentials if you want separate API keys per track. Use `--track` to link for a specific track, or the CLI will prompt you.
+⚠️ **Re-link after every agent upload** — each code version needs its own link.
 
 **Security:** API keys are securely stored using external secret management and never exposed to validators.
 
-### Chutes AI (LLM Inference)
-
-Link your Chutes account to access higher budget for LLM API calls:
-
-```bash
-numi services link chutes
-```
-
-You'll be prompted for:
-- Your Chutes API key (get from https://chutes.ai/app)
-
-**Cost Tiers:**
-- Free tier (default): $0.01 per agent run
-- Paid tier (your key): $0.10 per agent run
-
-### Desearch AI (Search & Data)
-
-Link your Desearch account to cover search API costs:
-
-```bash
-numi services link desearch
-```
-
-You'll be prompted for:
-- Your Desearch API key (get from https://console.desearch.ai)
-- Coldkey password (to sign the linking)
-
-**Cost Tiers:**
-- Free tier (default): $0.01 per agent run
-- Paid tier (your key): $0.10 per agent run
-
 ### OpenAI (LLM Inference)
 
-Link your OpenAI account for GPT-5 series models with web search:
+Link your OpenAI account for GPT-5 series models:
 
 ```bash
 numi services link openai
@@ -847,48 +564,7 @@ numi services link openai
 You'll be prompted for:
 - Your OpenAI API key (get from https://platform.openai.com/api-keys)
 
-**Note:** OpenAI requires linking your own API key. There is no free tier - you must link your account to use OpenAI models.
-
-### Perplexity
-
-Link your Perplexity account for reasoning LLMs with web search:
-
-```bash
-numi services link perplexity
-```
-
-You'll be prompted for:
-- Your Perplexity API key (get from https://www.perplexity.ai/settings/api)
-
-**Note:** Perplexity has no free tier. You must link your account to use Perplexity models.
-
-### Vericore (Statement Verification)
-
-Link your Vericore account for evidence-based statement verification:
-
-```bash
-numi services link vericore
-```
-
-You'll be prompted for:
-- Your Vericore API key (get from https://vericore.ai)
-
-**Note:** Vericore has no free tier. You must link your account to use Vericore. Each call costs $0.05.
-
-**Important:** Re-link after each agent upload - each code version needs its own link.
-
-### LunarCrush (Social Intelligence)
-
-Link your LunarCrush account for social media sentiment and trend data:
-
-```bash
-numi services link lunar-crush
-```
-
-You'll be prompted for:
-- Your LunarCrush API key (get from https://lunarcrush.com)
-
-**Note:** LunarCrush has no free tier. You must link your account. Subscription-based pricing (500 req/min, 100K req/day).
+**Note:** OpenAI requires linking your own API key. There is no free tier. On SIGNAL only `/responses/inference` is reachable — the web-search route returns 403.
 
 ### OpenRouter (Multi-Provider LLMs)
 
@@ -901,7 +577,20 @@ numi services link openrouter
 You'll be prompted for:
 - Your OpenRouter API key (get from https://openrouter.ai/settings/keys)
 
-**Note:** OpenRouter has no free tier. You must link your account to use OpenRouter models.
+**Note:** OpenRouter has no free tier. On SIGNAL only `/chat/completions/inference` is reachable — provider-run web search returns 403.
+
+### Lightning Rod (LLM Inference)
+
+Link your Lightning Rod account for OpenAI-compatible chat completions:
+
+```bash
+numi services link lightning_rod
+```
+
+You'll be prompted for:
+- Your Lightning Rod API key (get from https://lightningrod.ai)
+
+**Note:** Lightning Rod has no free tier. Cost is metered per token — $1.00 per 1M input tokens, $6.00 per 1M output tokens.
 
 ### Numinous Signals (Scored News Signals)
 
@@ -914,25 +603,7 @@ numi services link numinous-signals
 You'll be prompted for:
 - Your Numinous Signals API key (get from https://eversight.numinouslabs.io/api-keys)
 
-**Note:** Numinous Signals has no free tier. You must link your Eversight account. Uses your Eversight credits. The same link also unlocks the causal-drivers, deep-research, and corpus search/fetch endpoints (all free, but authentication is required). See the [gateway guide](gateway-guide.md#numinous-signals-endpoints) for the full endpoint list.
-
-### Unusual Whales (News Headlines)
-
-Link your Unusual Whales account for financial news headlines with ticker, source, and sentiment filtering:
-
-```bash
-numi services link unusual-whales
-```
-
-You'll be prompted for:
-- Your Unusual Whales API key (get from https://unusualwhales.com/pricing?product=api)
-
-**Note:** Unusual Whales has no free tier. You must link your account to use Unusual Whales endpoints.
-
-Check your linked services anytime:
-```bash d
-numi services list
-```
+**Note:** Numinous Signals has no free tier. You must link your Eversight account. Uses your Eversight credits. The same link also unlocks the causal-drivers, deep-research, and corpus search/fetch endpoints (all free, but authentication is required). See the [gateway guide](./gateway-guide.md#numinous-signals-endpoints) for the full endpoint list.
 
 ## Activation Schedule
 
@@ -948,16 +619,13 @@ numi upload-agent          # Submit agent to network
 numi list-agents           # List your uploaded agents
 numi inspect-agent         # View/download agent code
 
-# Service Linking
-numi services link chutes     # Link Chutes API key
-numi services link desearch   # Link Desearch API key
-numi services link openai     # Link OpenAI API key
-numi services link perplexity # Link Perplexity API key
-numi services link vericore   # Link Vericore API key
+# Service Linking (SIGNAL track)
+numi services link openai              # Link OpenAI API key
 numi services link openrouter          # Link OpenRouter API key
+numi services link lightning_rod       # Link Lightning Rod API key
 numi services link numinous-signals    # Link Numinous Signals API key
 numi services list                     # Check linked services
-numi services unlink chutes   # Unlink a service
+numi services unlink openai            # Unlink a service
 
 # Local Testing
 numi test-agent            # Test agent with real events
@@ -977,5 +645,7 @@ numi fetch-logs            # Fetch validator execution logs
 
 **Next Steps:**
 1. Read [subnet-rules.md](./subnet-rules.md) for competition rules and constraints
-2. Review [architecture.md](./architecture.md) for system details
-3. Check example agents in `neurons/miner/agents/`
+2. Read [scoring-system.md](./scoring-system.md) to understand how you are scored and paid
+3. Use [gateway-guide.md](./gateway-guide.md) as the endpoint reference while writing your agent
+4. Review [architecture.md](./architecture.md) for system details
+5. Check example agents in `neurons/miner/agents/`

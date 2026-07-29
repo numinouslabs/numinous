@@ -8,7 +8,6 @@ from neurons.validator.models.agent_runs import AgentRunsModel, AgentRunStatus
 from neurons.validator.models.event import EventsModel, EventStatus
 from neurons.validator.models.miner_agent import MinerAgentsModel
 from neurons.validator.models.reasoning import ReasoningForExport
-from neurons.validator.models.score import ScoresModel
 from neurons.validator.models.sources import (
     ImpactBucket,
     PersistenceBucket,
@@ -141,148 +140,6 @@ class TestDbOperationsPart3(TestDbOperationsBase):
             ("event2",),
         ]
 
-    async def test_get_predictions_ranked(self, db_operations: DatabaseOperations):
-        events = [
-            EventsModel(
-                unique_event_id="event1",
-                event_id="event1",
-                market_type="market_type1",
-                event_type="type1",
-                description="First event",
-                outcome="1",
-                status=EventStatus.SETTLED,
-                metadata='{"key": "value1"}',
-                resolved_at="2024-12-30T14:30:00+00:00",
-            ),
-            EventsModel(
-                unique_event_id="event2",
-                event_id="event2",
-                market_type="market_type2",
-                event_type="type2",
-                description="Second event",
-                outcome="0",
-                status=EventStatus.SETTLED,
-                metadata='{"key": "value2"}',
-                resolved_at="2024-12-31T14:30:00+00:00",
-            ),
-        ]
-
-        await db_operations.upsert_events(events=events)
-
-        # Create test scores for each event
-        scores = []
-
-        for event in events:
-            for i in range(3):
-                # 3 miners per event
-                miner_uid = i + 1
-                scores.append(
-                    ScoresModel(
-                        event_id=event.event_id,
-                        miner_uid=miner_uid,
-                        miner_hotkey=f"hk_{miner_uid}",
-                        track="MAIN",
-                        prediction=miner_uid / 10,
-                        event_score=0.5,
-                        spec_version=1,
-                    )
-                )
-
-        await db_operations.insert_scores(scores)
-
-        # Test with moving window of 1 (should return top 1 events)
-        result_small_window = await db_operations.get_predictions_ranked(moving_window=1)
-
-        # Should return 3 rows (1 events × 3 miners)
-        assert result_small_window == [
-            (
-                "event2",
-                1,
-                "0",
-                1,
-                "hk_1",
-                0.1,
-            ),
-            (
-                "event2",
-                1,
-                "0",
-                2,
-                "hk_2",
-                0.2,
-            ),
-            (
-                "event2",
-                1,
-                "0",
-                3,
-                "hk_3",
-                0.3,
-            ),
-        ]
-
-        # Test with moving window of 100
-        result_large_window = await db_operations.get_predictions_ranked(moving_window=100)
-
-        # Should return 6 rows (2 events × 3 miners)
-        assert result_large_window == [
-            (
-                "event2",
-                1,
-                "0",
-                1,
-                "hk_1",
-                0.1,
-            ),
-            (
-                "event2",
-                1,
-                "0",
-                2,
-                "hk_2",
-                0.2,
-            ),
-            (
-                "event2",
-                1,
-                "0",
-                3,
-                "hk_3",
-                0.3,
-            ),
-            (
-                "event1",
-                2,
-                "1",
-                1,
-                "hk_1",
-                0.1,
-            ),
-            (
-                "event1",
-                2,
-                "1",
-                2,
-                "hk_2",
-                0.2,
-            ),
-            (
-                "event1",
-                2,
-                "1",
-                3,
-                "hk_3",
-                0.3,
-            ),
-        ]
-
-    async def test_get_predictions_ranked_no_events(
-        self, db_operations: DatabaseOperations, db_client: DatabaseClient
-    ):
-        result = await db_operations.get_predictions_ranked(moving_window=2)
-
-        assert len(result) == 0
-
     async def test_get_events(self, db_operations: DatabaseOperations):
         events = [
             EventsModel(
@@ -377,6 +234,7 @@ class TestDbOperationsPart3(TestDbOperationsBase):
         await db_operations.upsert_miner_agents([agent])
 
         run = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=run_id,
             unique_event_id=unique_event_id,
             agent_version_id=version_id,

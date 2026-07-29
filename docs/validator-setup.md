@@ -41,7 +41,7 @@ For system architecture details, see [architecture.md](./architecture.md).
 2. **Pull Agent Code:** Download Python agent code submitted by miners via API
 3. **Execute in Sandboxes:** Run each miner's agent in isolated Docker containers
 4. **Collect Predictions:** Store predictions with run_id (execution UUID) and version_id (agent version)
-5. **Score Performance:** Compute a Brier score over miner predictions
+5. **Report Forecasts:** Send forecasts and updated agent memory to the backend, which computes the scores
 6. **Set Weights:** Update Bittensor subnet weights based on scores
 
 **Sandbox Architecture:**

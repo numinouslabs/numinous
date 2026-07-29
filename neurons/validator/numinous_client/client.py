@@ -34,12 +34,16 @@ from neurons.validator.models.numinous_client import (
     LunarCrushTimeSeriesRequest,
     LunarCrushTopicRequest,
     LunarCrushWhatsupRequest,
+    MemoryCommitRequestBody,
+    MemoryCommitResponse,
+    MemoryEntry,
+    MemoryPullRequestBody,
+    MemoryPullResponse,
     OpenRouterInferenceRequest,
     PostAgentLogsRequestBody,
     PostAgentRunsRequestBody,
     PostPredictionsRequestBody,
     PostReasoningRequestBody,
-    PostScoresRequestBody,
     PostSourcesRequestBody,
     VericoreCalculateRatingRequest,
 )
@@ -49,6 +53,8 @@ from neurons.validator.utils.config import NuminousEnvType
 from neurons.validator.utils.git import commit_short_hash
 from neurons.validator.utils.logger.logger import NuminousLogger
 from neurons.validator.version import __version__
+
+MEMORY_PULL_BATCH_SIZE = 500
 
 
 class NuminousClient:
@@ -229,26 +235,6 @@ class NuminousClient:
 
                 return await response.json()
 
-    async def post_scores(self, body: PostScoresRequestBody):
-        if not isinstance(body, PostScoresRequestBody):
-            raise ValueError("Invalid parameter")
-
-        assert len(body.results) > 0
-
-        data = body.model_dump_json()
-
-        auth_headers = self.make_auth_headers(data=data)
-
-        async with self.create_session(
-            other_headers={**auth_headers, "Content-Type": "application/json"}
-        ) as session:
-            path = "/api/v1/validators/results"
-
-            async with session.post(path, data=data) as response:
-                response.raise_for_status()
-
-                return await response.json()
-
     async def post_reasonings(self, body: PostReasoningRequestBody):
         if not isinstance(body, PostReasoningRequestBody):
             raise ValueError("Invalid parameter")
@@ -288,6 +274,56 @@ class NuminousClient:
                 response.raise_for_status()
 
                 return await response.json()
+
+    async def pull_memory(self, body: MemoryPullRequestBody) -> MemoryPullResponse:
+        if not isinstance(body, MemoryPullRequestBody):
+            raise ValueError("Invalid parameter")
+
+        assert len(body.pairs) > 0
+
+        items: list[MemoryEntry] = []
+
+        for start in range(0, len(body.pairs), MEMORY_PULL_BATCH_SIZE):
+            batch = body.pairs[start : start + MEMORY_PULL_BATCH_SIZE]
+            data = MemoryPullRequestBody(
+                pairs=batch, interval_datetime=body.interval_datetime
+            ).model_dump_json()
+
+            auth_headers = self.make_auth_headers(data=data)
+
+            async with self.create_session(
+                other_headers={**auth_headers, "Content-Type": "application/json"}
+            ) as session:
+                path = "/api/v1/validators/memory/pull"
+
+                async with session.post(path, data=data) as response:
+                    response.raise_for_status()
+
+                    batch_response = MemoryPullResponse.model_validate(await response.json())
+
+            items.extend(batch_response.items)
+
+        return MemoryPullResponse(items=items, count=len(items))
+
+    async def commit_memory(self, body: MemoryCommitRequestBody) -> MemoryCommitResponse:
+        if not isinstance(body, MemoryCommitRequestBody):
+            raise ValueError("Invalid parameter")
+
+        assert len(body.entries) > 0
+
+        data = body.model_dump_json()
+
+        auth_headers = self.make_auth_headers(data=data)
+
+        async with self.create_session(
+            other_headers={**auth_headers, "Content-Type": "application/json"}
+        ) as session:
+            path = "/api/v1/validators/memory/commit"
+
+            async with session.post(path, data=data) as response:
+                response.raise_for_status()
+
+                return MemoryCommitResponse.model_validate(await response.json())
 
     async def post_agent_logs(self, body: PostAgentLogsRequestBody):
         if not isinstance(body, PostAgentLogsRequestBody):

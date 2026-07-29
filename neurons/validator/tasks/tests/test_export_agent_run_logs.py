@@ -137,6 +137,7 @@ class TestExportAgentRunLogs:
 
         run_id = str(uuid4())
         run = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=run_id,
             unique_event_id="event_1",
             agent_version_id="agent_v1",
@@ -175,6 +176,7 @@ class TestExportAgentRunLogs:
         run_ids = [str(uuid4()) for _ in range(3)]
         for run_id in run_ids:
             run = AgentRunsModel(
+                interval_start_minutes=1000,
                 run_id=run_id,
                 unique_event_id="event_1",
                 agent_version_id="agent_v1",
@@ -212,6 +214,7 @@ class TestExportAgentRunLogs:
 
         for run_id in [run_id_success, run_id_fail]:
             run = AgentRunsModel(
+                interval_start_minutes=1000,
                 run_id=run_id,
                 unique_event_id="event_1",
                 agent_version_id="agent_v1",
@@ -262,6 +265,7 @@ class TestExportAgentRunLogs:
         run_ids = [str(uuid4()) for _ in range(2)]
         for run_id in run_ids:
             run = AgentRunsModel(
+                interval_start_minutes=1000,
                 run_id=run_id,
                 unique_event_id="event_1",
                 agent_version_id="agent_v1",
@@ -300,6 +304,7 @@ class TestExportAgentRunLogs:
         run_ids = [str(uuid4()) for _ in range(5)]
         for run_id in run_ids:
             run = AgentRunsModel(
+                interval_start_minutes=1000,
                 run_id=run_id,
                 unique_event_id="event_1",
                 agent_version_id="agent_v1",

@@ -10,6 +10,8 @@
 
 </div>
 
+### 👉 New here? Start with the **[Miner Setup Guide](docs/miner-setup.md)** — it is the entry point to all the documentation.
+
 ## Introduction
 
 Numinous (Subnet 6) is a **forecasting protocol** whose goal is to aggregate agents into **superhuman LLM forecasters**. The key principle is that instead of scoring predictions ($f(X)$) the subnet scores the underlying agentic models ($X$).
@@ -37,8 +39,8 @@ Validators spin up parallel sandboxes where miners are evaluated on batches of e
 ### Key Components
 
   * **The Sandbox:** Isolated execution environment with strict resource limits.
-  * **The Gateway:** A signing proxy allowing agents to access **Chutes (SN64)** for compute, **Desearch (SN22)** for live data, **OpenAI** for GPT-5 models, **Vericore** for statement verification, **LunarCrush** for social intelligence, **OpenRouter** for multi-provider LLM access, and **Numinous Signals** for event-relevant scored news signals without exposing validator keys.
-  * **Forecasting logic:** Agents execute once per event; only agent which were registered prior to broadcasting execute.
+  * **The Gateway:** A signing proxy allowing agents to reach **OpenAI**, **OpenRouter** and **Lightning Rod** for inference, plus **Numinous Signals** and **Numinous Indicia** for scored news and OSINT signals — all without exposing validator keys.
+  * **Forecasting logic:** Agents re-forecast every live event every interval, carrying a private memory blob between runs.
 
 📖 **[Read the full system architecture](docs/architecture.md)**
 
@@ -57,9 +59,9 @@ To survive in the Numinous arena, agents must adhere to strict constraints. Viol
 
 ### Scoring
 
-We utilize a **Winner-Takes-All** mechanism based on **Brier Score**. Agents are scored on their average performance over a rolling window of 100 events.
+Forecasts are scored against the **market's own price**, not the outcome alone: `S = (prediction − target)² − (market_price − target)²`, where the target is the market price 7 days later. Matching the market scores exactly 0 — it is the baseline you have to beat. Rewards are split by how far ahead of the field you are, and miners below **85% coverage** earn nothing.
 
-⚠️ **[Read the full subnet rules](docs/subnet-rules.md)**
+⚠️ **[Read the full subnet rules](docs/subnet-rules.md)** • 📊 **[Read the scoring system](docs/scoring-system.md)**
 
 
 -----
@@ -70,8 +72,10 @@ We utilize a **Winner-Takes-All** mechanism based on **Brier Score**. Agents are
 
 Develop and deploy forecasting agents that compete for the daily reward pool.
 
-  * [**Miner Setup Guide**](docs/miner-setup.md) – Installation, wallet registration, and deployment.
-  * [**Gateway Guide**](docs/gateway-guide.md) – How to use the Desearch and Chutes APIs.
+  * [**Miner Setup Guide**](docs/miner-setup.md) – **Start here.** Installation, wallet registration, writing an agent, and deployment.
+  * [**Subnet Rules**](docs/subnet-rules.md) – Execution limits, memory, event selection, penalties.
+  * [**Scoring System**](docs/scoring-system.md) – How you are scored and paid.
+  * [**Gateway Guide**](docs/gateway-guide.md) – Every API endpoint your agent can call.
 
 ### For Validators
 
@@ -92,23 +96,28 @@ Agents must adhere to the interface defined in the architecture. Code size is li
 ```python
 def agent_main(event_data: dict) -> dict:
     """
+    Called once per event, per interval — the same event comes back
+    every interval until its cutoff.
+
     Args:
         event_data: {
             "event_id": str,
             "title": str,
             "description": str,
-            "cutoff": str,  # ISO 8601
-            "metadata": dict
+            "cutoff": str,          # ISO 8601
+            "metadata": dict,
+            "memory": str | None,   # what you returned last interval
         }
 
     Returns:
         {
             "event_id": str,
-            "prediction": float  # 0.0 to 1.0
+            "prediction": float,    # 0.0 to 1.0
+            "memory": str | None,   # optional, <= 32768 chars
         }
     """
     # Logic goes here
-    return {"event_id": event_data["event_id"], "prediction": 0.75}
+    return {"event_id": event_data["event_id"], "prediction": 0.75, "memory": None}
 ```
 
 For details on available libraries and API access, refer to the [Gateway Guide](docs/gateway-guide.md).

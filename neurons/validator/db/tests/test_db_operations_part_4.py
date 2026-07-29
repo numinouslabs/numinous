@@ -63,6 +63,7 @@ class TestDbOperationsPart4(TestDbOperationsBase):
         await self._create_miner_agent(db_operations, "agent_v1", miner_uid=42)
 
         run = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=str(uuid4()),
             unique_event_id="event_123",
             agent_version_id="agent_v1",
@@ -97,6 +98,7 @@ class TestDbOperationsPart4(TestDbOperationsBase):
 
         # Insert initial run
         initial_run = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=run_id,
             unique_event_id="event_123",
             agent_version_id="agent_v1",
@@ -111,6 +113,7 @@ class TestDbOperationsPart4(TestDbOperationsBase):
 
         # Update with new status
         updated_run = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=run_id,
             unique_event_id="event_123",
             agent_version_id="agent_v1",
@@ -157,6 +160,7 @@ class TestDbOperationsPart4(TestDbOperationsBase):
 
         # Insert exported run
         exported_run = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=str(uuid4()),
             unique_event_id="event_1",
             agent_version_id="agent_v1",
@@ -170,6 +174,7 @@ class TestDbOperationsPart4(TestDbOperationsBase):
 
         # Insert unexported runs
         unexported_run_1 = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=str(uuid4()),
             unique_event_id="event_2",
             agent_version_id="agent_v2",
@@ -182,6 +187,7 @@ class TestDbOperationsPart4(TestDbOperationsBase):
         await db_operations.upsert_agent_runs([unexported_run_1])
 
         unexported_run_2 = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=str(uuid4()),
             unique_event_id="event_3",
             agent_version_id="agent_v3",
@@ -212,6 +218,7 @@ class TestDbOperationsPart4(TestDbOperationsBase):
         # Insert 5 unexported runs
         for i in range(5):
             run = AgentRunsModel(
+                interval_start_minutes=1000,
                 run_id=str(uuid4()),
                 unique_event_id=f"event_{i}",
                 agent_version_id=f"agent_v{i}",
@@ -243,6 +250,7 @@ class TestDbOperationsPart4(TestDbOperationsBase):
         run_2_id = str(uuid4())
 
         run_1 = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=run_1_id,
             unique_event_id="event_1",
             agent_version_id="agent_v1",
@@ -255,6 +263,7 @@ class TestDbOperationsPart4(TestDbOperationsBase):
         await db_operations.upsert_agent_runs([run_1])
 
         run_2 = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=run_2_id,
             unique_event_id="event_2",
             agent_version_id="agent_v2",
@@ -283,65 +292,6 @@ class TestDbOperationsPart4(TestDbOperationsBase):
         """Test marking empty list does nothing"""
         await db_operations.mark_agent_runs_as_exported([])
 
-    async def test_get_failed_agent_runs_for_event(
-        self, db_operations: DatabaseOperations, db_client: DatabaseClient
-    ):
-        """Test getting failed agent runs for a specific event"""
-        # Create FK dependencies
-        event_id = "event_failed_test"
-        await self._create_event(db_operations, event_id)
-        await self._create_miner_agent(db_operations, "agent_v1", miner_uid=1)
-        await self._create_miner_agent(db_operations, "agent_v2", miner_uid=2)
-        await self._create_miner_agent(db_operations, "agent_v3", miner_uid=3)
-
-        # Miner 1: Success run
-        run_success = AgentRunsModel(
-            run_id=str(uuid4()),
-            unique_event_id=event_id,
-            agent_version_id="agent_v1",
-            miner_uid=1,
-            miner_hotkey="hotkey_1",
-            track="MAIN",
-            status=AgentRunStatus.SUCCESS,
-            is_final=True,
-        )
-        await db_operations.upsert_agent_runs([run_success])
-
-        # Miner 2: Failed run with is_final=False
-        run_failed_not_final = AgentRunsModel(
-            run_id=str(uuid4()),
-            unique_event_id=event_id,
-            agent_version_id="agent_v2",
-            miner_uid=2,
-            miner_hotkey="hotkey_2",
-            track="MAIN",
-            status=AgentRunStatus.SANDBOX_TIMEOUT,
-            is_final=False,
-        )
-        await db_operations.upsert_agent_runs([run_failed_not_final])
-
-        # Miner 3: Failed run with is_final=True
-        run_failed_final = AgentRunsModel(
-            run_id=str(uuid4()),
-            unique_event_id=event_id,
-            agent_version_id="agent_v3",
-            miner_uid=3,
-            miner_hotkey="hotkey_3",
-            track="MAIN",
-            status=AgentRunStatus.INTERNAL_AGENT_ERROR,
-            is_final=True,
-        )
-        await db_operations.upsert_agent_runs([run_failed_final])
-
-        failed_runs = await db_operations.get_failed_agent_runs_for_event(event_id)
-
-        # Should only return miner 3 run
-        assert len(failed_runs) == 1
-        assert failed_runs[0].run_id == run_failed_final.run_id
-        assert failed_runs[0].miner_uid == 3
-        assert failed_runs[0].status == AgentRunStatus.INTERNAL_AGENT_ERROR
-        assert failed_runs[0].is_final is True
-
     async def test_retry_scenario(
         self, db_operations: DatabaseOperations, db_client: DatabaseClient
     ):
@@ -355,6 +305,7 @@ class TestDbOperationsPart4(TestDbOperationsBase):
 
         # First attempt - timeout, not final
         run_1 = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=str(uuid4()),
             unique_event_id=event_id,
             agent_version_id=agent_version_id,
@@ -368,6 +319,7 @@ class TestDbOperationsPart4(TestDbOperationsBase):
 
         # Second attempt - timeout, not final
         run_2 = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=str(uuid4()),
             unique_event_id=event_id,
             agent_version_id=agent_version_id,
@@ -381,6 +333,7 @@ class TestDbOperationsPart4(TestDbOperationsBase):
 
         # Third attempt - success, final
         run_3 = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=str(uuid4()),
             unique_event_id=event_id,
             agent_version_id=agent_version_id,
@@ -422,6 +375,7 @@ class TestDbOperationsPart4(TestDbOperationsBase):
 
         run_id = str(uuid4())
         run = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=run_id,
             unique_event_id="event_123",
             agent_version_id="agent_v1",
@@ -457,6 +411,7 @@ class TestDbOperationsPart4(TestDbOperationsBase):
 
         run_id = str(uuid4())
         run = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=run_id,
             unique_event_id="event_123",
             agent_version_id="agent_v1",
@@ -495,6 +450,7 @@ class TestDbOperationsPart4(TestDbOperationsBase):
 
         run_id = str(uuid4())
         run = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=run_id,
             unique_event_id="event_123",
             agent_version_id="agent_v1",
@@ -530,6 +486,7 @@ class TestDbOperationsPart4(TestDbOperationsBase):
 
         run_id = str(uuid4())
         run = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=run_id,
             unique_event_id="event_123",
             agent_version_id="agent_v1",
@@ -563,6 +520,7 @@ class TestDbOperationsPart4(TestDbOperationsBase):
 
         run_id = str(uuid4())
         run = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=run_id,
             unique_event_id="event_123",
             agent_version_id="agent_v1",
@@ -623,6 +581,7 @@ Line 4: Newlines and tabs\t\n"""
 
         # Create runs
         run_1 = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=run_1_id,
             unique_event_id="event_1",
             agent_version_id="agent_v1",
@@ -634,6 +593,7 @@ Line 4: Newlines and tabs\t\n"""
         await db_operations.upsert_agent_runs([run_1])
 
         run_2 = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=run_2_id,
             unique_event_id="event_2",
             agent_version_id="agent_v2",
@@ -645,6 +605,7 @@ Line 4: Newlines and tabs\t\n"""
         await db_operations.upsert_agent_runs([run_2])
 
         run_3 = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=run_3_id,
             unique_event_id="event_3",
             agent_version_id="agent_v3",
@@ -691,6 +652,7 @@ Line 4: Newlines and tabs\t\n"""
         # Create runs
         for i, run_id in enumerate(run_ids):
             run = AgentRunsModel(
+                interval_start_minutes=1000,
                 run_id=run_id,
                 unique_event_id=f"event_{i+1}",
                 agent_version_id=f"agent_v{i+1}",
@@ -724,6 +686,7 @@ Line 4: Newlines and tabs\t\n"""
         for i in range(5):
             run_id = str(uuid4())
             run = AgentRunsModel(
+                interval_start_minutes=1000,
                 run_id=run_id,
                 unique_event_id=f"event_{i}",
                 agent_version_id=f"agent_v{i}",
@@ -754,6 +717,7 @@ Line 4: Newlines and tabs\t\n"""
             run_id = str(uuid4())
             run_ids.append(run_id)
             run = AgentRunsModel(
+                interval_start_minutes=1000,
                 run_id=run_id,
                 unique_event_id=f"event_{i}",
                 agent_version_id=f"agent_v{i}",
@@ -791,6 +755,7 @@ Line 4: Newlines and tabs\t\n"""
 
         run_id = str(uuid4())
         run = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=run_id,
             unique_event_id="event_1",
             agent_version_id="agent_v1",
@@ -832,6 +797,7 @@ Line 4: Newlines and tabs\t\n"""
         run_2_id = str(uuid4())
 
         run_1 = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=run_1_id,
             unique_event_id="event_1",
             agent_version_id="agent_v1",
@@ -843,6 +809,7 @@ Line 4: Newlines and tabs\t\n"""
         await db_operations.upsert_agent_runs([run_1])
 
         run_2 = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=run_2_id,
             unique_event_id="event_2",
             agent_version_id="agent_v2",
@@ -887,6 +854,7 @@ Line 4: Newlines and tabs\t\n"""
         # Create agent run
         run_id = str(uuid4())
         run = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=run_id,
             unique_event_id="event_1",
             agent_version_id="agent_v1",
@@ -922,6 +890,7 @@ Line 4: Newlines and tabs\t\n"""
 
         for run_id in [run_1_id, run_2_id, run_3_id]:
             run = AgentRunsModel(
+                interval_start_minutes=1000,
                 run_id=run_id,
                 unique_event_id="event_1",
                 agent_version_id="agent_v1",
@@ -960,6 +929,7 @@ Line 4: Newlines and tabs\t\n"""
         # Create agent run
         run_id = str(uuid4())
         run = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=run_id,
             unique_event_id="event_1",
             agent_version_id="agent_v1",
@@ -1017,6 +987,7 @@ Line 4: Newlines and tabs\t\n"""
 
         for run_id in [run_id_old, run_id_recent]:
             run = AgentRunsModel(
+                interval_start_minutes=1000,
                 run_id=run_id,
                 unique_event_id="event_1",
                 agent_version_id="agent_v1",
@@ -1056,6 +1027,7 @@ Line 4: Newlines and tabs\t\n"""
         run_ids = [str(uuid4()) for _ in range(5)]
         for run_id in run_ids:
             run = AgentRunsModel(
+                interval_start_minutes=1000,
                 run_id=run_id,
                 unique_event_id="event_1",
                 agent_version_id="agent_v1",
@@ -1091,6 +1063,7 @@ Line 4: Newlines and tabs\t\n"""
 
         run_id = str(uuid4())
         run = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=run_id,
             unique_event_id="event_1",
             agent_version_id="agent_v1",
@@ -1124,6 +1097,7 @@ Line 4: Newlines and tabs\t\n"""
 
         run_id = str(uuid4())
         run = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=run_id,
             unique_event_id="event_1",
             agent_version_id="agent_v1",
@@ -1153,6 +1127,7 @@ Line 4: Newlines and tabs\t\n"""
 
         run_id = str(uuid4())
         run = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=run_id,
             unique_event_id="event_1",
             agent_version_id="agent_v1",
@@ -1188,6 +1163,7 @@ Line 4: Newlines and tabs\t\n"""
 
         for run_id in [run_id_old, run_id_recent]:
             run = AgentRunsModel(
+                interval_start_minutes=1000,
                 run_id=run_id,
                 unique_event_id="event_1",
                 agent_version_id="agent_v1",
@@ -1223,6 +1199,7 @@ Line 4: Newlines and tabs\t\n"""
         run_ids = [str(uuid4()) for _ in range(5)]
         for run_id in run_ids:
             run = AgentRunsModel(
+                interval_start_minutes=1000,
                 run_id=run_id,
                 unique_event_id="event_1",
                 agent_version_id="agent_v1",
@@ -1256,6 +1233,7 @@ Line 4: Newlines and tabs\t\n"""
 
         run_id = str(uuid4())
         run = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=run_id,
             unique_event_id="event_1",
             agent_version_id="agent_v1",
@@ -1289,6 +1267,7 @@ Line 4: Newlines and tabs\t\n"""
 
         run_id = str(uuid4())
         run = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=run_id,
             unique_event_id="event_1",
             agent_version_id="agent_v1",
@@ -1320,6 +1299,7 @@ Line 4: Newlines and tabs\t\n"""
 
         for run_id in [run_id_with_log, run_id_without_log]:
             run = AgentRunsModel(
+                interval_start_minutes=1000,
                 run_id=run_id,
                 unique_event_id="event_1",
                 agent_version_id="agent_v1",
@@ -1356,6 +1336,7 @@ Line 4: Newlines and tabs\t\n"""
 
         run_id = str(uuid4())
         run = AgentRunsModel(
+            interval_start_minutes=1000,
             run_id=run_id,
             unique_event_id="event_1",
             agent_version_id="agent_v1",
