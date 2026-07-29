@@ -12,13 +12,21 @@ from neurons.validator.db.operations import DatabaseOperations
 from neurons.validator.models.agent_runs import AgentRunsModel, AgentRunStatus
 from neurons.validator.models.event import EventsModel, EventStatus
 from neurons.validator.models.miner_agent import MinerAgentsModel
-from neurons.validator.models.numinous_client import CreateAgentRunRequest, CreateAgentRunResponse
+from neurons.validator.models.numinous_client import (
+    CreateAgentRunRequest,
+    CreateAgentRunResponse,
+    MemoryEntry,
+    MemoryPullResponse,
+)
 from neurons.validator.models.prediction import PredictionsModel
 from neurons.validator.numinous_client.client import NuminousClient
 from neurons.validator.sandbox import SandboxManager
 from neurons.validator.sandbox.models import SandboxErrorType
 from neurons.validator.tasks.run_agents import MAX_TIMEOUT_RETRIES, RunAgents
-from neurons.validator.utils.common.interval import get_interval_start_minutes
+from neurons.validator.utils.common.interval import (
+    get_interval_iso_datetime,
+    get_interval_start_minutes,
+)
 from neurons.validator.utils.if_metagraph import IfMetagraph
 from neurons.validator.utils.logger.logger import NuminousLogger
 
@@ -947,11 +955,12 @@ class TestRunAgentsIdempotency:
 
         mock_db_operations.get_latest_prediction_for_event_and_miner.assert_called_once()
         mock_logger.debug.assert_any_call(
-            "Skipping execution - prediction exists",
+            "Skipping execution - prediction exists for interval",
             extra={
                 "event_id": "event_123",
                 "agent_version_id": "a23e4567-e89b-12d3-a456-426614174000",
                 "miner_uid": 42,
+                "interval_start_minutes": current_interval,
             },
         )
 
@@ -1006,7 +1015,7 @@ class TestRunAgentsIdempotency:
         assert call_args["agent"] == sample_agent
 
     @patch("neurons.validator.tasks.run_agents.datetime")
-    async def test_replicate_when_prediction_exists_in_different_interval(
+    async def test_reruns_when_prediction_exists_in_earlier_interval(
         self,
         mock_datetime,
         mock_db_operations,
@@ -1047,6 +1056,7 @@ class TestRunAgentsIdempotency:
             existing_prediction
         )
         mock_db_operations.upsert_predictions = AsyncMock()
+        mock_db_operations.has_final_run = AsyncMock(return_value=False)
 
         task = RunAgents(
             interval_seconds=600.0,
@@ -1061,34 +1071,14 @@ class TestRunAgentsIdempotency:
 
         await task.run()
 
-        # Should not execute agent
-        task.execute_agent_for_event.assert_not_called()
-
-        # Should replicate prediction
-        mock_db_operations.upsert_predictions.assert_called_once()
-        replicated_predictions = mock_db_operations.upsert_predictions.call_args[0][0]
-        assert len(replicated_predictions) == 1
-        replicated = replicated_predictions[0]
-        assert replicated.unique_event_id == "event_123"
-        assert replicated.miner_uid == 42
-        assert replicated.latest_prediction == 0.75
-        assert replicated.run_id == "original_run_id"
-        assert replicated.version_id == "a23e4567-e89b-12d3-a456-426614174000"
-
-        # Verify debug log was called with replication message
-        debug_calls = [
-            call
-            for call in mock_logger.debug.call_args_list
-            if call[0][0] == "Replicated existing prediction to new interval"
-        ]
-        assert len(debug_calls) == 1
-        log_extra = debug_calls[0][1]["extra"]
-        assert log_extra["event_id"] == "event_123"
-        assert log_extra["agent_version_id"] == "a23e4567-e89b-12d3-a456-426614174000"
-        assert log_extra["miner_uid"] == 42
-        assert log_extra["from_interval"] == 100
-        # to_interval should be different from from_interval
-        assert log_extra["to_interval"] != 100
+        # A prediction from an earlier interval is history: the agent re-runs for
+        # the current interval instead of it being replicated forward.
+        task.execute_agent_for_event.assert_called_once()
+        assert (
+            task.execute_agent_for_event.call_args[1]["interval_start_minutes"]
+            == get_interval_start_minutes()
+        )
+        mock_db_operations.upsert_predictions.assert_not_called()
 
 
 class TestRunAgentsFileLoading:
@@ -1630,6 +1620,7 @@ class TestRunAgentsErrorLogging:
             event=sample_event_tuple,
             agent=sample_agent,
             interval_start_minutes=1000,
+            memory_by_pair={},
         )
 
         mock_db_operations.insert_agent_run_log.assert_called_once()
@@ -1676,6 +1667,7 @@ class TestRunAgentsErrorLogging:
             event=sample_event_tuple,
             agent=sample_agent,
             interval_start_minutes=1000,
+            memory_by_pair={},
         )
 
         mock_db_operations.insert_agent_run_log.assert_called_once()
@@ -1721,6 +1713,7 @@ class TestRunAgentsErrorLogging:
             event=sample_event_tuple,
             agent=sample_agent,
             interval_start_minutes=1000,
+            memory_by_pair={},
         )
 
         mock_db_operations.insert_agent_run_log.assert_called_once()
@@ -1762,6 +1755,7 @@ class TestRunAgentsErrorLogging:
             event=sample_event_tuple,
             agent=sample_agent,
             interval_start_minutes=1000,
+            memory_by_pair={},
         )
 
         mock_db_operations.insert_agent_run_log.assert_called_once()
@@ -2190,6 +2184,7 @@ class TestRunAgentsCreateAgentRun:
         event_id = "event-456"
 
         run = await task._create_agent_run(
+            interval_start_minutes=1000,
             run_id=run_id,
             event_id=event_id,
             agent=sample_agent,
@@ -2229,6 +2224,7 @@ class TestRunAgentsCreateAgentRun:
         event_id = "event-abc"
 
         run = await task._create_agent_run(
+            interval_start_minutes=1000,
             run_id=run_id,
             event_id=event_id,
             agent=sample_agent,
@@ -2261,6 +2257,7 @@ class TestRunAgentsCreateAgentRun:
         )
 
         run = await task._create_agent_run(
+            interval_start_minutes=1000,
             run_id="run-timeout",
             event_id="event-timeout",
             agent=sample_agent,
@@ -2294,6 +2291,7 @@ class TestRunAgentsCreateAgentRun:
         )
 
         run = await task._create_agent_run(
+            interval_start_minutes=1000,
             run_id="run-timeout-final",
             event_id="event-timeout",
             agent=sample_agent,
@@ -2323,6 +2321,7 @@ class TestRunAgentsCreateAgentRun:
         )
 
         run = await task._create_agent_run(
+            interval_start_minutes=1000,
             run_id="run-invalid",
             event_id="event-invalid",
             agent=sample_agent,
@@ -2371,6 +2370,7 @@ class TestRunAgentsRunCreation:
             event=sample_event_tuple,
             agent=sample_agent,
             interval_start_minutes=1000,
+            memory_by_pair={},
         )
 
         # Verify run was created
@@ -2419,6 +2419,7 @@ class TestRunAgentsRunCreation:
             event=sample_event_tuple,
             agent=sample_agent,
             interval_start_minutes=1000,
+            memory_by_pair={},
         )
 
         mock_db_operations.upsert_agent_runs.assert_called_once()
@@ -2466,6 +2467,7 @@ class TestRunAgentsRunCreation:
             event=sample_event_tuple,
             agent=sample_agent,
             interval_start_minutes=1000,
+            memory_by_pair={},
         )
 
         mock_db_operations.upsert_agent_runs.assert_called_once()
@@ -2512,6 +2514,7 @@ class TestRunAgentsRunCreation:
             event=sample_event_tuple,
             agent=sample_agent,
             interval_start_minutes=1000,
+            memory_by_pair={},
         )
 
         mock_db_operations.upsert_agent_runs.assert_called_once()
@@ -2558,6 +2561,7 @@ class TestRunAgentsRunCreation:
             event=sample_event_tuple,
             agent=sample_agent,
             interval_start_minutes=1000,
+            memory_by_pair={},
         )
 
         # Verify run and prediction share same run_id
@@ -2611,6 +2615,7 @@ class TestRunAgentsRunCreation:
             event=sample_event_tuple,
             agent=sample_agent,
             interval_start_minutes=1000,
+            memory_by_pair={},
         )
 
         mock_db_operations.upsert_agent_runs.assert_called_once()
@@ -2667,6 +2672,7 @@ class TestRunAgentsRunCreation:
             event=sample_event_tuple,
             agent=sample_agent,
             interval_start_minutes=1000,
+            memory_by_pair={},
         )
 
         mock_api_client.create_agent_run.assert_called_once()
@@ -2679,6 +2685,10 @@ class TestRunAgentsRunCreation:
         assert call_args.vali_hotkey == "5ValidatorHotkey999"
         assert call_args.event_id == "event_123"
         assert str(call_args.version_id) == sample_agent.version_id
+        # The backend keys the run on the interval the validator is running for.
+        assert call_args.interval_datetime == datetime.fromisoformat(
+            get_interval_iso_datetime(1000)
+        )
 
     async def test_api_create_agent_run_failure_returns_early(
         self,
@@ -2715,6 +2725,7 @@ class TestRunAgentsRunCreation:
             event=sample_event_tuple,
             agent=sample_agent,
             interval_start_minutes=1000,
+            memory_by_pair={},
         )
 
         mock_api_client.create_agent_run.assert_called_once()
@@ -2763,11 +2774,13 @@ class TestRunAgentsMaxRetries:
             event=sample_event_tuple,
             agent=sample_agent,
             interval_start_minutes=1000,
+            memory_by_pair={},
         )
 
         mock_db_operations.has_final_run.assert_called_once_with(
             unique_event_id="event_123",
             agent_version_id="a23e4567-e89b-12d3-a456-426614174000",
+            interval_start_minutes=1000,
         )
         task.execute_agent_for_event.assert_called_once()
 
@@ -2803,6 +2816,7 @@ class TestRunAgentsMaxRetries:
             event=sample_event_tuple,
             agent=sample_agent,
             interval_start_minutes=1000,
+            memory_by_pair={},
         )
 
         task.execute_agent_for_event.assert_called_once()
@@ -2839,6 +2853,7 @@ class TestRunAgentsMaxRetries:
             event=sample_event_tuple,
             agent=sample_agent,
             interval_start_minutes=1000,
+            memory_by_pair={},
         )
 
         task.execute_agent_for_event.assert_called_once()
@@ -2874,13 +2889,261 @@ class TestRunAgentsMaxRetries:
             event=sample_event_tuple,
             agent=sample_agent,
             interval_start_minutes=1000,
+            memory_by_pair={},
         )
 
         task.execute_agent_for_event.assert_not_called()
         mock_logger.debug.assert_called_with(
-            "Skipping execution - final run exists",
+            "Skipping execution - final run exists for interval",
             extra={
                 "event_id": "event_123",
                 "agent_version_id": "a23e4567-e89b-12d3-a456-426614174000",
+                "interval_start_minutes": 1000,
             },
         )
+
+
+class TestRunAgentsMemory:
+    def _task(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+    ):
+        return RunAgents(
+            interval_seconds=600.0,
+            db_operations=mock_db_operations,
+            sandbox_manager=mock_sandbox_manager,
+            netuid=99,
+            subtensor=mock_subtensor_cm,
+            api_client=mock_api_client,
+            logger=mock_logger,
+            timeout_seconds=120,
+        )
+
+    async def test_pull_memory_builds_lookup(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
+        sample_event_tuple,
+    ):
+        task = self._task(
+            mock_db_operations,
+            mock_sandbox_manager,
+            mock_subtensor_cm,
+            mock_api_client,
+            mock_logger,
+        )
+        mock_api_client.pull_memory = AsyncMock(
+            return_value=MemoryPullResponse(
+                items=[
+                    MemoryEntry(
+                        miner_uid=42,
+                        miner_hotkey="5HotKey123",
+                        event_id="event_123",
+                        interval_datetime="2026-07-24T00:00:00+00:00",
+                        memory="prior blob",
+                    )
+                ],
+                count=1,
+            )
+        )
+
+        lookup = await task._pull_memory([(sample_event_tuple, sample_agent)], 1000)
+
+        assert lookup == {(42, "5HotKey123", "event_123"): "prior blob"}
+
+        body = mock_api_client.pull_memory.call_args.args[0]
+        assert body.pairs[0].miner_uid == 42
+        assert body.pairs[0].miner_hotkey == "5HotKey123"
+        assert body.pairs[0].event_id == "event_123"
+        assert body.interval_datetime == datetime.fromisoformat(get_interval_iso_datetime(1000))
+
+    async def test_pull_memory_empty_pairs_no_call(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+    ):
+        task = self._task(
+            mock_db_operations,
+            mock_sandbox_manager,
+            mock_subtensor_cm,
+            mock_api_client,
+            mock_logger,
+        )
+        mock_api_client.pull_memory = AsyncMock()
+
+        lookup = await task._pull_memory([], 1000)
+
+        assert lookup == {}
+        mock_api_client.pull_memory.assert_not_called()
+
+    async def test_pull_memory_failure_returns_empty(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
+        sample_event_tuple,
+    ):
+        task = self._task(
+            mock_db_operations,
+            mock_sandbox_manager,
+            mock_subtensor_cm,
+            mock_api_client,
+            mock_logger,
+        )
+        mock_api_client.pull_memory = AsyncMock(side_effect=Exception("backend down"))
+
+        lookup = await task._pull_memory([(sample_event_tuple, sample_agent)], 1000)
+
+        assert lookup == {}
+
+    async def test_memory_injected_into_event_data(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
+        sample_event_tuple,
+    ):
+        task = self._task(
+            mock_db_operations,
+            mock_sandbox_manager,
+            mock_subtensor_cm,
+            mock_api_client,
+            mock_logger,
+        )
+        mock_db_operations.upsert_agent_runs = AsyncMock()
+        mock_db_operations.insert_agent_run_log = AsyncMock()
+        task.load_agent_code = AsyncMock(return_value="def agent_main(e): pass")
+        task.run_sandbox = AsyncMock(return_value={"status": "error", "error": "x", "logs": ""})
+
+        memory_by_pair = {(42, "5HotKey123", "event_123"): "prior blob"}
+
+        await task.execute_agent_for_event(
+            event=sample_event_tuple,
+            agent=sample_agent,
+            interval_start_minutes=1000,
+            memory_by_pair=memory_by_pair,
+        )
+
+        event_data = task.run_sandbox.call_args.args[1]
+        assert event_data["memory"] == "prior blob"
+
+    async def test_memory_injected_none_when_absent(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+        sample_agent,
+        sample_event_tuple,
+    ):
+        task = self._task(
+            mock_db_operations,
+            mock_sandbox_manager,
+            mock_subtensor_cm,
+            mock_api_client,
+            mock_logger,
+        )
+        mock_db_operations.upsert_agent_runs = AsyncMock()
+        mock_db_operations.insert_agent_run_log = AsyncMock()
+        task.load_agent_code = AsyncMock(return_value="def agent_main(e): pass")
+        task.run_sandbox = AsyncMock(return_value={"status": "error", "error": "x", "logs": ""})
+
+        await task.execute_agent_for_event(
+            event=sample_event_tuple,
+            agent=sample_agent,
+            interval_start_minutes=1000,
+            memory_by_pair={},
+        )
+
+        event_data = task.run_sandbox.call_args.args[1]
+        assert event_data["memory"] is None
+
+    async def test_store_memory_on_success(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+    ):
+        task = self._task(
+            mock_db_operations,
+            mock_sandbox_manager,
+            mock_subtensor_cm,
+            mock_api_client,
+            mock_logger,
+        )
+        mock_db_operations.insert_reforecast_memory = AsyncMock()
+
+        result = {
+            "status": "SUCCESS",
+            "output": {"event_id": "e", "prediction": 0.5, "memory": "new blob"},
+        }
+
+        await task._store_memory("run-1", AgentRunStatus.SUCCESS, result, 1000)
+
+        mock_db_operations.insert_reforecast_memory.assert_awaited_once_with(
+            "run-1", "new blob", 1000
+        )
+
+    async def test_store_memory_skipped_when_no_memory_key(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+    ):
+        task = self._task(
+            mock_db_operations,
+            mock_sandbox_manager,
+            mock_subtensor_cm,
+            mock_api_client,
+            mock_logger,
+        )
+        mock_db_operations.insert_reforecast_memory = AsyncMock()
+
+        result = {"status": "SUCCESS", "output": {"event_id": "e", "prediction": 0.5}}
+
+        await task._store_memory("run-1", AgentRunStatus.SUCCESS, result, 1000)
+
+        mock_db_operations.insert_reforecast_memory.assert_not_called()
+
+    async def test_store_memory_skipped_on_non_success(
+        self,
+        mock_db_operations,
+        mock_sandbox_manager,
+        mock_subtensor_cm,
+        mock_api_client,
+        mock_logger,
+    ):
+        task = self._task(
+            mock_db_operations,
+            mock_sandbox_manager,
+            mock_subtensor_cm,
+            mock_api_client,
+            mock_logger,
+        )
+        mock_db_operations.insert_reforecast_memory = AsyncMock()
+
+        await task._store_memory("run-1", AgentRunStatus.SANDBOX_TIMEOUT, None, 1000)
+
+        mock_db_operations.insert_reforecast_memory.assert_not_called()

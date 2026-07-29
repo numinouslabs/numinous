@@ -16,7 +16,6 @@ from neurons.validator.models.agent_runs import (
     AgentRunStatus,
 )
 from neurons.validator.models.event import EVENTS_FIELDS, EventsModel, EventStatus
-from neurons.validator.models.miner import MINERS_FIELDS, MinersModel
 from neurons.validator.models.miner_agent import MINER_AGENTS_FIELDS, MinerAgentsModel
 from neurons.validator.models.prediction import (
     PREDICTION_FIELDS,
@@ -24,7 +23,7 @@ from neurons.validator.models.prediction import (
     PredictionsModel,
 )
 from neurons.validator.models.reasoning import ReasoningForExport
-from neurons.validator.models.score import SCORE_FIELDS, ScoresExportedStatus, ScoresModel
+from neurons.validator.models.reforecast_memory import MAX_MEMORY_CHARS, ReforecastMemoryForExport
 from neurons.validator.models.sources import SourceItem, SourcesForExport
 from neurons.validator.utils.logger.logger import NuminousLogger
 
@@ -114,23 +113,9 @@ class DatabaseOperations:
                         p.ROWID
                     FROM
                         predictions p
-                    JOIN
-                        events e ON e.unique_event_id = p.unique_event_id
                     WHERE
                         p.exported = ?
-
-                    AND (
-                        -- Predictions for processed events and older than X
-                        (
-                            e.processed = TRUE
-                            AND datetime(e.resolved_at) < datetime(CURRENT_TIMESTAMP, '-4 day')
-                        )
-
-                        -- Predictions for discarded or deleted events
-                        OR  (
-                            e.status IN (?, ?)
-                        )
-                    )
+                        AND datetime(p.submitted) < datetime(CURRENT_TIMESTAMP, '-7 day')
                     ORDER BY
                         p.ROWID ASC
                     LIMIT ?
@@ -149,64 +134,6 @@ class DatabaseOperations:
             """,
             [
                 PredictionExportedStatus.EXPORTED,
-                EventStatus.DISCARDED,
-                EventStatus.DELETED,
-                batch_size,
-            ],
-        )
-
-    async def delete_scores(self, batch_size: int) -> Iterable[tuple[int]]:
-        return await self.__db_client.delete(
-            """
-                WITH scores_to_delete AS (
-                    SELECT
-                        s.ROWID
-                    FROM
-                        scores s
-                    LEFT JOIN
-                        events e ON s.event_id = e.event_id
-                    WHERE
-                        -- Orphan scores
-                        e.event_id IS NULL
-
-                        -- Scores for processed events older than X
-                        OR (
-                            e.processed = TRUE
-                            AND datetime(e.resolved_at) < datetime(CURRENT_TIMESTAMP, '-15 day')
-                            AND s.exported = ?
-                        )
-
-                        -- Scores for discarded events
-                        OR (
-                            e.status = ?
-                            AND s.exported = ?
-                        )
-
-                        -- Scores for deleted events
-                        OR (
-                            e.status = ?
-                        )
-                    ORDER BY
-                        s.ROWID ASC
-                    LIMIT ?
-                )
-                DELETE FROM
-                    scores
-                WHERE
-                    ROWID IN (
-                        SELECT
-                            ROWID
-                        FROM
-                            scores_to_delete
-                    )
-                RETURNING
-                    ROWID
-            """,
-            [
-                ScoresExportedStatus.EXPORTED,
-                EventStatus.DISCARDED,
-                ScoresExportedStatus.EXPORTED,
-                EventStatus.DELETED,
                 batch_size,
             ],
         )
@@ -280,7 +207,7 @@ class DatabaseOperations:
         if row is not None:
             return row[0]
 
-    async def get_events_to_predict(self) -> list[EventsModel]:
+    async def get_events_to_predict(self, interval_start_datetime: str) -> list[EventsModel]:
         rows = await self.__db_client.many(
             f"""
                 SELECT {', '.join(EVENTS_FIELDS)}
@@ -288,11 +215,11 @@ class DatabaseOperations:
                 WHERE
                     status = ?
                     AND datetime(CURRENT_TIMESTAMP) < datetime(cutoff)
-                    AND date(cutoff) = date('now', 'utc', '+' || run_days_before_cutoff || ' days')
+                    AND datetime(registered_date) < datetime(?)
                 ORDER BY
                     unique_event_id ASC
             """,
-            parameters=[EventStatus.PENDING],
+            parameters=[EventStatus.PENDING, interval_start_datetime],
             use_row_factory=True,
         )
         return self._parse_rows(model=EventsModel, rows=rows)
@@ -362,37 +289,6 @@ class DatabaseOperations:
                     ROWID
             """,
             [PredictionExportedStatus.EXPORTED] + ids,
-        )
-
-    async def get_predictions_ranked(self, moving_window: int):
-        return await self.__db_client.many(
-            """
-                WITH ranked_events AS (
-                    SELECT
-                        e.event_id,
-                        ROW_NUMBER() OVER (ORDER BY e.resolved_at DESC, e.event_id ASC) AS event_rank,
-                        e.outcome
-                    FROM events e
-                    WHERE e.resolved_at IS NOT NULL
-                        AND e.resolved_at >= CURRENT_DATE - 10
-                )
-                SELECT
-                    rev.event_id,
-                    rev.event_rank,
-                    rev.outcome,
-                    sc.miner_uid,
-                    sc.miner_hotkey,
-                    sc.prediction
-                FROM
-                    ranked_events rev
-                JOIN scores sc USING(event_id)
-                WHERE
-                    rev.event_rank <= ?
-                    AND sc.created_at >= CURRENT_DATE - 10
-                ORDER BY
-                    rev.event_rank ASC, sc.miner_uid ASC, sc.miner_hotkey ASC
-            """,
-            [moving_window],
         )
 
     async def resolve_event(
@@ -712,29 +608,94 @@ class DatabaseOperations:
             [batch_size],
         )
 
-    async def get_events_for_scoring(self, max_events=1000) -> list[EventsModel]:
-        """
-        Returns all events that were recently resolved and need to be scored
-        """
+    async def insert_reforecast_memory(
+        self, run_id: str, memory: str, interval_start_minutes: int
+    ) -> None:
+        await self.__db_client.insert_many(
+            """
+                INSERT INTO reforecast_memory
+                    (run_id, memory, interval_start_minutes, exported)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT (run_id)
+                DO UPDATE SET
+                    memory = excluded.memory,
+                    interval_start_minutes = excluded.interval_start_minutes,
+                    updated_at = CURRENT_TIMESTAMP
+            """,
+            [(run_id, memory[:MAX_MEMORY_CHARS], interval_start_minutes, False)],
+        )
 
+    async def get_reforecast_memories_for_export(
+        self, limit: int = 200
+    ) -> list[ReforecastMemoryForExport]:
         rows = await self.__db_client.many(
-            f"""
+            """
                 SELECT
-                    {', '.join(EVENTS_FIELDS)}
-                FROM events
-                WHERE status = ?
-                    AND outcome IS NOT NULL
-                    AND processed = false
-                ORDER BY resolved_at ASC
+                    m.run_id,
+                    m.memory,
+                    m.interval_start_minutes,
+                    m.created_at,
+                    ar.unique_event_id AS event_id,
+                    ar.miner_uid,
+                    ar.miner_hotkey
+                FROM reforecast_memory m
+                JOIN agent_runs ar ON m.run_id = ar.run_id
+                WHERE m.exported = 0
+                ORDER BY m.created_at ASC
                 LIMIT ?
             """,
-            parameters=[EventStatus.SETTLED, max_events],
+            parameters=[limit],
             use_row_factory=True,
         )
 
-        events = self._parse_rows(model=EventsModel, rows=rows)
+        return self._parse_rows(model=ReforecastMemoryForExport, rows=rows)
 
-        return events
+    async def mark_reforecast_memories_as_exported(self, run_ids: list[str]) -> None:
+        if not run_ids:
+            return
+
+        placeholders = ", ".join(["?" for _ in run_ids])
+
+        await self.__db_client.update(
+            f"""
+                UPDATE reforecast_memory
+                SET
+                    exported = 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE run_id IN ({placeholders})
+            """,
+            run_ids,
+        )
+
+    async def delete_reforecast_memories(self, batch_size: int) -> Iterable[tuple[int]]:
+        return await self.__db_client.delete(
+            """
+                WITH memories_to_delete AS (
+                    SELECT
+                        m.ROWID
+                    FROM
+                        reforecast_memory m
+                    WHERE
+                        m.exported = 1
+                        AND datetime(m.created_at) < datetime(CURRENT_TIMESTAMP, '-7 day')
+                    ORDER BY
+                        m.ROWID ASC
+                    LIMIT ?
+                )
+                DELETE FROM
+                    reforecast_memory
+                WHERE
+                    ROWID IN (
+                        SELECT
+                            ROWID
+                        FROM
+                            memories_to_delete
+                    )
+                RETURNING
+                    ROWID
+            """,
+            [batch_size],
+        )
 
     async def prediction_exists(
         self,
@@ -815,183 +776,6 @@ class DatabaseOperations:
         predictions = self._parse_rows(model=PredictionsModel, rows=rows)
 
         return predictions
-
-    async def get_predictions_for_scoring(self, unique_event_id: str) -> list[PredictionsModel]:
-        rows = await self.__db_client.many(
-            f"""
-                SELECT
-                    {', '.join(PREDICTION_FIELDS)}
-                FROM predictions
-                WHERE unique_event_id = ?
-            """,
-            parameters=(unique_event_id,),
-            use_row_factory=True,
-        )
-
-        predictions = self._parse_rows(model=PredictionsModel, rows=rows)
-
-        return predictions
-
-    async def get_miners_last_registration(self) -> list:
-        rows = await self.__db_client.many(
-            f"""
-                WITH ranked AS (
-                    SELECT
-                        {', '.join(MINERS_FIELDS)},
-                        ROW_NUMBER() OVER (
-                            PARTITION BY miner_uid
-                            ORDER BY registered_date DESC
-                        ) AS rn
-                    FROM miners t
-                )
-                SELECT
-                    {', '.join(MINERS_FIELDS)}
-                FROM ranked
-                WHERE rn = 1
-                ORDER BY miner_uid
-            """,
-            use_row_factory=True,
-        )
-
-        miners = self._parse_rows(model=MinersModel, rows=rows)
-
-        return miners
-
-    async def mark_event_as_processed(self, unique_event_id: str) -> None:
-        return await self.__db_client.update(
-            """
-                UPDATE events
-                SET processed = true
-                WHERE unique_event_id = ?
-            """,
-            parameters=(unique_event_id,),
-        )
-
-    async def mark_event_as_exported(self, unique_event_id: str) -> None:
-        return await self.__db_client.update(
-            """
-                UPDATE events
-                SET exported = true
-                WHERE unique_event_id = ?
-            """,
-            parameters=(unique_event_id,),
-        )
-
-    async def mark_event_as_discarded(self, unique_event_id: str) -> None:
-        """For resolved events which cannot be scored"""
-        return await self.__db_client.update(
-            """
-                UPDATE events
-                SET status = ?
-                WHERE unique_event_id = ?
-            """,
-            parameters=[EventStatus.DISCARDED, unique_event_id],
-        )
-
-    async def insert_scores(self, scores: list[ScoresModel]) -> None:
-        """Insert raw scores into the scores table"""
-
-        fields_to_insert = [
-            "event_id",
-            "miner_uid",
-            "miner_hotkey",
-            "track",
-            "prediction",
-            "event_score",
-            "spec_version",
-        ]
-        placeholders = ", ".join("?" for _ in fields_to_insert)
-        columns = ", ".join(fields_to_insert)
-
-        # Convert each event into a tuple of values in the same order as fields_to_insert
-        score_tuples = [
-            tuple(getattr(score, field_name) for field_name in fields_to_insert) for score in scores
-        ]
-
-        sql = f"""
-                INSERT INTO scores ({columns})
-                VALUES ({placeholders})
-                ON CONFLICT
-                    (event_id, miner_uid, miner_hotkey, track)
-                DO UPDATE SET
-                    prediction = excluded.prediction,
-                    event_score = excluded.event_score,
-                    spec_version = excluded.spec_version
-        """
-        return await self.__db_client.insert_many(
-            sql=sql,
-            parameters=score_tuples,
-        )
-
-    async def get_scored_events_for_export(self, max_events: int = 1000) -> list[EventsModel]:
-        """
-        Get scored events that have not been exported
-        """
-        ev_event_fields = ["ev." + field for field in EVENTS_FIELDS]
-        rows = await self.__db_client.many(
-            f"""
-                WITH events_to_export AS (
-                    SELECT
-                        event_id,
-                        MIN(ROWID) AS min_row_id
-                    FROM scores
-                    WHERE exported = ?
-                    GROUP BY event_id
-                    ORDER BY min_row_id ASC
-                    LIMIT ?
-                )
-                SELECT
-                    {', '.join(ev_event_fields)}
-                FROM events ev
-                JOIN events_to_export ete ON ev.event_id = ete.event_id
-                ORDER BY ete.min_row_id ASC
-            """,
-            use_row_factory=True,
-            parameters=[
-                ScoresExportedStatus.NOT_EXPORTED,
-                max_events,
-            ],
-        )
-
-        events = self._parse_rows(model=EventsModel, rows=rows)
-
-        return events
-
-    async def get_scores_for_export(self, event_id: str) -> list:
-        """
-        Get scores for a given event
-        """
-        rows = await self.__db_client.many(
-            f"""
-                SELECT
-                    {', '.join(SCORE_FIELDS)}
-                FROM scores
-                WHERE event_id = ?
-                    AND exported = 0
-            """,
-            parameters=[event_id],
-            use_row_factory=True,
-        )
-
-        scores = self._parse_rows(model=ScoresModel, rows=rows)
-
-        return scores
-
-    async def mark_scores_as_exported(self, event_id: str) -> list:
-        """
-        Mark scores from event_id as exported
-        """
-        return await self.__db_client.update(
-            """
-                UPDATE scores
-                SET exported = ?
-                WHERE event_id = ?
-            """,
-            parameters=(
-                ScoresExportedStatus.EXPORTED,
-                event_id,
-            ),
-        )
 
     async def vacuum_database(self, pages: int):
         await self.__db_client.script(f"PRAGMA incremental_vacuum({pages})")
@@ -1101,6 +885,7 @@ class DatabaseOperations:
             "miner_hotkey",
             "track",
             "status",
+            "interval_start_minutes",
             "exported",
             "is_final",
         ]
@@ -1114,6 +899,7 @@ class DatabaseOperations:
                 run.miner_hotkey,
                 run.track,
                 run.status.value,
+                run.interval_start_minutes,
                 1 if run.exported else 0,
                 1 if run.is_final else 0,
             )
@@ -1147,21 +933,6 @@ class DatabaseOperations:
                 LIMIT ?
             """,
             [AgentRunExportedStatus.NOT_EXPORTED, limit],
-            use_row_factory=True,
-        )
-
-        return self._parse_rows(model=AgentRunsModel, rows=rows)
-
-    async def get_failed_agent_runs_for_event(self, event_id: str) -> list[AgentRunsModel]:
-        rows = await self.__db_client.many(
-            f"""
-                SELECT {', '.join(AGENT_RUNS_FIELDS)}
-                FROM agent_runs
-                WHERE unique_event_id = ?
-                    AND is_final = 1
-                    AND status != ?
-            """,
-            [event_id, AgentRunStatus.SUCCESS.value],
             use_row_factory=True,
         )
 
@@ -1305,14 +1076,16 @@ class DatabaseOperations:
         self,
         unique_event_id: str,
         agent_version_id: str,
+        interval_start_minutes: int,
         status: Optional[AgentRunStatus] = None,
         is_final: Optional[bool] = None,
     ) -> int:
         conditions = [
             "unique_event_id = ?",
             "agent_version_id = ?",
+            "interval_start_minutes = ?",
         ]
-        params: list = [unique_event_id, agent_version_id]
+        params: list = [unique_event_id, agent_version_id, interval_start_minutes]
 
         if status is not None:
             conditions.append("status = ?")
@@ -1335,15 +1108,19 @@ class DatabaseOperations:
         self,
         unique_event_id: str,
         agent_version_id: str,
+        interval_start_minutes: int,
     ) -> bool:
         sql = """
             SELECT 1
             FROM agent_runs
             WHERE unique_event_id = ?
                 AND agent_version_id = ?
+                AND interval_start_minutes = ?
                 AND is_final = 1
             LIMIT 1
         """
 
-        result = await self.__db_client.one(sql, [unique_event_id, agent_version_id])
+        result = await self.__db_client.one(
+            sql, [unique_event_id, agent_version_id, interval_start_minutes]
+        )
         return result is not None

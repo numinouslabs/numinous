@@ -24,7 +24,11 @@ class TestLogger:
 
     def test_logger_handlers(self, logger):
         """Test that the logger has the correct handlers attached."""
-        handlers = logger.handlers
+        handlers = [
+            handler
+            for handler in logger.handlers
+            if handler.__class__.__name__ != "LogCaptureHandler"
+        ]
 
         assert len(handlers) == 1  # Expecting 1 handler ( JSON)
 

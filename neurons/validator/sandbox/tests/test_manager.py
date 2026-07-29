@@ -72,6 +72,51 @@ class TestSandboxManagerCore:
 
     @patch("neurons.validator.sandbox.manager.build_docker_image")
     @patch("neurons.validator.sandbox.manager.image_exists", return_value=True)
+    def test_memory_flows_into_result_output(
+        self, mock_image_exists, mock_build_image, mock_wallet, mock_logger, mock_docker_setup
+    ):
+        manager = SandboxManager(mock_wallet, "http://gateway", mock_logger)
+        mock_container = MagicMock()
+        mock_container.wait = MagicMock(return_value={"StatusCode": 0})
+        mock_container.logs = MagicMock(return_value=b"test logs")
+        mock_container.remove = MagicMock()
+
+        manager.docker_client.containers.run = MagicMock(return_value=mock_container)
+        temp_dir = tempfile.mkdtemp(prefix="test_sandbox_")
+        (Path(temp_dir) / "output.json").write_text(
+            json.dumps(
+                {
+                    "status": "success",
+                    "output": {
+                        "event_id": "test",
+                        "prediction": 0.5,
+                        "memory": "updated belief blob",
+                    },
+                }
+            )
+        )
+
+        on_finish = MagicMock()
+        manager.sandboxes["sandbox_test"] = SandboxState(
+            temp_dir=temp_dir,
+            run_id="test-run",
+            env_vars={"RUN_ID": "test"},
+            on_finish=on_finish,
+            timeout=60,
+            start_time=time.time(),
+            container=None,
+        )
+
+        manager._run_sandbox("sandbox_test")
+
+        on_finish.assert_called_once()
+        result = on_finish.call_args[0][0]
+        assert result["status"] == "success"
+        assert result["output"]["memory"] == "updated belief blob"
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    @patch("neurons.validator.sandbox.manager.build_docker_image")
+    @patch("neurons.validator.sandbox.manager.image_exists", return_value=True)
     def test_timeout_error_kills_container(
         self, mock_image_exists, mock_build_image, mock_wallet, mock_logger, mock_docker_setup
     ):

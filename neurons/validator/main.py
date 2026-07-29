@@ -16,15 +16,14 @@ from neurons.validator.tasks.db_vacuum import DbVacuum
 from neurons.validator.tasks.delete_events import DeleteEvents
 from neurons.validator.tasks.export_agent_run_logs import ExportAgentRunLogs
 from neurons.validator.tasks.export_agent_runs import ExportAgentRuns
+from neurons.validator.tasks.export_memory import ExportMemory
 from neurons.validator.tasks.export_predictions import ExportPredictions
 from neurons.validator.tasks.export_reasonings import ExportReasonings
-from neurons.validator.tasks.export_scores import ExportScores
 from neurons.validator.tasks.export_sources import ExportSources
 from neurons.validator.tasks.pull_agents import PullAgents
 from neurons.validator.tasks.pull_events import PullEvents
 from neurons.validator.tasks.resolve_events import ResolveEvents
 from neurons.validator.tasks.run_agents import RunAgents
-from neurons.validator.tasks.scoring import Scoring
 from neurons.validator.tasks.set_weights import SetWeights
 from neurons.validator.tasks.sync_miners_metadata import SyncMinersMetadata
 from neurons.validator.utils.common.event_loop import measure_event_loop_lag
@@ -148,25 +147,6 @@ async def main():
         logger=logger,
     )
 
-    scoring_task = Scoring(
-        interval_seconds=307.0,
-        db_operations=db_operations,
-        netuid=bt_netuid,
-        subtensor=AsyncSubtensor(config=config),
-        logger=logger,
-        page_size=100,
-    )
-
-    export_scores_task = ExportScores(
-        interval_seconds=373.0,
-        page_size=500,
-        db_operations=db_operations,
-        api_client=numinous_api_client,
-        logger=logger,
-        validator_uid=validator_uid,
-        validator_hotkey=validator_hotkey,
-    )
-
     export_agent_runs_task = ExportAgentRuns(
         interval_seconds=300.0,
         batch_size=500,
@@ -205,6 +185,14 @@ async def main():
         validator_hotkey=validator_hotkey,
     )
 
+    export_memory_task = ExportMemory(
+        interval_seconds=300.0,
+        batch_size=500,
+        db_operations=db_operations,
+        api_client=numinous_api_client,
+        logger=logger,
+    )
+
     set_weights_task = SetWeights(
         interval_seconds=379.0,
         db_operations=db_operations,
@@ -240,8 +228,7 @@ async def main():
     scheduler.add(task=export_agent_run_logs_task)
     scheduler.add(task=export_reasonings_task)
     scheduler.add(task=export_sources_task)
-    scheduler.add(task=scoring_task)
-    scheduler.add(task=export_scores_task)
+    scheduler.add(task=export_memory_task)
     scheduler.add(task=set_weights_task)
     scheduler.add(task=db_cleaner_task)
     scheduler.add(task=vacuum_task)

@@ -13,10 +13,10 @@ For setup guides, see [validator-setup.md](./validator-setup.md) and [miner-setu
 ## System Design
 
 - Miners submit Python agent code via API
-- Validators receive a batch of events
-- Validators execute the agent code in isolated sandboxes
-- Validators receive the corresponding resolution batch
-- Predictions are scored using the Brier score
+- Validators receive the live cohort of events
+- Every interval, validators execute the agent code in isolated sandboxes against every live event
+- Each agent's memory is carried from one interval to the next, scoped per `(miner, event)`
+- Forecasts are reported to the backend, which scores them against the market price
 - Scores determine Bittensor weights
 
 ## Components
@@ -56,14 +56,15 @@ For setup guides, see [validator-setup.md](./validator-setup.md) and [miner-setu
 # Validator System
 
 Validators continuously:
-- Fetch new prediction events
-- Download and execute miner agent code in sandboxes
-- Calculate an average Brier scores upon event resolutions
-- Update subnet weights on the Bittensor chain
+- Fetch the live cohort of prediction events
+- Pull each agent's stored memory for the current interval
+- Download and execute miner agent code in sandboxes, once per event per interval
+- Report forecasts and updated memory back to the backend
+- Update subnet weights on the Bittensor chain from backend-computed scores
 
 **Process Flow:**
 ```
-Events → Agent Execution → Predictions → Scoring → Weights
+Events → Memory Pull → Agent Execution → Forecasts + Memory → Backend Scoring → Weights
 ```
 The validators spin up 50 parallel sandboxes where 50 miners are evaluated on the same first event. This repeats until all the miners on the first are evaluated. Then the validators do it again on the second event. This ensures that all miners are evaluated roughly at the same time. It should take about 15min for a validator to run all the miners on one event.
 
@@ -94,8 +95,8 @@ Miners → Platform API → Validators → Sandboxes → External APIs
 1. **Submission:** Miner submits Python code via API. The code is stored in an S3 bucket.
 2. **Activation:** Code activates daily at 00:00 UTC
 3. **Storage:** Validator downloads and stores code locally
-4. **Execution:** Validator runs code in sandbox for each event
-5. **Prediction:** Agent returns probability (0.0-1.0)
+4. **Execution:** Validator runs code in sandbox, once per event per interval
+5. **Forecast:** Agent returns a probability (0.0-1.0) and its updated memory
 
 ---
 
@@ -108,13 +109,11 @@ The gateway is a proxy service that enables agents to access external APIs witho
 ```
 Agent → Gateway Proxy → Request Validation → External Services
                                                 ↓
-                                           Chutes AI
-                                           Desearch AI
+                                           LLM inference
+                                           Signal providers
 ```
 
-**Available Services:**
-- **Chutes AI:** LLM inference for prediction generation
-- **Desearch AI:** Web and Twitter search for information gathering
+**Available Services (SIGNAL track):** LLM inference via OpenAI, OpenRouter and Lightning Rod, plus signal data from Numinous Signals and Numinous Indicia. Endpoints outside the track's allowlist return 403 — see [`track_config.py`](../neurons/validator/sandbox/signing_proxy/track_config.py).
 
 **Authentication:** Gateway automatically signs requests with validator credentials. Agents only need to include their `RUN_ID`.
 
@@ -127,22 +126,11 @@ import requests
 PROXY_URL = os.getenv("SANDBOX_PROXY_URL")
 RUN_ID = os.getenv("RUN_ID")
 
-# Chutes AI example
 response = requests.post(
-    f"{PROXY_URL}/api/gateway/chutes",
+    f"{PROXY_URL}/api/gateway/openai/responses/inference",
     json={
-        "model": "deepseek-ai/DeepSeek-V3",
-        "messages": [...],
-        "run_id": RUN_ID
-    }
-)
-
-# Desearch AI example
-response = requests.post(
-    f"{PROXY_URL}/api/gateway/desearch/ai/search",
-    json={
-        "prompt": "search query",
-        "tools": ["WEB"],
+        "model": "gpt-5-mini",
+        "input": [...],
         "run_id": RUN_ID
     }
 )
@@ -154,32 +142,45 @@ For complete documentation, see [Gateway Guide](./gateway-guide.md).
 
 # Scoring
 
-## Brier Scoring
+This section covers the mechanics as the system implements them. For the miner-facing view — what the pool pays and how weights are split — see [scoring-system.md](./scoring-system.md).
 
-For a binary event $E_q$, an agent $i$ sends a prediction $p_i$ for the probability of the event occurring. Let the outcome $o_q$ be defined as:
-- $o_q = 1$ if the event is realized,
-- $o_q = 0$ otherwise.
+## Difficulty-Adjusted Scoring
 
-The Brier score $S(p_i, o_q)$ for the prediction is given by:
-- **If $o_q = 1$:**
+Agents are not scored in isolation against the outcome. Each forecast is scored against what the market itself believed at the moment the forecast was made.
 
-  $$S(p_i, 1) = (1 - p_i)^2$$
+For an agent $i$ forecasting $p_{i,t}$ at time $t$, with market price $m_t$ and target $y$:
 
-- **If $o_q = 0$:**
-  $$S(p_i, 0) = p_i^2.$$
+$$S_{i,t} = (p_{i,t} - y)^2 - (m_t - y)^2$$
 
-The lower the score the better. This strictly proper scoring rule incentivizes miners to report their true beliefs.
+The lower the score the better, and **negative means the agent beat the market**. If $p_{i,t} = m_t$ the two terms cancel and the score is exactly zero — matching the market is the baseline, not a strategy.
+
+The target $y$ is the market price at $t + 7\ \text{days}$. If the market resolved before that horizon, $y$ is the realized outcome $o_q \in \{0, 1\}$, and the expression reduces exactly to a difficulty-adjusted Brier score against the market.
+
+Because the target is the market's own later price, the whole probability curve is scored continuously rather than only at resolution.
 
 ## Scoring Process
 
-1. A batch of binary events resolves
-2. We calculate the Brier score for each miner's prediction
-3. We average the Brier scores across all the events in the batch
-4. Winner-take-all: the miner with the lowest Brier score on one batch gets all the rewards
+1. Every interval, each agent re-forecasts every live event in the cohort
+2. Each forecast waits 7 days, until the market price it is measured against exists
+3. It is then scored against the market price at the moment the forecast was made
+4. Scores are averaged over a rolling 7-day window
+5. Miners below the coverage threshold are gated out; the rest are ranked and weighted
 
-**Window based Scoring** All the events batches are 3 days batches and are generated daily. They contain approximately 100 events each. The score of a miner at any given time is a function of the latest event batch which resolved. The immunity period has a length of 7 days thus when a miner registers it is only scored once within the immunity period.
+**Continuous scoring** Every event is forecast every interval until cutoff, and every one of those forecasts is scored. There is no carry-forward: a failed run leaves a genuine gap rather than reusing an earlier prediction.
 
-**Spot scoring** We only consider one prediction per miner. In the future as the network capacity improves we might move to a scoring which weights multiple predictions per miners. **Currently, only agents which were activated prior to a given event being broadcasted will forecast this event.** This means that on a given event all the miners which forecasted that event did so roughly at the same time.
+**How the average is taken** A miner's standing is a mean over **events**, not over individual forecasts. Within the window, each event contributes exactly one score — the miner's most recent scored forecast for that event — and those per-event scores are averaged.
+
+The denominator of that average is therefore set by the miner's **own** forecasts: only events the miner actually has a scored forecast for are counted. An event it never forecast is absent from the mean entirely, rather than entering it as a bad score. Skipping events does not dilute your average — it costs you coverage instead, which is the mechanism that punishes absence.
+
+**Coverage gating** A miner must forecast at least **85%** of the `(event, interval)` cells available to it over a rolling **14-day** window. Below that threshold it earns zero regardless of score. Missing forecasts are never imputed and never retried.
+
+Coverage uses a different denominator from the score average: it counts the cohort's own `(event, day)` cells over the window, so ducking a market and ducking a whole day cost the same.
+
+**Eligibility** A miner's coverage denominator is anchored on its **first** activation plus the 7-day horizon, so newly activated miners are not penalised for cells that predate them. Anchoring on first rather than current activation matters: miners re-upload constantly, and anchoring on the latest version would make established miners look newborn.
+
+The miner must then accumulate **three scored days** before it enters the ranking, so that its standing is never computed from a single day's snapshot. These are counted as distinct cohort scoring days rather than calendar days, so a missed scoring run does not advance the clock. A held miner is reported as gated with a reason rather than silently omitted, and the deregistration immunity period is set to cover the whole window.
+
+Scoring is computed by the backend from the forecasts validators report. Validators no longer score locally.
 
 ---
 
@@ -195,17 +196,25 @@ def agent_main(event_data: dict) -> dict:
             "event_id": str,
             "title": str,
             "description": str,
-            "cutoff": str,  # ISO 8601
-            "metadata": dict
+            "cutoff": str,          # ISO 8601
+            "metadata": dict,
+            "memory": str | None,   # what you returned last interval, None on the first run
         }
 
     Returns:
         {
             "event_id": str,
-            "prediction": float  # 0.0 to 1.0
+            "prediction": float,    # 0.0 to 1.0
+            "memory": str | None,   # optional, <= 32768 chars, handed back next interval
+            "reasoning": str | None,    # optional
+            "sources": list[str] | None,  # optional
         }
     """
 ```
+
+`agent_main` is called once per event **per interval**, so the same event reaches your agent repeatedly until its cutoff. `memory` is the only channel that carries state between those calls: it is scoped per `(miner, event)`, never crosses events or miners, and is truncated at 32,768 characters rather than rejected.
+
+See [`memory_example.py`](../neurons/miner/agents/memory_example.py) for a worked belief-updating agent.
 
 ## Constraints
 
@@ -225,13 +234,13 @@ Validators are configured via command-line flags for network settings, wallet cr
 # Data Flow
 
 ```
-1. Platform generates event
-2. Validators fetch event
-3. Validators execute miner agents in sandboxes
-4. Agents return predictions
-5. Event resolves with outcome
-6. Validators calculate scores
-7. Validators update weights on chain
+1. Platform admits a market to the live cohort
+2. Validators fetch the cohort and each agent's stored memory
+3. Validators execute miner agents in sandboxes, once per event per interval
+4. Agents return forecasts and updated memory
+5. Validators report both to the backend
+6. Backend scores each forecast against the market price 7 days later
+7. Validators update weights on chain from the backend's scores
 ```
 
 ---
@@ -246,6 +255,8 @@ Validators are configured via command-line flags for network settings, wallet cr
 ---
 
 **Documentation:**
-- [Validator Setup](./validator-setup.md)
-- [Miner Setup](./miner-setup.md)
+- [Miner Setup](./miner-setup.md) — start here if you are mining
 - [Subnet Rules](./subnet-rules.md)
+- [Scoring System](./scoring-system.md)
+- [Gateway Guide](./gateway-guide.md)
+- [Validator Setup](./validator-setup.md)

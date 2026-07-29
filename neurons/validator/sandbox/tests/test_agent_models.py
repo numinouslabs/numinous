@@ -1,6 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
+from neurons.validator.models.reforecast_memory import MAX_MEMORY_CHARS
 from neurons.validator.sandbox.agent_models import AgentOutput
 
 
@@ -55,3 +56,22 @@ class TestAgentOutputSources:
     def test_rejects_non_dict_item(self):
         with pytest.raises(ValidationError):
             AgentOutput(event_id="e1", prediction=0.5, sources=["just-a-string"])
+
+
+class TestAgentOutputMemory:
+    def test_accepts_none_memory(self):
+        output = AgentOutput(event_id="e1", prediction=0.5)
+        assert output.memory is None
+
+    def test_accepts_memory_string(self):
+        output = AgentOutput(event_id="e1", prediction=0.5, memory="belief blob")
+        assert output.memory == "belief blob"
+
+    def test_caps_oversized_memory(self):
+        output = AgentOutput(event_id="e1", prediction=0.5, memory="x" * (MAX_MEMORY_CHARS + 500))
+        assert len(output.memory) == MAX_MEMORY_CHARS
+
+    def test_memory_at_cap_unchanged(self):
+        blob = "y" * MAX_MEMORY_CHARS
+        output = AgentOutput(event_id="e1", prediction=0.5, memory=blob)
+        assert output.memory == blob

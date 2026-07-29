@@ -11,7 +11,10 @@ from neurons.validator.db.tests.test_utils import TestDbOperationsBase
 from neurons.validator.models.event import EventsModel, EventStatus
 from neurons.validator.models.miner import MinersModel
 from neurons.validator.models.prediction import PredictionExportedStatus, PredictionsModel
-from neurons.validator.models.score import ScoresModel
+from neurons.validator.utils.common.interval import (
+    get_interval_iso_datetime,
+    get_interval_start_minutes,
+)
 from neurons.validator.utils.logger.logger import NuminousLogger
 
 
@@ -161,441 +164,110 @@ class TestDbOperationsPart1(TestDbOperationsBase):
         )  # deleted_at should be set for deleted event
         assert isinstance(result[1][3], str) is True
 
-    async def test_delete_predictions_processed_unprocessed_events(
-        self, db_operations: DatabaseOperations, db_client: DatabaseClient
-    ):
-        events = [
-            EventsModel(
-                unique_event_id="processed_event_prediction_id",
-                event_id="event1",
-                market_type="truncated_market1",
-                event_type="market_1",
-                description="desc1",
-                outcome="outcome1",
-                status=EventStatus.SETTLED,
-                metadata='{"key": "value"}',
-                created_at="2000-12-02T14:30:00+00:00",
-                cutoff="2000-01-01T14:30:00+00:00",
-            ),
-            EventsModel(
-                unique_event_id="unprocessed_event_prediction_id",
-                event_id="event2",
-                market_type="truncated_market2",
-                event_type="market_2",
-                description="desc2",
-                outcome="outcome2",
-                status=EventStatus.PENDING,
-                metadata='{"key": "value"}',
-                created_at="2012-12-02T14:30:00+00:00",
-                cutoff="2001-01-01T14:30:00+00:00",
-            ),
-        ]
-
-        predictions = [
-            PredictionsModel(
-                unique_event_id="processed_event_prediction_id",
-                miner_hotkey="neuronHotkey_2",
-                track="MAIN",
-                miner_uid=2,
-                latest_prediction=1,
-                interval_start_minutes=10,
-                interval_agg_prediction=1,
-                run_id=None,
-                version_id=None,
-            ),
-            PredictionsModel(
-                unique_event_id="unprocessed_event_prediction_id",
-                miner_hotkey="neuronHotkey_2",
-                track="MAIN",
-                miner_uid=2,
-                latest_prediction=1,
-                interval_start_minutes=10,
-                interval_agg_prediction=1,
-                run_id=None,
-                version_id=None,
-            ),
-        ]
-
-        await db_operations.upsert_events(events=events)
-        await db_operations.upsert_predictions(predictions=predictions)
-
-        # Mark processed event as processed
+    async def _seed_prediction(
+        self,
+        db_operations: DatabaseOperations,
+        db_client: DatabaseClient,
+        unique_event_id: str,
+        miner_uid: int,
+        exported: bool,
+        days_old: int,
+    ) -> None:
+        await db_operations.upsert_events(
+            [
+                EventsModel(
+                    unique_event_id=unique_event_id,
+                    event_id=unique_event_id,
+                    market_type="market",
+                    event_type="type",
+                    description="desc",
+                    outcome=None,
+                    status=EventStatus.PENDING,
+                    metadata="{}",
+                    created_at="2024-01-01T00:00:00+00:00",
+                    cutoff="2030-01-01T00:00:00+00:00",
+                )
+            ]
+        )
+        await db_operations.upsert_predictions(
+            [
+                PredictionsModel(
+                    unique_event_id=unique_event_id,
+                    miner_hotkey=f"hotkey_{miner_uid}",
+                    miner_uid=miner_uid,
+                    track="MAIN",
+                    latest_prediction=0.5,
+                    interval_start_minutes=100,
+                    interval_agg_prediction=0.5,
+                )
+            ]
+        )
         await db_client.update(
             """
-                UPDATE
-                    events
-                SET
-                    processed = ?,
-                    resolved_at = ?
-                WHERE
-                    unique_event_id = ?
+                UPDATE predictions
+                SET exported = ?,
+                    submitted = datetime(CURRENT_TIMESTAMP, ?)
+                WHERE unique_event_id = ? AND miner_uid = ?
             """,
             [
-                True,
-                (datetime.now(timezone.utc) - timedelta(days=4, hours=1)).isoformat(),
-                events[0].unique_event_id,
+                PredictionExportedStatus.EXPORTED if exported else 0,
+                f"-{days_old} day",
+                unique_event_id,
+                miner_uid,
             ],
         )
 
-        # Mark all predictions as exported but not exported one
-        await db_client.update(
-            """
-                UPDATE
-                    predictions
-                SET
-                    exported = ?
-                """,
-            [PredictionExportedStatus.EXPORTED],
-        )
-
-        # delete
-        result = await db_operations.delete_predictions(batch_size=100)
-
-        assert len(result) == 1
-        assert result[0][0] == 1
-
-        result = await db_client.many(
-            """
-                SELECT unique_event_id FROM predictions ORDER BY ROWID ASC
-            """
-        )
-
-        # Should have deleted the processed event prediction
-        assert len(result) == 1
-        assert result[0][0] == "unprocessed_event_prediction_id"
-
-    async def test_delete_predictions_discarded_and_deleted_events(
+    async def test_delete_predictions_deletes_old_exported(
         self, db_operations: DatabaseOperations, db_client: DatabaseClient
     ):
-        events = [
-            EventsModel(
-                unique_event_id="discarded_event_prediction_id",
-                event_id="event3",
-                market_type="truncated_market3",
-                event_type="market_3",
-                description="desc2",
-                outcome="outcome3",
-                status=EventStatus.DISCARDED,
-                metadata='{"key": "value"}',
-                created_at="2012-12-02T14:30:00+00:00",
-                cutoff="2001-01-01T14:30:00+00:00",
-            ),
-            EventsModel(
-                unique_event_id="deleted_event_prediction_id",
-                event_id="event3",
-                market_type="truncated_market3",
-                event_type="market_3",
-                description="desc2",
-                outcome="outcome3",
-                status=EventStatus.DELETED,
-                metadata='{"key": "value"}',
-                created_at="2012-12-02T14:30:00+00:00",
-                cutoff="2001-01-01T14:30:00+00:00",
-            ),
-            EventsModel(
-                unique_event_id="pending_event_prediction_id",
-                event_id="event3",
-                market_type="truncated_market3",
-                event_type="market_3",
-                description="desc2",
-                outcome="outcome3",
-                status=EventStatus.PENDING,
-                metadata='{"key": "value"}',
-                created_at="2012-12-02T14:30:00+00:00",
-                cutoff="2001-01-01T14:30:00+00:00",
-            ),
-        ]
+        await self._seed_prediction(db_operations, db_client, "e_old", 1, True, 8)
 
-        predictions = [
-            PredictionsModel(
-                unique_event_id="discarded_event_prediction_id",
-                miner_hotkey="neuronHotkey_2",
-                track="MAIN",
-                miner_uid=2,
-                latest_prediction=1,
-                interval_start_minutes=10,
-                interval_agg_prediction=1,
-            ),
-            PredictionsModel(
-                unique_event_id="deleted_event_prediction_id",
-                miner_hotkey="neuronHotkey_2",
-                track="MAIN",
-                miner_uid=2,
-                latest_prediction=1,
-                interval_start_minutes=10,
-                interval_agg_prediction=1,
-            ),
-            PredictionsModel(
-                unique_event_id="pending_event_prediction_id",
-                miner_hotkey="neuronHotkey_2",
-                track="MAIN",
-                miner_uid=2,
-                latest_prediction=1,
-                interval_start_minutes=10,
-                interval_agg_prediction=1,
-            ),
-        ]
+        deleted = await db_operations.delete_predictions(batch_size=100)
 
-        await db_operations.upsert_events(events=events)
-        await db_operations.upsert_predictions(predictions=predictions)
+        assert len(deleted) == 1
+        assert await db_client.many("SELECT 1 FROM predictions") == []
 
-        # Mark all predictions as exported
-        await db_client.update(
-            """
-                UPDATE
-                    predictions
-                SET
-                    exported = ?
-                """,
-            [PredictionExportedStatus.EXPORTED],
-        )
-
-        # delete
-        result = await db_operations.delete_predictions(batch_size=100)
-
-        assert len(result) == 2
-        assert result == [(1,), (2,)]
-
-        result = await db_client.many(
-            """
-                SELECT unique_event_id FROM predictions ORDER BY ROWID ASC
-            """
-        )
-
-        assert len(result) == 1
-        assert result[0][0] == "pending_event_prediction_id"
-
-    async def test_delete_predictions_exported_unexported(
+    async def test_delete_predictions_keeps_recent_exported(
         self, db_operations: DatabaseOperations, db_client: DatabaseClient
     ):
-        events = [
-            EventsModel(
-                unique_event_id="exported_prediction_event_id",
-                event_id="event1",
-                market_type="truncated_market1",
-                event_type="market_1",
-                description="desc1",
-                outcome="outcome1",
-                status=EventStatus.PENDING,
-                metadata='{"key": "value"}',
-                created_at="2000-12-02T14:30:00+00:00",
-                cutoff="2000-01-01T14:30:00+00:00",
-            ),
-            EventsModel(
-                unique_event_id="not_exported_prediction_event_id",
-                event_id="event4",
-                market_type="truncated_market4",
-                event_type="market_4",
-                description="desc4",
-                outcome="outcome4",
-                status=EventStatus.DELETED,
-                metadata='{"key": "value"}',
-                created_at="2012-12-02T14:30:00+00:00",
-                cutoff="2001-01-01T14:30:00+00:00",
-            ),
-        ]
+        await self._seed_prediction(db_operations, db_client, "e_recent", 2, True, 1)
 
-        predictions = [
-            PredictionsModel(
-                unique_event_id="exported_prediction_event_id",
-                miner_hotkey="neuronHotkey_1",
-                track="MAIN",
-                miner_uid=1,
-                latest_prediction=1,
-                interval_start_minutes=10,
-                interval_agg_prediction=1,
-            ),
-            PredictionsModel(
-                unique_event_id="not_exported_prediction_event_id",
-                miner_hotkey="neuronHotkey_2",
-                track="MAIN",
-                miner_uid=2,
-                latest_prediction=1,
-                interval_start_minutes=10,
-                interval_agg_prediction=1,
-            ),
-        ]
+        await db_operations.delete_predictions(batch_size=100)
 
-        await db_operations.upsert_events(events=events)
-        await db_operations.upsert_predictions(predictions=predictions)
+        assert len(await db_client.many("SELECT 1 FROM predictions")) == 1
 
-        # Mark all events as processed but unprocessed and discarded ones
-        await db_client.update(
-            """
-                UPDATE
-                    events
-                SET
-                    processed = ?,
-                    resolved_at = ?
-            """,
-            [
-                True,
-                (datetime.now(timezone.utc) - timedelta(days=4, hours=1)).isoformat(),
-            ],
-        )
+    async def test_delete_predictions_keeps_unexported(
+        self, db_operations: DatabaseOperations, db_client: DatabaseClient
+    ):
+        # Old, but never exported - the backend has not got it yet.
+        await self._seed_prediction(db_operations, db_client, "e_unexported", 3, False, 30)
 
-        # Mark all predictions as exported but not exported one
-        await db_client.update(
-            """
-                UPDATE
-                    predictions
-                SET
-                    exported = ?
-                WHERE
-                    unique_event_id NOT IN ('not_exported_prediction_event_id')
-                """,
-            [PredictionExportedStatus.EXPORTED],
-        )
+        await db_operations.delete_predictions(batch_size=100)
 
-        # delete
-        result = await db_operations.delete_predictions(batch_size=100)
+        assert len(await db_client.many("SELECT 1 FROM predictions")) == 1
 
-        assert len(result) == 1
-        assert result[0][0] == 1
+    async def test_delete_predictions_ignores_event_status(
+        self, db_operations: DatabaseOperations, db_client: DatabaseClient
+    ):
+        # Event still PENDING and nowhere near cutoff, prediction still goes.
+        await self._seed_prediction(db_operations, db_client, "e_pending", 4, True, 10)
 
-        result = await db_client.many(
-            """
-                SELECT unique_event_id FROM predictions ORDER BY ROWID ASC
-            """
-        )
+        deleted = await db_operations.delete_predictions(batch_size=100)
 
-        # Should have unexported prediction left
-        assert len(result) == 1
-        assert result[0][0] == "not_exported_prediction_event_id"
+        assert len(deleted) == 1
 
     async def test_delete_predictions_batch_size(
         self, db_operations: DatabaseOperations, db_client: DatabaseClient
     ):
-        events = [
-            EventsModel(
-                unique_event_id="event_id_1",
-                event_id="event1",
-                market_type="truncated_market1",
-                event_type="market_1",
-                description="desc1",
-                outcome="outcome1",
-                status=EventStatus.DISCARDED,
-                metadata='{"key": "value"}',
-                created_at="2000-12-02T14:30:00+00:00",
-                cutoff="2000-01-01T14:30:00+00:00",
-            ),
-            EventsModel(
-                unique_event_id="event_id_2",
-                event_id="event2",
-                market_type="truncated_market2",
-                event_type="market_2",
-                description="desc2",
-                outcome="outcome2",
-                status=EventStatus.DISCARDED,
-                metadata='{"key": "value"}',
-                created_at="2012-12-02T14:30:00+00:00",
-                cutoff="2001-01-01T14:30:00+00:00",
-            ),
-            EventsModel(
-                unique_event_id="event_id_3",
-                event_id="event3",
-                market_type="truncated_market3",
-                event_type="market_3",
-                description="desc2",
-                outcome="outcome3",
-                status=EventStatus.DISCARDED,
-                metadata='{"key": "value"}',
-                created_at="2012-12-02T14:30:00+00:00",
-                cutoff="2001-01-01T14:30:00+00:00",
-            ),
-        ]
+        for miner_uid in range(3):
+            await self._seed_prediction(
+                db_operations, db_client, f"e_batch_{miner_uid}", miner_uid, True, 8
+            )
 
-        predictions = [
-            PredictionsModel(
-                unique_event_id="event_id_1",
-                miner_hotkey="neuronHotkey_1",
-                track="MAIN",
-                miner_uid=1,
-                latest_prediction=1,
-                interval_start_minutes=10,
-                interval_agg_prediction=1,
-            ),
-            PredictionsModel(
-                unique_event_id="event_id_2",
-                miner_hotkey="neuronHotkey_2",
-                track="MAIN",
-                miner_uid=2,
-                latest_prediction=1,
-                interval_start_minutes=10,
-                interval_agg_prediction=1,
-            ),
-            PredictionsModel(
-                unique_event_id="event_id_3",
-                miner_hotkey="neuronHotkey_2",
-                track="MAIN",
-                miner_uid=2,
-                latest_prediction=1,
-                interval_start_minutes=10,
-                interval_agg_prediction=1,
-            ),
-        ]
+        deleted = await db_operations.delete_predictions(batch_size=2)
 
-        await db_operations.upsert_events(events=events)
-        await db_operations.upsert_predictions(predictions=predictions)
-
-        # Mark all events as processed
-        await db_client.update(
-            """
-                UPDATE
-                    events
-                SET
-                    processed = ?,
-                    resolved_at = ?
-            """,
-            [
-                True,
-                (datetime.now(timezone.utc) - timedelta(days=4, hours=1)).isoformat(),
-            ],
-        )
-        # Mark all predictions as exported
-        await db_client.update(
-            """
-                UPDATE
-                    predictions
-                SET
-                    exported = ?
-                """,
-            [PredictionExportedStatus.EXPORTED],
-        )
-
-        # delete with batch size 2
-        result = await db_operations.delete_predictions(batch_size=2)
-
-        assert len(result) == 2
-
-        # Check the rows are deleted in ASC order
-        assert result[0][0] == 1
-        assert result[1][0] == 2
-
-        result = await db_client.many(
-            """
-                SELECT unique_event_id FROM predictions ORDER BY ROWID ASC
-            """
-        )
-
-        # Should have 1 prediction left
-        assert len(result) == 1
-        assert result[0][0] == "event_id_3"
-
-        # Delete the rest
-        result = await db_operations.delete_predictions(batch_size=1000)
-
-        assert len(result) == 1
-        assert result[0][0] == 3
-
-        result = await db_client.many(
-            """
-                SELECT unique_event_id FROM predictions ORDER BY ROWID ASC
-            """
-        )
-
-        # Should have no predictions left
-        assert len(result) == 0
+        assert len(deleted) == 2
+        assert len(await db_client.many("SELECT 1 FROM predictions")) == 1
 
     async def test_get_event(self, db_operations: DatabaseOperations):
         unique_event_id = "unique1"
@@ -775,10 +447,12 @@ class TestDbOperationsPart1(TestDbOperationsBase):
 
         assert result is None
 
-    async def test_get_events_to_predict(self, db_operations: DatabaseOperations):
+    async def test_get_events_to_predict(
+        self, db_operations: DatabaseOperations, db_client: DatabaseClient
+    ):
         """
-        Events-to-predict are selected by per-event run_days_before_cutoff:
-        date(cutoff) == date(now_utc + run_days_before_cutoff days)
+        Re-forecasting: every PENDING, not-yet-cutoff event is due every interval,
+        regardless of run_days_before_cutoff (the old single-day gate is gone).
         """
         event_to_predict_id = "event3"
 
@@ -870,14 +544,47 @@ class TestDbOperationsPart1(TestDbOperationsBase):
 
         await db_operations.upsert_events(events=events)
 
-        result = await db_operations.get_events_to_predict()
+        # upsert_events stamps registered_date with CURRENT_TIMESTAMP, so backdate it
+        # to an earlier interval - otherwise these are all held until the next boundary.
+        await db_client.update(
+            "UPDATE events SET registered_date = datetime(CURRENT_TIMESTAMP, '-2 day')", []
+        )
 
-        # Two events should match today's schedule:
-        # - unique3: cutoff in 2 days, run_days_before_cutoff=2
-        # - unique5: cutoff in 3 days, run_days_before_cutoff=3
-        assert len(result) == 2
-        assert result[0].event_id == event_to_predict_id
-        assert result[1].event_id == "event5"
+        interval_start = get_interval_iso_datetime(get_interval_start_minutes())
+        result = await db_operations.get_events_to_predict(interval_start_datetime=interval_start)
+
+        # All PENDING, future-cutoff events are due now (ordered by unique_event_id).
+        # unique4 (cutoff in 2 days, rdbc=3) is included even though the old
+        # single-day gate would have excluded it. Excluded: unique1 (discarded),
+        # unique2 (cutoff already passed), unique6 (settled).
+        assert [event.event_id for event in result] == ["event3", "event4", "event5"]
+
+    async def test_get_events_to_predict_holds_freshly_registered_cohort(
+        self, db_operations: DatabaseOperations
+    ):
+        now = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        await db_operations.upsert_events(
+            events=[
+                EventsModel(
+                    unique_event_id="fresh1",
+                    event_id="fresh1",
+                    market_type="market",
+                    event_type="type",
+                    description="desc",
+                    outcome=None,
+                    status=EventStatus.PENDING,
+                    metadata="{}",
+                    created_at="2024-01-01T00:00:00+00:00",
+                    cutoff=(now + timedelta(days=5)).isoformat(),
+                )
+            ]
+        )
+
+        interval_start = get_interval_iso_datetime(get_interval_start_minutes())
+        result = await db_operations.get_events_to_predict(interval_start_datetime=interval_start)
+
+        assert result == []
 
     async def test_get_predictions_for_event(self, db_operations: DatabaseOperations):
         unique_event_id_1 = "unique_event_id_1"
@@ -2119,382 +1826,13 @@ class TestDbOperationsPart1(TestDbOperationsBase):
         ]
         await db_operations.upsert_predictions(predictions)
 
-        all_preds = await db_operations.get_predictions_for_scoring(
-            unique_event_id="track_upsert_event"
+        all_preds = await db_client.many(
+            """
+                SELECT track FROM predictions WHERE unique_event_id = ?
+            """,
+            parameters=["track_upsert_event"],
         )
         assert len(all_preds) == 2
 
-        tracks = {p.track for p in all_preds}
+        tracks = {row[0] for row in all_preds}
         assert tracks == {"MAIN", "SIGNAL"}
-
-    async def test_insert_scores_separate_per_track(
-        self, db_operations: DatabaseOperations, db_client: DatabaseClient
-    ):
-        # Same miner, same event, different tracks = two score rows
-        scores = [
-            ScoresModel(
-                event_id="track_score_event",
-                miner_uid=30,
-                miner_hotkey="hotkey_score",
-                track="MAIN",
-                prediction=0.6,
-                event_score=0.16,
-                spec_version=1,
-            ),
-            ScoresModel(
-                event_id="track_score_event",
-                miner_uid=30,
-                miner_hotkey="hotkey_score",
-                track="SIGNAL",
-                prediction=0.4,
-                event_score=0.36,
-                spec_version=1,
-            ),
-        ]
-        await db_operations.insert_scores(scores)
-
-        result = await db_operations.get_scores_for_export(event_id="track_score_event")
-        assert len(result) == 2
-
-        tracks = {s.track for s in result}
-        assert tracks == {"MAIN", "SIGNAL"}
-
-    async def test_get_events_for_scoring(self, db_operations: DatabaseOperations):
-        expected_event_id = "event1"
-
-        events = [
-            EventsModel(
-                unique_event_id="unique1",
-                event_id=expected_event_id,
-                market_type="truncated_market1",
-                event_type="market1",
-                description="desc1",
-                outcome="outcome1",
-                status=EventStatus.SETTLED,
-                metadata='{"key": "value"}',
-                created_at="2000-12-02T14:30:00+00:00",
-                cutoff="2000-12-30T14:30:00+00:00",
-            ),
-            EventsModel(
-                unique_event_id="unique2",
-                event_id="event2",
-                market_type="truncated_market2",
-                event_type="market2",
-                description="desc2",
-                outcome=None,
-                status=EventStatus.PENDING,
-                metadata='{"key": "value"}',
-                created_at="2012-12-02T14:30:00+00:00",
-                cutoff="2000-12-30T14:30:00+00:00",
-            ),
-        ]
-
-        await db_operations.upsert_events(events)
-
-        result = await db_operations.get_events_for_scoring()
-
-        assert len(result) == 1
-        assert result[0].event_id == expected_event_id
-        assert result[0].status == EventStatus.SETTLED
-
-    async def test_get_predictions_for_scoring(
-        self, db_operations: DatabaseOperations, db_client: DatabaseClient
-    ):
-        expected_event_id = "_event1"
-
-        events = [
-            EventsModel(
-                unique_event_id="unique_event_id_1",
-                event_id="unique_event_id_1",
-                market_type="truncated_market1",
-                event_type="market1",
-                description="desc1",
-                outcome="outcome1",
-                status=EventStatus.SETTLED,
-                metadata='{"key": "value"}',
-                created_at="2000-12-02T14:30:00+00:00",
-                cutoff="2000-12-30T14:30:00+00:00",
-            ),
-            EventsModel(
-                unique_event_id=expected_event_id,
-                event_id=expected_event_id,
-                market_type="truncated_market1",
-                event_type="market1",
-                description="desc1",
-                outcome="outcome1",
-                status=EventStatus.SETTLED,
-                metadata='{"key": "value"}',
-                created_at="2000-12-02T14:30:00+00:00",
-                cutoff="2000-12-30T14:30:00+00:00",
-            ),
-        ]
-
-        await db_operations.upsert_events(events=events)
-
-        predictions = [
-            PredictionsModel(
-                unique_event_id="unique_event_id_1",
-                miner_hotkey="neuronHotkey_1",
-                track="MAIN",
-                miner_uid=1,
-                latest_prediction=1.0,
-                interval_start_minutes=10,
-                interval_agg_prediction=1.0,
-            ),
-            PredictionsModel(
-                unique_event_id=expected_event_id,
-                miner_hotkey="neuronHotkey_2",
-                track="MAIN",
-                miner_uid=2,
-                latest_prediction=1.0,
-                interval_start_minutes=10,
-                interval_agg_prediction=1.0,
-            ),
-        ]
-
-        await db_operations.upsert_predictions(predictions)
-
-        all_predictions = await db_client.many(
-            """
-                SELECT unique_event_id FROM predictions ORDER BY unique_event_id
-            """
-        )
-        assert len(all_predictions) == 2
-        assert all_predictions[0][0] == expected_event_id
-        assert all_predictions[1][0] == "unique_event_id_1"
-
-        result = await db_operations.get_predictions_for_scoring(unique_event_id=expected_event_id)
-
-        assert len(result) == 1
-        assert result[0].unique_event_id == expected_event_id
-
-    async def test_get_miners_last_registration(
-        self, db_operations: DatabaseOperations, db_client: DatabaseClient
-    ):
-        miner_1 = MinersModel(
-            miner_hotkey="hotkey1",
-            miner_uid="uid1",
-            registered_date=datetime(2024, 1, 1, 10, 0, 0),
-            is_validating=False,
-            validator_permit=False,
-        )
-
-        miner_2 = MinersModel(
-            miner_hotkey="hotkey2",
-            miner_uid="uid2",
-            registered_date=datetime(2024, 1, 1, 10, 0, 0),
-            is_validating=False,
-            validator_permit=True,
-        )
-
-        miner_1_replaced = MinersModel(
-            miner_hotkey="hotkey2",
-            miner_uid="uid1",
-            registered_date=datetime(2024, 1, 1, 11, 0, 1),
-            is_validating=True,
-            validator_permit=True,
-        )
-
-        miners = [miner_1, miner_2, miner_1_replaced]
-        await db_client.insert_many(
-            """
-            INSERT INTO miners (miner_hotkey, miner_uid, registered_date, is_validating, validator_permit)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    m.miner_hotkey,
-                    m.miner_uid,
-                    m.registered_date,
-                    m.is_validating,
-                    m.validator_permit,
-                )
-                for m in miners
-            ],
-        )
-
-        all_miners = await db_client.many(
-            """
-                SELECT miner_uid, miner_hotkey, registered_date FROM miners
-                ORDER BY miner_uid, registered_date
-            """
-        )
-
-        assert len(all_miners) == 3
-        assert all_miners[0][0] == miner_1.miner_uid
-        assert all_miners[0][1] == miner_1.miner_hotkey
-        assert all_miners[1][1] == miner_1_replaced.miner_hotkey
-        assert datetime.fromisoformat(all_miners[1][2]) == miner_1_replaced.registered_date
-        assert all_miners[2][0] == miner_2.miner_uid
-
-        result = await db_operations.get_miners_last_registration()
-        assert len(result) == 2
-        assert result[0].miner_uid == miner_1_replaced.miner_uid
-        assert result[0].miner_hotkey == miner_1_replaced.miner_hotkey
-        assert result[0].registered_date == miner_1_replaced.registered_date
-        assert result[1].miner_uid == miner_2.miner_uid
-        assert result[1].miner_hotkey == miner_2.miner_hotkey
-        assert result[1].registered_date == miner_2.registered_date
-
-    async def test_mark_event_as_processed(
-        self, db_operations: DatabaseOperations, db_client: DatabaseClient
-    ):
-        unique_event_id = "unique_event1"
-
-        events = [
-            EventsModel(
-                unique_event_id=unique_event_id,
-                event_id="event1",
-                market_type="truncated_market1",
-                event_type="market1",
-                description="desc1",
-                outcome=None,
-                status=EventStatus.PENDING,
-                metadata='{"key": "value"}',
-                created_at="2000-12-02T14:30:00+00:00",
-                cutoff="2000-12-30T14:30:00+00:00",
-            ),
-            EventsModel(
-                unique_event_id="unique_event2",
-                event_id="event2",
-                market_type="truncated_market2",
-                event_type="market2",
-                description="desc1",
-                outcome=None,
-                status=EventStatus.PENDING,
-                metadata='{"key": "value"}',
-                created_at="2000-12-02T14:30:00+00:00",
-                cutoff="2000-12-30T14:30:00+00:00",
-            ),
-        ]
-
-        await db_operations.upsert_events(events=events)
-
-        await db_operations.mark_event_as_processed(unique_event_id=unique_event_id)
-
-        result = await db_client.many(
-            """
-                SELECT unique_event_id, processed, exported FROM events ORDER BY unique_event_id
-            """
-        )
-
-        assert len(result) == 2
-        assert result[0][0] == unique_event_id
-        assert result[0][1] == 1
-        assert result[0][2] == 0
-        assert result[1][0] == "unique_event2"
-        assert result[1][1] == 0
-        assert result[1][2] == 0
-
-    async def test_mark_event_as_exported(
-        self, db_operations: DatabaseOperations, db_client: DatabaseClient
-    ):
-        unique_event_id = "unique_event1"
-
-        events = [
-            EventsModel(
-                unique_event_id=unique_event_id,
-                event_id="event1",
-                market_type="truncated_market1",
-                event_type="market1",
-                description="desc1",
-                outcome=None,
-                status=EventStatus.PENDING,
-                metadata='{"key": "value"}',
-                created_at="2000-12-02T14:30:00+00:00",
-                cutoff="2000-12-30T14:30:00+00:00",
-            ),
-            EventsModel(
-                unique_event_id="unique_event2",
-                event_id="event2",
-                market_type="truncated_market2",
-                event_type="market2",
-                description="desc1",
-                outcome=None,
-                status=EventStatus.PENDING,
-                metadata='{"key": "value"}',
-                created_at="2000-12-02T14:30:00+00:00",
-                cutoff="2000-12-30T14:30:00+00:00",
-            ),
-        ]
-
-        await db_operations.upsert_events(events=events)
-
-        await db_operations.mark_event_as_exported(unique_event_id=unique_event_id)
-
-        result = await db_client.many(
-            """
-                SELECT unique_event_id, exported FROM events ORDER BY unique_event_id
-            """
-        )
-
-        assert len(result) == 2
-        assert result[0][0] == unique_event_id
-        assert result[0][1] == 1
-        assert result[1][0] == "unique_event2"
-        assert result[1][1] == 0
-
-    @pytest.mark.parametrize(
-        "scores, expected_tuples",
-        [
-            (
-                [
-                    ScoresModel(
-                        event_id="evt1",
-                        miner_uid=1,
-                        miner_hotkey="hk1",
-                        track="MAIN",
-                        prediction=0.75,
-                        event_score=0.85,
-                        spec_version=1,
-                    ),
-                    ScoresModel(
-                        event_id="evt2",
-                        miner_uid=2,
-                        miner_hotkey="hk2",
-                        track="MAIN",
-                        prediction=0.65,
-                        event_score=0.80,
-                        spec_version=1,
-                    ),
-                ],
-                [
-                    ("evt1", 1, "hk1", 0.75, 0.85, 1),
-                    ("evt2", 2, "hk2", 0.65, 0.80, 1),
-                ],
-            ),
-        ],
-    )
-    async def test_insert_scores(
-        self,
-        db_operations: DatabaseOperations,
-        db_client: DatabaseClient,
-        scores: list[ScoresModel],
-        expected_tuples: list[tuple],
-    ):
-        expected_timestamp = datetime.now(timezone.utc)
-        await db_operations.insert_scores(scores)
-
-        result = await db_client.many(
-            """
-                SELECT
-                    event_id,
-                    miner_uid,
-                    miner_hotkey,
-                    prediction,
-                    event_score,
-                    spec_version
-                FROM scores
-                ORDER BY event_id
-            """
-        )
-
-        for i, row in enumerate(result):
-            assert row == expected_tuples[i]
-
-        result = await db_client.many("""SELECT created_at, exported FROM scores""")
-        for row in result:
-            actual_timestamp = datetime.fromisoformat(row[0]).replace(tzinfo=timezone.utc)
-            assert actual_timestamp > expected_timestamp - timedelta(seconds=5)
-            assert actual_timestamp < expected_timestamp + timedelta(seconds=5)
-            assert row[1] == 0

@@ -32,6 +32,7 @@ class AgentRunsModel(BaseModel):
     miner_hotkey: str
     track: TrackEnum
     status: AgentRunStatus
+    interval_start_minutes: int
     exported: Optional[bool] = False
     is_final: Optional[bool] = True
     created_at: Optional[datetime] = None

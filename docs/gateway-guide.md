@@ -2,26 +2,23 @@
 
 ## Overview
 
-The Gateway API provides miner agents with access to external services during sandbox execution. Agents run in isolated Docker containers without internet access, and the gateway acts as a controlled proxy to external APIs. Validators handle authentication, while miners can link their API accounts to cover costs and access higher budgets (see [miner-setup.md](./miner-setup.md#linking-services)).
+The Gateway API provides miner agents with access to external services during sandbox execution. Agents run in isolated Docker containers without internet access, and the gateway acts as a controlled proxy to external APIs. Validators handle authentication, while miners link their API accounts to cover costs (see [miner-setup.md](./miner-setup.md#linking-services)).
 
-**Track-based access:** Not all tracks have access to all endpoints. The MAIN track has full access. Other tracks are restricted to a curated subset of services — see [`track_config.py`](../neurons/validator/sandbox/signing_proxy/track_config.py) for the per-track endpoint allowlist. Requests to disallowed endpoints return 403.
+**This guide documents the SIGNAL track**, which is the only scored track — see [scoring-system.md](./scoring-system.md). These five prefixes are the complete allowlist; anything else returns **403**:
 
-**Available Services:**
-- **Chutes AI**: LLM inference with multiple open-source models
-- **Desearch AI**: Web search, social media search, and content crawling
-- **OpenAI**: GPT-5 series models with built-in web search
-- **Perplexity**: Reasoning LLMs with built-in web search
-- **Vericore**: Statement verification with evidence-based metrics
-- **OpenRouter**: Model router with access to hundreds of LLM models (Claude, Gemini, Llama, etc.)
-- **LunarCrush**: Social media intelligence and sentiment data for any topic
-- **Numinous Indicia**: Geopolitical and OSINT signals intelligence (X/Twitter, LiveUAMap)
-- **Numinous Signals**: Event-relevant news signals scored by relevance and impact, causal driver graphs, deep research reports, and semantic search/fetch over the research corpus
-- **Unusual Whales**: Financial news headlines with filtering by source, ticker, and sentiment
-- **Public Data Proxy**: Generic proxy any number of free public APIs across sports, economics, weather, finance, and more. No cost. Run `numi services sources` to see what's available. See [Public Data Proxy](#public-data-proxy) below.
+| Endpoint | Service | Cost |
+|---|---|---|
+| `/api/gateway/openai/responses/inference` | [OpenAI](#openai-endpoints) — GPT-5 series, inference only | $1.00 per run, linked account required |
+| `/api/gateway/openrouter/chat/completions/inference` | [OpenRouter](#openrouter-endpoints) — hundreds of models, inference only | $0.10 per run, linked account required |
+| `/api/gateway/lightning-rod/` | [Lightning Rod](#lightning-rod-endpoints) — OpenAI-compatible chat completions | Metered per token, linked account required |
+| `/api/gateway/numinous-indicia/` | [Numinous Indicia](#numinous-indicia-endpoints) — geopolitical/OSINT signals | Free, no linking |
+| `/api/gateway/numinous-signals/` | [Numinous Signals](#numinous-signals-endpoints) — scored news signals, causal drivers, deep research, corpus search | $0.10 per run, linked account required |
+
+Note that the **inference-only** routes are the allowlisted ones: the web-search variants (`/openai/responses`, `/openrouter/chat/completions`) are not reachable from SIGNAL. Bring your own search via the signals endpoints instead.
+
+The MAIN track has access to everything, including Chutes, Desearch, Perplexity, Vericore, LunarCrush, Unusual Whales and the public data proxy. MAIN is **unscored and earns no emissions**, so those services are no longer documented here — see [`track_config.py`](../neurons/validator/sandbox/signing_proxy/track_config.py) for the authoritative per-track allowlist.
 
 All requests are cached to optimize performance and reduce costs.
-
-**Cost Limits:** $0.01 (default) or $0.10 (linked account) per sandbox run for Chutes and Desearch. OpenAI: $1.00 per run (requires linked account, no free tier). Perplexity: $0.10 per run (requires linked account, no free tier). Vericore: $0.10 per run (requires linked account, no free tier). OpenRouter: $0.10 per run (requires linked account, no free tier). LunarCrush: $0.10 per run (requires linked account, no free tier). Numinous Indicia: free (no linking required). Numinous Signals: $0.10 per run (requires linked account, no free tier). Unusual Whales: $0.10 per run (requires linked account, no free tier).
 
 **Security:** API keys are securely stored using external secret management and never exposed to validators.
 
@@ -58,736 +55,9 @@ if not RUN_ID:
 
 ---
 
-## Chutes AI Endpoints
-
-Chutes AI provides access to open-source LLM models for inference.
-
-**Available on:** MAIN track only.
-
-### POST /api/gateway/chutes/chat/completions
-
-OpenAI-compatible chat completion endpoint.
-
-**URL:** `{SANDBOX_PROXY_URL}/api/gateway/chutes/chat/completions`
-
-**Request Body:**
-```json
-{
-  "run_id": "550e8400-e29b-41d4-a716-446655440000",
-  "model": "deepseek-ai/DeepSeek-V3-0324",
-  "messages": [
-    {"role": "system", "content": "You are a helpful assistant."},
-    {"role": "user", "content": "What is the capital of France?"}
-  ],
-  "temperature": 0.7,
-  "max_tokens": 1000,
-  "tools": null,
-  "tool_choice": null
-}
-```
-
-**Parameters:**
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `run_id` | string (UUID) | Yes | - | Execution tracking ID from environment |
-| `model` | string | Yes | - | Model identifier (see Available Models below) |
-| `messages` | array | Yes | - | List of message objects with `role` and `content` |
-| `temperature` | float | No | 0.7 | Sampling temperature (0.0-2.0) |
-| `max_tokens` | integer | No | null | Maximum tokens to generate |
-| `tools` | array | No | null | Tool definitions for function calling |
-| `tool_choice` | string/object | No | null | Tool selection strategy (`auto`, `required`, or specific tool) |
-
-**Response:**
-```json
-{
-  "id": "chatcmpl-123",
-  "object": "chat.completion",
-  "created": 1677652288,
-  "model": "deepseek-ai/DeepSeek-V3-0324",
-  "choices": [
-    {
-      "index": 0,
-      "message": {
-        "role": "assistant",
-        "content": "The capital of France is Paris."
-      },
-      "finish_reason": "stop"
-    }
-  ],
-  "usage": {
-    "prompt_tokens": 28,
-    "completion_tokens": 8,
-    "total_tokens": 36
-  }
-}
-```
-
-**Example (using LangChain):**
-```python
-import os
-from langchain_openai import ChatOpenAI
-
-PROXY_URL = os.getenv("SANDBOX_PROXY_URL", "http://sandbox_proxy")
-RUN_ID = os.getenv("RUN_ID")
-
-llm = ChatOpenAI(
-    model="deepseek-ai/DeepSeek-V3-0324",
-    base_url=f"{PROXY_URL}/api/gateway/chutes",
-    api_key="not-needed",  # Gateway handles authentication
-    extra_body={"run_id": RUN_ID},
-)
-
-response = llm.invoke("What is 2+2?")
-print(response.content)
-```
-
-**Example (using httpx):**
-```python
-import os
-import httpx
-
-PROXY_URL = os.getenv("SANDBOX_PROXY_URL")
-RUN_ID = os.getenv("RUN_ID")
-
-response = httpx.post(
-    f"{PROXY_URL}/api/gateway/chutes/chat/completions",
-    json={
-        "run_id": RUN_ID,
-        "model": "deepseek-ai/DeepSeek-V3-0324",
-        "messages": [{"role": "user", "content": "Hello!"}],
-        "temperature": 0.7,
-    },
-    timeout=60.0,
-)
-
-result = response.json()
-content = result["choices"][0]["message"]["content"]
-```
-
-**Available Models:**
-
-| Model | Identifier | Notes |
-|-------|-----------|-------|
-| DeepSeek R1 | `deepseek-ai/DeepSeek-R1` | Latest reasoning model |
-| DeepSeek R1 0528 | `deepseek-ai/DeepSeek-R1-0528` | Version-specific |
-| DeepSeek V3 0324 | `deepseek-ai/DeepSeek-V3-0324` | Fast and efficient |
-| DeepSeek V3.1 | `deepseek-ai/DeepSeek-V3.1` | Improved version |
-| DeepSeek V3.2 Exp | `deepseek-ai/DeepSeek-V3.2-Exp` | Experimental |
-| Gemma 3 4B | `unsloth/gemma-3-4b-it` | Lightweight model |
-| Gemma 3 12B | `unsloth/gemma-3-12b-it` | Mid-size model |
-| Gemma 3 27B | `unsloth/gemma-3-27b-it` | Larger model |
-| GLM 4.5 | `zai-org/GLM-4.5` | Multilingual model |
-| GLM 4.6 | `zai-org/GLM-4.6` | Latest GLM version |
-| Qwen3 32B | `Qwen/Qwen3-32B` | High-performance model |
-| Qwen3 235B | `Qwen/Qwen3-235B-A22B` | Large-scale model |
-| Mistral Small 24B | `unsloth/Mistral-Small-24B-Instruct-2501` | Efficient instruction model |
-| GPT OSS 20B | `openai/gpt-oss-20b` | Open-source GPT variant |
-| GPT OSS 120B | `openai/gpt-oss-120b` | Large open-source GPT |
-
-**Note:** Model availability can change. Check https://chutes.ai/app for the latest list of active models.
-
-**Error Handling:**
-
-| Status Code | Description | Recommended Action |
-|-------------|-------------|-------------------|
-| 503 | Service Unavailable (cold model) | Implement exponential backoff, retry after 2-8s |
-| 404 | Model not found | Verify model name at https://chutes.ai/app |
-| 429 | Rate limit exceeded | Implement exponential backoff |
-| 401 | Authentication failed | Contact validator (gateway misconfigured) |
-| 500 | Internal server error | Retry with fallback to baseline prediction |
-
-### GET /api/gateway/chutes/status
-
-Get real-time status and utilization metrics for all Chutes models.
-
-**URL:** `{SANDBOX_PROXY_URL}/api/gateway/chutes/status`
-
-**Request:**
-```python
-import httpx
-
-response = httpx.get(
-    f"{PROXY_URL}/api/gateway/chutes/status",
-    timeout=10.0,
-)
-status_list = response.json()
-```
-
-**Response:**
-```json
-[
-  {
-    "chute_id": "chute-123",
-    "name": "deepseek-ai/DeepSeek-R1",
-    "timestamp": "2025-11-13T12:00:00Z",
-    "utilization_current": 0.85,
-    "utilization_5m": 0.75,
-    "utilization_15m": 0.70,
-    "utilization_1h": 0.65,
-    "rate_limit_ratio_5m": 0.1,
-    "rate_limit_ratio_15m": 0.08,
-    "rate_limit_ratio_1h": 0.05,
-    "total_requests_5m": 100.0,
-    "completed_requests_5m": 90.0,
-    "rate_limited_requests_5m": 10.0,
-    "instance_count": 5,
-    "action_taken": "scale_up",
-    "scalable": true
-  }
-]
-```
-
-**Response Fields:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `chute_id` | string | Unique chute identifier |
-| `name` | string | Model name |
-| `utilization_current` | float | Current utilization (0.0-1.0) |
-| `utilization_5m` | float | 5-minute average utilization |
-| `utilization_15m` | float | 15-minute average utilization |
-| `utilization_1h` | float | 1-hour average utilization |
-| `rate_limit_ratio_5m` | float | Ratio of rate-limited requests (5min) |
-| `instance_count` | integer | Active instances |
-| `action_taken` | string | Latest scaling action (`scale_up`, `scale_down`, `none`) |
-| `scalable` | boolean | Whether model can scale |
-
-**Use Case:**
-
-Use this endpoint to select the most available model before making inference requests:
-
-```python
-import httpx
-
-def select_best_model():
-    response = httpx.get(f"{PROXY_URL}/api/gateway/chutes/status", timeout=10.0)
-    status_list = response.json()
-
-    # Filter for low utilization and low rate limiting
-    available_models = [
-        s for s in status_list
-        if s["utilization_current"] < 0.5 and s["rate_limit_ratio_5m"] < 0.1
-    ]
-
-    if available_models:
-        # Pick the least utilized model
-        best = min(available_models, key=lambda x: x["utilization_current"])
-        return best["name"]
-
-    # Fallback to default
-    return "deepseek-ai/DeepSeek-V3-0324"
-```
-
----
-
-## Desearch AI Endpoints
-
-Desearch AI provides web search, social media search, and content crawling capabilities.
-
-### POST /api/gateway/desearch/ai/search
-
-AI-powered search with automatic summarization and multiple tool support.
-
-**URL:** `{SANDBOX_PROXY_URL}/api/gateway/desearch/ai/search`
-
-**Request Body:**
-```json
-{
-  "run_id": "550e8400-e29b-41d4-a716-446655440000",
-  "prompt": "Latest developments in quantum computing",
-  "model": "NOVA",
-  "tools": ["web", "arxiv"],
-  "date_filter": "PAST_WEEK",
-  "result_type": "LINKS_WITH_FINAL_SUMMARY",
-  "system_message": null,
-  "count": 10
-}
-```
-
-**Parameters:**
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `run_id` | string (UUID) | Yes | - | Execution tracking ID |
-| `prompt` | string | Yes | - | Search query or question |
-| `model` | string | No | `NOVA` | AI model (`NOVA`, `ORBIT`, `HORIZON`) |
-| `tools` | array[string] | No | `["web"]` | Search tools to use (see Available Tools) |
-| `date_filter` | string | No | null | Time range filter (see Date Filters) |
-| `result_type` | string | No | null | Output format (see Result Types) |
-| `system_message` | string | No | null | Custom system prompt for AI |
-| `count` | integer | No | 10 | Number of results (1-100) |
-
-**Available Tools:**
-
-| Tool | Description |
-|------|-------------|
-| `web` | General web search |
-| `twitter` | Twitter/X search |
-| `reddit` | Reddit search |
-| `hackernews` | Hacker News search |
-| `wikipedia` | Wikipedia search |
-| `youtube` | YouTube search |
-| `arxiv` | Academic papers (arXiv) |
-
-**Date Filters:**
-
-| Value | Description |
-|-------|-------------|
-| `PAST_24_HOURS` | Last 24 hours |
-| `PAST_2_DAYS` | Last 2 days |
-| `PAST_WEEK` | Last 7 days |
-| `PAST_2_WEEKS` | Last 14 days |
-| `PAST_MONTH` | Last 30 days |
-| `PAST_2_MONTHS` | Last 60 days |
-| `PAST_YEAR` | Last 365 days |
-| `PAST_2_YEARS` | Last 2 years |
-
-**Result Types:**
-
-| Value | Description |
-|-------|-------------|
-| `ONLY_LINKS` | Return only search result links |
-| `LINKS_WITH_SUMMARIES` | Return links with individual summaries |
-| `LINKS_WITH_FINAL_SUMMARY` | Return links with one aggregated summary |
-
-**Response:**
-```json
-{
-  "text": "Search results text...",
-  "completion": "AI-generated summary based on search results...",
-  "wikipedia_search": [],
-  "youtube_search": [],
-  "arxiv_search": [
-    {
-      "title": "Paper title",
-      "url": "https://arxiv.org/abs/...",
-      "summary": "Paper abstract..."
-    }
-  ],
-  "reddit_search": [],
-  "hacker_news_search": [],
-  "tweets": [],
-  "miner_link_scores": {}
-}
-```
-
-**Example:**
-```python
-import os
-import httpx
-
-PROXY_URL = os.getenv("SANDBOX_PROXY_URL")
-RUN_ID = os.getenv("RUN_ID")
-
-response = httpx.post(
-    f"{PROXY_URL}/api/gateway/desearch/ai/search",
-    json={
-        "run_id": RUN_ID,
-        "prompt": "What are experts saying about AI safety?",
-        "model": "NOVA",
-        "tools": ["web", "twitter", "reddit"],
-        "date_filter": "PAST_WEEK",
-        "count": 15,
-    },
-    timeout=60.0,
-)
-
-result = response.json()
-summary = result.get("completion", "")
-tweets = result.get("tweets", [])
-```
-
-### POST /api/gateway/desearch/ai/links
-
-Get search result links without summaries (faster than AI search).
-
-**URL:** `{SANDBOX_PROXY_URL}/api/gateway/desearch/ai/links`
-
-**Request Body:**
-```json
-{
-  "run_id": "550e8400-e29b-41d4-a716-446655440000",
-  "prompt": "Climate change policy updates",
-  "model": "NOVA",
-  "tools": ["web", "wikipedia"],
-  "count": 20
-}
-```
-
-**Parameters:**
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `run_id` | string (UUID) | Yes | - | Execution tracking ID |
-| `prompt` | string | Yes | - | Search query |
-| `model` | string | No | `NOVA` | AI model |
-| `tools` | array[string] | No | `["web"]` | Search tools (web, wikipedia, reddit, etc.) |
-| `count` | integer | No | 10 | Number of links (1-100) |
-
-**Response:**
-```json
-{
-  "search_results": [
-    {
-      "title": "Result title",
-      "url": "https://example.com",
-      "snippet": "Preview text..."
-    }
-  ],
-  "wikipedia_search_results": [],
-  "youtube_search_results": [],
-  "arxiv_search_results": [],
-  "reddit_search_results": [],
-  "hacker_news_search_results": []
-}
-```
-
-**Example:**
-```python
-import httpx
-
-response = httpx.post(
-    f"{PROXY_URL}/api/gateway/desearch/ai/links",
-    json={
-        "run_id": RUN_ID,
-        "prompt": "US inflation data 2025",
-        "tools": ["web"],
-        "count": 10,
-    },
-    timeout=30.0,
-)
-
-links = response.json().get("search_results", [])
-for link in links[:5]:
-    print(f"{link['title']}: {link['url']}")
-```
-
-### POST /api/gateway/desearch/web/search
-
-Raw web search without AI processing (fastest option).
-
-**URL:** `{SANDBOX_PROXY_URL}/api/gateway/desearch/web/search`
-
-**Request Body:**
-```json
-{
-  "run_id": "550e8400-e29b-41d4-a716-446655440000",
-  "query": "bitcoin price prediction",
-  "num": 10,
-  "start": 0
-}
-```
-
-**Parameters:**
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `run_id` | string (UUID) | Yes | - | Execution tracking ID |
-| `query` | string | Yes | - | Search query string |
-| `num` | integer | No | 10 | Number of results (1-100) |
-| `start` | integer | No | 0 | Pagination offset |
-
-**Response:**
-```json
-{
-  "data": [
-    {
-      "title": "Page title",
-      "link": "https://example.com/page",
-      "snippet": "Page description or excerpt...",
-      "date": "2025-11-10"
-    }
-  ]
-}
-```
-
-**Example:**
-```python
-import httpx
-
-response = httpx.post(
-    f"{PROXY_URL}/api/gateway/desearch/web/search",
-    json={
-        "run_id": RUN_ID,
-        "query": "federal reserve interest rate decision",
-        "num": 20,
-        "start": 0,
-    },
-    timeout=30.0,
-)
-
-results = response.json()["data"]
-for result in results:
-    print(f"{result['title']}: {result['link']}")
-```
-
-### POST /api/gateway/desearch/web/crawl
-
-Fetch and extract content from a specific URL.
-
-**URL:** `{SANDBOX_PROXY_URL}/api/gateway/desearch/web/crawl`
-
-**Request Body:**
-```json
-{
-  "run_id": "550e8400-e29b-41d4-a716-446655440000",
-  "url": "https://example.com/article"
-}
-```
-
-**Parameters:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `run_id` | string (UUID) | Yes | Execution tracking ID |
-| `url` | string | Yes | Full URL to crawl |
-
-**Response:**
-```json
-{
-  "url": "https://example.com/article",
-  "content": "Extracted text content from the page..."
-}
-```
-
-**Example:**
-```python
-import httpx
-
-# First, search for relevant URLs
-search_response = httpx.post(
-    f"{PROXY_URL}/api/gateway/desearch/web/search",
-    json={"run_id": RUN_ID, "query": "climate summit outcomes", "num": 5},
-    timeout=30.0,
-)
-urls = [r["link"] for r in search_response.json()["data"]]
-
-# Then, crawl each URL for full content
-for url in urls[:3]:
-    crawl_response = httpx.post(
-        f"{PROXY_URL}/api/gateway/desearch/web/crawl",
-        json={"run_id": RUN_ID, "url": url},
-        timeout=30.0,
-    )
-    content = crawl_response.json()["content"]
-    # Analyze content...
-```
-
-### POST /api/gateway/desearch/x/search
-
-Search for posts on X (Twitter) with advanced filtering options.
-
-**URL:** `{SANDBOX_PROXY_URL}/api/gateway/desearch/x/search`
-
-**Request Body:**
-```json
-{
-  "run_id": "550e8400-e29b-41d4-a716-446655440000",
-  "query": "AI safety",
-  "sort": "Top",
-  "count": 20,
-  "min_likes": 100,
-  "verified": true
-}
-```
-
-**Parameters:**
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `run_id` | string (UUID) | Yes | - | Execution tracking ID |
-| `query` | string | Yes | - | Search query for X posts |
-| `sort` | string | No | `Top` | Sort order (`Top` or `Latest`) |
-| `user` | string | No | null | Filter by username |
-| `start_date` | string (ISO 8601) | No | null | Filter posts after this date |
-| `end_date` | string (ISO 8601) | No | null | Filter posts before this date |
-| `lang` | string | No | null | Filter by language code (e.g., `en`) |
-| `verified` | boolean | No | null | Filter by verified status |
-| `blue_verified` | boolean | No | null | Filter by blue verified status |
-| `is_quote` | boolean | No | null | Filter for quote tweets |
-| `is_video` | boolean | No | null | Filter for posts with video |
-| `is_image` | boolean | No | null | Filter for posts with images |
-| `min_retweets` | integer | No | null | Minimum retweet count |
-| `min_replies` | integer | No | null | Minimum reply count |
-| `min_likes` | integer | No | null | Minimum like count |
-| `count` | integer | No | 20 | Number of posts to return |
-
-**Response:**
-```json
-{
-  "posts": [
-    {
-      "id": "1234567890",
-      "text": "Post content here...",
-      "url": "https://x.com/user/status/1234567890",
-      "created_at": "2025-01-06T12:00:00Z",
-      "reply_count": 10,
-      "retweet_count": 50,
-      "like_count": 200,
-      "view_count": 5000,
-      "quote_count": 5,
-      "bookmark_count": 15,
-      "is_quote_tweet": false,
-      "is_retweet": false,
-      "lang": "en",
-      "conversation_id": "1234567890",
-      "media": []
-    }
-  ],
-  "cost": 0.003
-}
-```
-
-**Note:** Each post may include additional optional fields such as `in_reply_to_screen_name`, `in_reply_to_status_id`, `in_reply_to_user_id`, `quoted_status_id`, `replies`, and `display_text_range`.
-
-**Example:**
-```python
-import httpx
-
-response = httpx.post(
-    f"{PROXY_URL}/api/gateway/desearch/x/search",
-    json={
-        "run_id": RUN_ID,
-        "query": "quantum computing breakthrough",
-        "sort": "Latest",
-        "min_likes": 50,
-        "count": 10,
-    },
-    timeout=30.0,
-)
-
-posts = response.json()["posts"]
-for post in posts:
-    print(f"{post['text'][:100]}... - {post['like_count']} likes")
-```
-
-### POST /api/gateway/desearch/x/post
-
-Fetch detailed information about a specific X (Twitter) post by ID.
-
-**URL:** `{SANDBOX_PROXY_URL}/api/gateway/desearch/x/post`
-
-**Request Body:**
-```json
-{
-  "run_id": "550e8400-e29b-41d4-a716-446655440000",
-  "post_id": "1234567890"
-}
-```
-
-**Parameters:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `run_id` | string (UUID) | Yes | Execution tracking ID |
-| `post_id` | string | Yes | The X post ID to fetch |
-
-**Response:**
-```json
-{
-  "user": {
-    "id": "123456",
-    "username": "exampleuser",
-    "name": "Example User",
-    "url": "https://x.com/exampleuser",
-    "created_at": "2020-01-01T00:00:00Z",
-    "description": "User bio...",
-    "followers_count": 10000,
-    "favourites_count": 5000,
-    "listed_count": 100,
-    "media_count": 200,
-    "statuses_count": 5000,
-    "verified": true,
-    "is_blue_verified": false,
-    "profile_image_url": "https://...",
-    "profile_banner_url": "https://...",
-    "location": "San Francisco, CA",
-    "can_dm": true,
-    "can_media_tag": true
-  },
-  "id": "1234567890",
-  "text": "Full post content here...",
-  "url": "https://x.com/exampleuser/status/1234567890",
-  "created_at": "2025-01-06T12:00:00Z",
-  "reply_count": 10,
-  "retweet_count": 50,
-  "like_count": 200,
-  "view_count": 5000,
-  "quote_count": 5,
-  "bookmark_count": 15,
-  "is_quote_tweet": false,
-  "is_retweet": false,
-  "lang": "en",
-  "conversation_id": "1234567890",
-  "media": [],
-  "cost": 0.0003
-}
-```
-
-**Note:** The response may include additional optional fields such as `quote` (for quote tweets), `retweet` (for retweets), `replies` (list of reply posts), `entities`, `extended_entities`, `in_reply_to_screen_name`, `in_reply_to_status_id`, `in_reply_to_user_id`, `quoted_status_id`, and `display_text_range`.
-
-**Example:**
-```python
-import httpx
-
-# Fetch a specific post
-response = httpx.post(
-    f"{PROXY_URL}/api/gateway/desearch/x/post",
-    json={
-        "run_id": RUN_ID,
-        "post_id": "1234567890",
-    },
-    timeout=30.0,
-)
-
-post = response.json()
-print(f"Author: {post['user']['username']}")
-print(f"Text: {post['text']}")
-print(f"Engagement: {post['like_count']} likes, {post['retweet_count']} retweets")
-```
-
----
-
 ## OpenAI Endpoints
 
-OpenAI provides access to GPT-5 series models with built-in web search capability.
-
-### POST /api/gateway/openai/responses
-
-Create a response using OpenAI's GPT-5 models with optional web search.
-
-**URL:** `{SANDBOX_PROXY_URL}/api/gateway/openai/responses`
-
-**Request Body:**
-```json
-{
-  "run_id": "550e8400-e29b-41d4-a716-446655440000",
-  "model": "gpt-5-mini",
-  "input": [
-    {"role": "developer", "content": "You are a helpful assistant."},
-    {"role": "user", "content": "What is the capital of France?"}
-  ],
-  "temperature": 0.7,
-  "max_output_tokens": 1000,
-  "tools": [{"type": "web_search"}],
-  "tool_choice": null,
-  "instructions": null
-}
-```
-
-**Parameters:**
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `run_id` | string (UUID) | Yes | - | Execution tracking ID from environment |
-| `model` | string | Yes | - | Model identifier (see Available Models below) |
-| `input` | array | Yes | - | List of message objects with `role` and `content` |
-| `temperature` | float | No | 0.7 | Sampling temperature (0.0-2.0) |
-| `max_output_tokens` | integer | No | null | Maximum tokens to generate |
-| `tools` | array | No | null | Tool definitions (e.g., `[{"type": "web_search"}]`) |
-| `tool_choice` | string/object | No | null | Tool selection strategy |
-| `instructions` | string | No | null | System-level instructions |
+OpenAI provides access to the GPT-5 series. On SIGNAL only the inference route is reachable — built-in tools such as `web_search` are blocked.
 
 **Available Models:**
 
@@ -798,123 +68,6 @@ Create a response using OpenAI's GPT-5 models with optional web search.
 | GPT-5.2 | `gpt-5.2` | Enhanced reasoning |
 | GPT-5.2 Pro | `gpt-5.2-pro` | Most capable |
 | GPT-5 Nano | `gpt-5-nano` | Lightweight |
-
-**Web Search Tool:**
-
-Enable web search by including `tools`:
-```json
-"tools": [{"type": "web_search"}]
-```
-
-The model will autonomously decide when to search based on the prompt. Each search costs $0.01.
-
-**Response:**
-```json
-{
-  "id": "resp_123",
-  "object": "response",
-  "created_at": 1768496869,
-  "model": "gpt-5-mini-2025-08-07",
-  "output": [
-    {
-      "id": "msg_123",
-      "type": "message",
-      "role": "assistant",
-      "content": [
-        {
-          "type": "output_text",
-          "text": "The capital of France is Paris.",
-          "logprobs": [],
-          "annotations": []
-        }
-      ],
-      "status": "completed"
-    }
-  ],
-  "usage": {
-    "input_tokens": 22,
-    "output_tokens": 207,
-    "total_tokens": 229
-  },
-  "status": "completed",
-  "cost": 0.001953
-}
-```
-
-**Response Fields:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Response identifier |
-| `model` | string | Model used for generation |
-| `output` | array | List of output items (messages, reasoning steps) |
-| `output[].type` | string | Item type (`message`, `reasoning`) |
-| `output[].content[].text` | string | Generated text content |
-| `usage` | object | Token usage statistics |
-| `usage.input_tokens` | integer | Input tokens consumed |
-| `usage.output_tokens` | integer | Output tokens generated |
-| `cost` | float | Total cost in USD (includes token cost + web search cost) |
-
-**Example (using httpx):**
-```python
-import os
-import httpx
-
-PROXY_URL = os.getenv("SANDBOX_PROXY_URL")
-RUN_ID = os.getenv("RUN_ID")
-
-response = httpx.post(
-    f"{PROXY_URL}/api/gateway/openai/responses",
-    json={
-        "run_id": RUN_ID,
-        "model": "gpt-5-mini",
-        "input": [
-            {"role": "developer", "content": "You are an expert forecaster."},
-            {"role": "user", "content": "What is the probability of rain tomorrow?"}
-        ],
-        "tools": [{"type": "web_search"}],
-        "temperature": 0.7,
-    },
-    timeout=120.0,
-)
-
-result = response.json()
-
-# Extract text from output
-for item in result["output"]:
-    if item["type"] == "message":
-        for content in item["content"]:
-            if content.get("text"):
-                print(content["text"])
-```
-
-**Cost Calculation:**
-
-Total cost = Token cost + Web search cost
-
-- **Token cost:** Based on input/output tokens and model pricing
-- **Web search cost:** $0.01 per search executed
-
-The `cost` field in the response includes both components.
-
-**Error Handling:**
-
-| Status Code | Description | Recommended Action |
-|-------------|-------------|-------------------|
-| 503 | Service Unavailable | Retry with exponential backoff |
-| 404 | Model not found | Verify model identifier |
-| 429 | Rate limit exceeded | Retry with exponential backoff |
-| 401 | Authentication failed | Contact validator |
-| 500 | Internal server error | Retry with fallback |
-
-**Best Practices:**
-
-1. **Use web_search selectively:** Only enable when research is needed
-2. **Clear prompts:** Explicitly ask the model to search before forecasting
-3. **Model selection:** Use `gpt-5-mini` for cost-efficiency, `gpt-5.2` for complex reasoning
-4. **Error handling:** Always implement retry logic with fallback predictions
-
----
 
 ### POST /api/gateway/openai/responses/inference
 
@@ -951,13 +104,7 @@ Create a response using OpenAI's GPT-5 models without built-in tools. Custom `fu
 | `tool_choice` | string/object | No | null | Tool selection strategy |
 | `instructions` | string | No | null | System-level instructions |
 
-**Difference from `/responses`:**
-
-| Feature | `/responses` | `/responses/inference` |
-|---------|-------------|----------------------|
-| `web_search` built-in | Allowed | Blocked |
-| Custom `function` tools | Allowed | Allowed |
-| Other built-in tools | Blocked | Blocked |
+**Tool support:** custom `function` tools are allowed. All built-in tools — including `web_search` — are blocked and return 400.
 
 **Example (using httpx):**
 ```python
@@ -1000,405 +147,13 @@ for item in result["output"]:
 | 401 | Authentication failed | Contact validator |
 | 500 | Internal server error | Retry with fallback |
 
-> **Note:** Miners link the same OpenAI API key for both endpoints via `numi services link openai`. The key is stored once and reused across `/responses` and `/responses/inference`.
-
----
-
-## Perplexity Endpoints
-
-Perplexity provides reasoning LLMs with built-in web search capability.
-
-### POST /api/gateway/perplexity/chat/completions
-
-Create a response using Perplexity's reasoning models with automatic web search.
-
-**URL:** `{SANDBOX_PROXY_URL}/api/gateway/perplexity/chat/completions`
-
-**Request Body:**
-```json
-{
-  "run_id": "550e8400-e29b-41d4-a716-446655440000",
-  "model": "sonar-reasoning-pro",
-  "messages": [
-    {"role": "system", "content": "You are a helpful assistant."},
-    {"role": "user", "content": "What is the capital of France?"}
-  ],
-  "temperature": 0.7,
-  "max_tokens": 1000,
-  "search_recency_filter": "month"
-}
-```
-
-**Parameters:**
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `run_id` | string (UUID) | Yes | - | Execution tracking ID from environment |
-| `model` | string | Yes | - | Model identifier (see Available Models below) |
-| `messages` | array | Yes | - | List of message objects with `role` and `content` |
-| `temperature` | float | No | 0.7 | Sampling temperature (0.0-2.0) |
-| `max_tokens` | integer | No | null | Maximum tokens to generate |
-| `search_recency_filter` | string | No | null | Time range for search results (`day`, `week`, `month`, `year`) |
-
-**Available Models:**
-
-| Model | Identifier | Notes |
-|-------|-----------|-------|
-| Sonar Reasoning Pro | `sonar-reasoning-pro` | Most capable reasoning model |
-| Sonar Pro | `sonar-pro` | Balanced performance |
-| Sonar | `sonar` | Fast and efficient |
-
-**Response:**
-```json
-{
-  "id": "chatcmpl-123",
-  "object": "chat.completion",
-  "created": 1677652288,
-  "model": "sonar-reasoning-pro",
-  "choices": [
-    {
-      "index": 0,
-      "message": {
-        "role": "assistant",
-        "content": "The capital of France is Paris."
-      },
-      "finish_reason": "stop"
-    }
-  ],
-  "usage": {
-    "prompt_tokens": 28,
-    "completion_tokens": 8,
-    "total_tokens": 36
-  },
-  "citations": [
-    "https://example.com/source1",
-    "https://example.com/source2"
-  ],
-  "search_results": [
-    {
-      "title": "Source title",
-      "url": "https://example.com/source1",
-      "snippet": "Relevant text..."
-    }
-  ],
-  "cost": 0.002145
-}
-```
-
-**Response Fields:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Response identifier |
-| `model` | string | Model used for generation |
-| `choices` | array | List of completion choices |
-| `choices[].message.content` | string | Generated text content |
-| `usage` | object | Token usage statistics |
-| `citations` | array | List of source URLs used |
-| `search_results` | array | Detailed search result objects |
-| `cost` | float | Total cost in USD |
-
-**Example (using httpx):**
-```python
-import os
-import httpx
-
-PROXY_URL = os.getenv("SANDBOX_PROXY_URL")
-RUN_ID = os.getenv("RUN_ID")
-
-response = httpx.post(
-    f"{PROXY_URL}/api/gateway/perplexity/chat/completions",
-    json={
-        "run_id": RUN_ID,
-        "model": "sonar-reasoning-pro",
-        "messages": [
-            {"role": "system", "content": "You are an expert forecaster."},
-            {"role": "user", "content": "What is the probability of rain tomorrow?"}
-        ],
-        "temperature": 0.2,
-        "search_recency_filter": "day",
-    },
-    timeout=120.0,
-)
-
-result = response.json()
-
-content = result["choices"][0]["message"]["content"]
-citations = result.get("citations", [])
-
-print(f"Response: {content}")
-print(f"Sources: {citations}")
-```
-
-**Error Handling:**
-
-| Status Code | Description | Recommended Action |
-|-------------|-------------|-------------------|
-| 503 | Service Unavailable | Retry with exponential backoff |
-| 404 | Model not found | Verify model identifier |
-| 429 | Rate limit exceeded | Retry with exponential backoff |
-| 401 | Authentication failed | Contact validator |
-| 500 | Internal server error | Retry with fallback |
-
-**Best Practices:**
-
-1. **Use search_recency_filter:** Set to `day` or `week` for time-sensitive events
-2. **Extract citations:** Use the `citations` array to verify information sources
-3. **Model selection:** Use `sonar-reasoning-pro` for complex reasoning tasks
-4. **Error handling:** Always implement retry logic with fallback predictions
-
-**Note:** Perplexity has no free tier. You must link your API key to use Perplexity models.
-
----
-
-## Vericore Endpoints
-
-Vericore provides statement verification with evidence-based metrics including sentiment, conviction, source credibility, and more.
-
-### POST /api/gateway/vericore/calculate-rating
-
-Verify a statement against web evidence and get detailed metrics.
-
-**URL:** `{SANDBOX_PROXY_URL}/api/gateway/vericore/calculate-rating`
-
-**Request Body:**
-```json
-{
-  "run_id": "550e8400-e29b-41d4-a716-446655440000",
-  "statement": "Bitcoin will reach $100k by end of 2026",
-  "generate_preview": false
-}
-```
-
-**Parameters:**
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `run_id` | string (UUID) | Yes | - | Execution tracking ID from environment |
-| `statement` | string | Yes | - | Statement to verify against web evidence |
-| `generate_preview` | boolean | No | false | Generate a preview URL for the results |
-
-**Response:**
-```json
-{
-  "batch_id": "mlzjxglo15m23k",
-  "request_id": "req-mlzjxgmc4amr6",
-  "preview_url": "",
-  "evidence_summary": {
-    "total_count": 12,
-    "neutral": 37.5,
-    "entailment": 1.03,
-    "contradiction": 61.46,
-    "sentiment": -0.07,
-    "conviction": 0.82,
-    "source_credibility": 0.93,
-    "narrative_momentum": 0.48,
-    "risk_reward_sentiment": -0.15,
-    "political_leaning": 0.0,
-    "catalyst_detection": 0.12,
-    "statements": [
-      {
-        "statement": "Evidence text from source...",
-        "url": "https://example.com/article",
-        "contradiction": 0.87,
-        "neutral": 0.12,
-        "entailment": 0.01,
-        "sentiment": -0.5,
-        "conviction": 0.75,
-        "source_credibility": 0.85,
-        "narrative_momentum": 0.5,
-        "risk_reward_sentiment": -0.5,
-        "political_leaning": 0.0,
-        "catalyst_detection": 0.3
-      }
-    ]
-  },
-  "cost": 0.05
-}
-```
-
-**Response Fields:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `batch_id` | string | Batch identifier |
-| `request_id` | string | Request identifier |
-| `preview_url` | string | Preview URL (empty if `generate_preview` is false) |
-| `evidence_summary.total_count` | integer | Number of evidence sources found |
-| `evidence_summary.entailment` | float | Aggregated entailment score |
-| `evidence_summary.contradiction` | float | Aggregated contradiction score |
-| `evidence_summary.sentiment` | float | Aggregated sentiment (-1.0 to 1.0) |
-| `evidence_summary.conviction` | float | Aggregated conviction level |
-| `evidence_summary.source_credibility` | float | Average source credibility |
-| `evidence_summary.statements` | array | Individual evidence sources with per-source metrics |
-
-**Example (using httpx):**
-```python
-import os
-import httpx
-
-PROXY_URL = os.getenv("SANDBOX_PROXY_URL")
-RUN_ID = os.getenv("RUN_ID")
-
-response = httpx.post(
-    f"{PROXY_URL}/api/gateway/vericore/calculate-rating",
-    json={
-        "run_id": RUN_ID,
-        "statement": "Bitcoin will reach $100k by end of 2026",
-    },
-    timeout=120.0,
-)
-
-result = response.json()
-
-summary = result["evidence_summary"]
-total = summary["total_count"]
-contradiction = summary["contradiction"]
-sentiment = summary["sentiment"]
-conviction = summary["conviction"]
-credibility = summary["source_credibility"]
-```
-
-**Error Handling:**
-
-| Status Code | Description | Recommended Action |
-|-------------|-------------|-------------------|
-| 503 | Service Unavailable | Retry with exponential backoff |
-| 429 | Rate limit exceeded | Retry with exponential backoff |
-| 401 | Authentication failed | Contact validator |
-| 500 | Internal server error | Retry with fallback |
-
-**Note:** Vericore has no free tier. You must link your API key to use Vericore. Each call costs $0.05.
+> **Note:** Link your OpenAI API key via `numi services link openai`. There is no free tier.
 
 ---
 
 ## OpenRouter Endpoints
 
-OpenRouter is a model router that provides access to hundreds of LLM models through a unified API. You can use models from Anthropic, Google, Meta, and many other providers.
-
-### POST /api/gateway/openrouter/chat/completions
-
-Generate chat completions using any OpenRouter-supported model.
-
-**URL:** `{SANDBOX_PROXY_URL}/api/gateway/openrouter/chat/completions`
-
-**Request Body:**
-```json
-{
-  "run_id": "550e8400-e29b-41d4-a716-446655440000",
-  "model": "anthropic/claude-sonnet-4-6",
-  "messages": [
-    {"role": "system", "content": "You are a helpful assistant."},
-    {"role": "user", "content": "What is the capital of France?"}
-  ],
-  "temperature": 0.7,
-  "max_tokens": 1024
-}
-```
-
-**Parameters:**
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `run_id` | string (UUID) | Yes | - | Execution tracking ID from environment |
-| `model` | string | Yes | - | OpenRouter model ID (e.g., `anthropic/claude-sonnet-4-6`) |
-| `messages` | array | Yes | - | Chat messages array with `role` and `content` |
-| `temperature` | float | No | 0.7 | Sampling temperature (0.0-2.0) |
-| `max_tokens` | integer | No | - | Maximum tokens to generate |
-| `tools` | array | No | - | Tool/function definitions for function calling |
-| `tool_choice` | string/object | No | - | Tool selection mode |
-
-**Response:**
-```json
-{
-  "id": "gen-abc123",
-  "object": "chat.completion",
-  "created": 1700000000,
-  "model": "anthropic/claude-sonnet-4-6",
-  "choices": [
-    {
-      "index": 0,
-      "message": {
-        "role": "assistant",
-        "content": "The capital of France is Paris."
-      },
-      "finish_reason": "stop"
-    }
-  ],
-  "usage": {
-    "prompt_tokens": 25,
-    "completion_tokens": 10,
-    "total_tokens": 35,
-    "cost": 0.000135
-  },
-  "cost": 0.000135
-}
-```
-
-**Response Fields:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Unique completion identifier |
-| `model` | string | Model used for the completion |
-| `choices` | array | Array of completion choices |
-| `choices[].message.content` | string | Generated text response |
-| `choices[].finish_reason` | string | Why generation stopped (`stop`, `length`, `tool_calls`) |
-| `usage.prompt_tokens` | integer | Input tokens used |
-| `usage.completion_tokens` | integer | Output tokens generated |
-| `usage.cost` | decimal | Actual cost reported by OpenRouter |
-| `cost` | decimal | Total cost for this request |
-
-**Popular Models:**
-
-| Model ID | Description |
-|----------|-------------|
-| `anthropic/claude-sonnet-4-6` | Claude Sonnet 4.6 - balanced performance |
-| `anthropic/claude-haiku-4-5` | Claude Haiku 4.5 - fast and cost-effective |
-| `google/gemini-2.5-flash` | Gemini 2.5 Flash - fast and affordable |
-| `google/gemini-2.5-pro` | Gemini 2.5 Pro - high capability |
-
-See the full model list at https://openrouter.ai/models
-
-**Example (using httpx):**
-```python
-import os
-import httpx
-
-PROXY_URL = os.getenv("SANDBOX_PROXY_URL")
-RUN_ID = os.getenv("RUN_ID")
-
-response = httpx.post(
-    f"{PROXY_URL}/api/gateway/openrouter/chat/completions",
-    json={
-        "run_id": RUN_ID,
-        "model": "anthropic/claude-sonnet-4-6",
-        "messages": [
-            {"role": "user", "content": "Analyze the likelihood of this event..."}
-        ],
-        "temperature": 0.2,
-        "max_tokens": 1024,
-    },
-    timeout=120.0,
-)
-
-result = response.json()
-content = result["choices"][0]["message"]["content"]
-cost = result.get("cost", 0.0)
-```
-
-**Error Handling:**
-
-| Status Code | Description | Recommended Action |
-|-------------|-------------|-------------------|
-| 503 | Service Unavailable | Retry with exponential backoff |
-| 429 | Rate limit exceeded | Retry with exponential backoff |
-| 401 | Authentication failed | Contact validator |
-| 500 | Internal server error | Retry with fallback model |
-
-**Note:** OpenRouter has no free tier. You must link your API key to use OpenRouter models.
-
----
+OpenRouter is a model router that provides access to hundreds of LLM models through a unified API — Anthropic, Google, Meta and many other providers. On SIGNAL only the inference route is reachable, so provider-run web search is blocked.
 
 ### POST /api/gateway/openrouter/chat/completions/inference
 
@@ -1432,16 +187,9 @@ Generate chat completions using any OpenRouter-supported model without provider-
 | `tools` | array | No | - | Custom `function` tool definitions only - provider-run tools (`openrouter:web_search`, etc.) are not allowed |
 | `tool_choice` | string/object | No | - | Tool selection mode |
 
-The response shape is identical to `/openrouter/chat/completions`.
+The response is a standard OpenAI-compatible chat completion object (`choices[0].message.content`, plus a `usage` block and the gateway's `cost` field).
 
-**Difference from `/chat/completions`:**
-
-| Feature | `/chat/completions` | `/chat/completions/inference` |
-|---------|---------------------|-------------------------------|
-| `:online` model suffix | Allowed | Blocked |
-| `plugins` (e.g. web search) | Allowed | Blocked |
-| Provider-run `openrouter:*` tools | Allowed | Blocked |
-| Custom `function` tools | Allowed | Allowed |
+**Blocked on this route:** the `:online` model suffix, `plugins` (including web search), and provider-run `openrouter:*` tools. All return 400. Custom `function` tools are allowed.
 
 **Error Handling:**
 
@@ -1453,27 +201,29 @@ The response shape is identical to `/openrouter/chat/completions`.
 | 401 | Authentication failed | Contact validator |
 | 500 | Internal server error | Retry with fallback model |
 
-> **Note:** Miners link the same OpenRouter API key for both endpoints via `numi services link openrouter`. The key is stored once and reused across `/chat/completions` and `/chat/completions/inference`.
+> **Note:** Link your OpenRouter API key via `numi services link openrouter`. There is no free tier.
 
 ---
 
-## LunarCrush Endpoints
+## Lightning Rod Endpoints
 
-LunarCrush provides social media intelligence and sentiment data for any topic -- crypto, geopolitics, stocks, and more. Useful for gauging public sentiment and social trends around events.
+Lightning Rod exposes an OpenAI-compatible chat completions API. It is inference-only — there are no provider-run search tools — and is reachable on the SIGNAL track.
 
-**Available on:** MAIN track only.
+### POST /api/gateway/lightning-rod/chat/completions
 
-### POST /api/gateway/lunar-crush/whatsup
-
-AI-generated sentiment summary with bullish/bearish themes and percentages.
-
-**URL:** `{SANDBOX_PROXY_URL}/api/gateway/lunar-crush/whatsup`
+**URL:** `{SANDBOX_PROXY_URL}/api/gateway/lightning-rod/chat/completions`
 
 **Request Body:**
 ```json
 {
   "run_id": "550e8400-e29b-41d4-a716-446655440000",
-  "topic": "bitcoin"
+  "model": "your-model-id",
+  "messages": [
+    {"role": "system", "content": "You are an expert forecaster."},
+    {"role": "user", "content": "Estimate the probability of this event."}
+  ],
+  "temperature": 0.7,
+  "max_tokens": 1024
 }
 ```
 
@@ -1482,220 +232,46 @@ AI-generated sentiment summary with bullish/bearish themes and percentages.
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `run_id` | string (UUID) | Yes | - | Execution tracking ID from environment |
-| `topic` | string | Yes | - | Topic to search (lowercase, e.g., "bitcoin", "iran", "oil prices") |
+| `model` | string | Yes | - | Model identifier |
+| `messages` | array | Yes | - | Chat messages with `role` and `content` |
+| `temperature` | float | No | 0.7 | Sampling temperature |
+| `max_tokens` | integer | No | - | Maximum tokens to generate |
 
-**Response:**
-```json
-{
-  "config": {"id": "bitcoin", "name": "Bitcoin", "symbol": "BTC"},
-  "summary": "Bitcoin surges past $75K as institutional buying drives demand.",
-  "supportive": [
-    {"title": "Institutional Adoption", "description": "Major companies increasing holdings", "percent": 25.0}
-  ],
-  "critical": [
-    {"title": "Regulatory Concerns", "description": "Ongoing debates about regulation", "percent": 5.0}
-  ],
-  "cost": 0.001
-}
-```
+Additional fields are forwarded to the provider unchanged.
 
-### POST /api/gateway/lunar-crush/topic
+**Response:** a standard OpenAI-compatible chat completion — `id`, `object`, `created`, `model`, `choices[]`, a `usage` block (`prompt_tokens`, `completion_tokens`, `total_tokens`), and the gateway's `cost` field.
 
-Current social metrics, rank, and trend for a topic.
-
-**URL:** `{SANDBOX_PROXY_URL}/api/gateway/lunar-crush/topic`
-
-**Request Body:**
-```json
-{
-  "run_id": "550e8400-e29b-41d4-a716-446655440000",
-  "topic": "bitcoin"
-}
-```
-
-**Response:**
-```json
-{
-  "config": {"id": "bitcoin"},
-  "data": {
-    "topic": "bitcoin",
-    "title": "Bitcoin",
-    "topic_rank": 83,
-    "interactions_24h": 367838294,
-    "num_contributors": 71451,
-    "num_posts": 292738,
-    "trend": "flat",
-    "categories": ["Cryptocurrencies"]
-  },
-  "cost": 0.001
-}
-```
-
-### POST /api/gateway/lunar-crush/news
-
-Top news articles with sentiment scores for a topic.
-
-**URL:** `{SANDBOX_PROXY_URL}/api/gateway/lunar-crush/news`
-
-**Request Body:**
-```json
-{
-  "run_id": "550e8400-e29b-41d4-a716-446655440000",
-  "topic": "bitcoin"
-}
-```
-
-**Response (truncated):**
-```json
-{
-  "config": {"id": "bitcoin"},
-  "data": [
-    {
-      "id": "news-123",
-      "post_type": "news",
-      "post_title": "Crypto ETFs Rally Continues With $202 Million Inflow",
-      "post_sentiment": 3.22,
-      "creator_name": "BitcoinNews",
-      "creator_followers": 3273394,
-      "interactions_24h": 2790
-    }
-  ],
-  "cost": 0.001
-}
-```
-
-### POST /api/gateway/lunar-crush/time-series
-
-Historical daily or hourly social + price data.
-
-**URL:** `{SANDBOX_PROXY_URL}/api/gateway/lunar-crush/time-series`
-
-**Request Body:**
-```json
-{
-  "run_id": "550e8400-e29b-41d4-a716-446655440000",
-  "topic": "bitcoin",
-  "bucket": "day"
-}
-```
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `topic` | string | Yes | - | Topic to search |
-| `bucket` | string | No | "day" | Aggregation: "day" or "hour" |
-
-**Response (truncated):**
-```json
-{
-  "config": {"bucket": "day", "topic": "bitcoin"},
-  "data": [
-    {
-      "time": 1773662400,
-      "close": 75000.0,
-      "sentiment": 80,
-      "galaxy_score": 65.0,
-      "interactions": 500000,
-      "volume_24h": 53800000000
-    }
-  ],
-  "cost": 0.001
-}
-```
-
-### POST /api/gateway/lunar-crush/posts
-
-Top social media posts across platforms (Twitter, YouTube, TikTok, Reddit, Instagram).
-
-**URL:** `{SANDBOX_PROXY_URL}/api/gateway/lunar-crush/posts`
-
-**Request Body:**
-```json
-{
-  "run_id": "550e8400-e29b-41d4-a716-446655440000",
-  "topic": "bitcoin",
-  "start": null,
-  "end": null
-}
-```
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `topic` | string | Yes | - | Topic to search |
-| `start` | integer | No | null | Unix timestamp filter start |
-| `end` | integer | No | null | Unix timestamp filter end |
-
-### POST /api/gateway/lunar-crush/coins-list
-
-Market + social data for all 6600+ tracked cryptocurrencies.
-
-**URL:** `{SANDBOX_PROXY_URL}/api/gateway/lunar-crush/coins-list`
-
-**Request Body:**
-```json
-{
-  "run_id": "550e8400-e29b-41d4-a716-446655440000"
-}
-```
-
-**Response (truncated):**
-```json
-{
-  "config": {"sort": "market_cap_rank", "total_rows": 6668},
-  "data": [
-    {
-      "id": 1,
-      "symbol": "BTC",
-      "name": "Bitcoin",
-      "price": 74400.08,
-      "market_cap_rank": 1,
-      "sentiment": 81,
-      "galaxy_score": 61.8,
-      "social_volume_24h": 292342,
-      "percent_change_24h": 0.49
-    }
-  ],
-  "cost": 0.001
-}
-```
+**Cost:** metered per token — $1.00 per 1M input tokens and $6.00 per 1M output tokens.
 
 **Example (using httpx):**
 ```python
 import os
 import httpx
 
-PROXY_URL = os.getenv("SANDBOX_PROXY_URL")
+PROXY_URL = os.getenv("SANDBOX_PROXY_URL", "http://sandbox_proxy")
 RUN_ID = os.getenv("RUN_ID")
 
-# Get AI sentiment summary
-whatsup = httpx.post(
-    f"{PROXY_URL}/api/gateway/lunar-crush/whatsup",
-    json={"run_id": RUN_ID, "topic": "bitcoin"},
-    timeout=30.0,
-).json()
+response = httpx.post(
+    f"{PROXY_URL}/api/gateway/lightning-rod/chat/completions",
+    json={
+        "run_id": RUN_ID,
+        "model": "your-model-id",
+        "messages": [
+            {"role": "system", "content": "You are an expert forecaster."},
+            {"role": "user", "content": "Estimate the probability of this event."},
+        ],
+        "temperature": 0.7,
+    },
+    timeout=120.0,
+)
 
-summary = whatsup["summary"]
-bullish_pct = sum(t["percent"] for t in whatsup["supportive"])
-bearish_pct = sum(t["percent"] for t in whatsup["critical"])
-
-# Get current social stats
-topic = httpx.post(
-    f"{PROXY_URL}/api/gateway/lunar-crush/topic",
-    json={"run_id": RUN_ID, "topic": "bitcoin"},
-    timeout=30.0,
-).json()
-
-trend = topic["data"]["trend"]  # "up", "flat", or "down"
+result = response.json()
+print(result["choices"][0]["message"]["content"])
 ```
 
-**Error Handling:**
+A complete working agent is available at [`lightning_rod_example.py`](../neurons/miner/agents/lightning_rod_example.py).
 
-| Status Code | Description | Recommended Action |
-|-------------|-------------|-------------------|
-| 404 | Topic not found | Try a simpler/shorter topic keyword |
-| 429 | Budget limit exceeded | Link your API key |
-| 503 | Service unavailable | Retry with backoff |
-
-**Note:** LunarCrush has no free tier. You must link your API key to use LunarCrush. Subscription-based pricing, nominal $0.001 per call for budget tracking.
+> **Note:** Link your Lightning Rod API key via `numi services link lightning_rod` (get one at https://lightningrod.ai). There is no free tier.
 
 ---
 
@@ -2310,111 +886,6 @@ print(data["content"])
 
 ---
 
-## Unusual Whales Endpoints
-
-Unusual Whales provides financial news headlines with filtering by source, ticker, and sentiment. Useful for tracking market-moving news and earnings-related events.
-
-**Available on:** MAIN track only.
-
-### POST /api/gateway/unusual-whales/news/headlines
-
-Fetch financial news headlines with optional filtering.
-
-**URL:** `{SANDBOX_PROXY_URL}/api/gateway/unusual-whales/news/headlines`
-
-**Request Body:**
-```json
-{
-  "run_id": "550e8400-e29b-41d4-a716-446655440000",
-  "ticker": "AAPL",
-  "major_only": true,
-  "limit": 20,
-  "page": 0
-}
-```
-
-**Parameters:**
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `run_id` | string (UUID) | Yes | - | Execution tracking ID from environment |
-| `sources` | string | No | null | Comma-separated news sources to filter by |
-| `search_term` | string | No | null | Search term to filter headlines |
-| `ticker` | string | No | null | Ticker symbol to filter headlines (e.g. `AAPL`) |
-| `major_only` | boolean | No | null | Only return major headlines |
-| `limit` | integer | No | 50 | Number of headlines per page (1-200) |
-| `page` | integer | No | 0 | Page number for pagination |
-
-**Response:**
-```json
-{
-  "headlines": [
-    {
-      "headline": "Apple Reports Record Q1 Earnings",
-      "source": "benzinga",
-      "created_at": "2026-04-08T14:30:00Z",
-      "is_major": true,
-      "sentiment": "positive",
-      "tickers": ["AAPL"],
-      "tags": ["earnings", "tech"],
-      "meta": {}
-    }
-  ],
-  "cost": 0.0001
-}
-```
-
-**Response Fields:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `headlines` | array | List of news headline objects |
-| `headlines[].headline` | string | Headline text |
-| `headlines[].source` | string | News source (e.g. `benzinga`, `reuters`) |
-| `headlines[].created_at` | string (ISO 8601) | When the headline was published |
-| `headlines[].is_major` | boolean | Whether this is a major headline |
-| `headlines[].sentiment` | string | Sentiment (`positive`, `negative`, `neutral`, or null) |
-| `headlines[].tickers` | array | Related ticker symbols |
-| `headlines[].tags` | array | Tags/categories |
-| `cost` | float | Cost for this request ($0.0001) |
-
-**Example (using httpx):**
-```python
-import os
-import httpx
-
-PROXY_URL = os.getenv("SANDBOX_PROXY_URL")
-RUN_ID = os.getenv("RUN_ID")
-
-response = httpx.post(
-    f"{PROXY_URL}/api/gateway/unusual-whales/news/headlines",
-    json={
-        "run_id": RUN_ID,
-        "ticker": "AAPL",
-        "major_only": True,
-        "limit": 20,
-    },
-    timeout=60.0,
-)
-
-result = response.json()
-for headline in result["headlines"]:
-    print(f"[{headline['sentiment']}] {headline['headline']} ({headline['source']})")
-```
-
-**Error Handling:**
-
-| Status Code | Description | Recommended Action |
-|-------------|-------------|-------------------|
-| 401 | API key not configured | Link your Unusual Whales API key |
-| 429 | Budget limit exceeded | Reduce calls per run |
-| 503 | Service Unavailable | Retry with exponential backoff |
-| 500 | Internal server error | Retry with fallback |
-
-**Note:** Unusual Whales requires linking your API key. There is no free tier — you must link your account to use this endpoint. Get your API key at [unusualwhales.com/pricing](https://unusualwhales.com/pricing?product=api).
-
----
-
 ## Caching
 
 The gateway implements request-level caching to increase consensus stabilit among validators, optimize performance, reduce API costs.
@@ -2433,28 +904,26 @@ This is crucial to increase the consensus stability per validator given the vari
 
 **Prompt rules**. Use consistent prompts across executions to ensure that the cache is hit. In practice, **DO NOT** include dynamic timestamps or random data in prompts.
 
-
-
 **Example:**
 ```python
 # These two requests will share the same cached response:
 
 # Request 1 (run_id: abc-123)
 response1 = httpx.post(
-    f"{PROXY_URL}/api/gateway/chutes/chat/completions",
+    f"{PROXY_URL}/api/gateway/openrouter/chat/completions/inference",
     json={
         "run_id": "abc-123",
-        "model": "deepseek-ai/DeepSeek-V3-0324",
+        "model": "anthropic/claude-sonnet-4-6",
         "messages": [{"role": "user", "content": "What is 2+2?"}],
     },
 )
 
 # Request 2 (run_id: xyz-789, same prompt)
 response2 = httpx.post(
-    f"{PROXY_URL}/api/gateway/chutes/chat/completions",
+    f"{PROXY_URL}/api/gateway/openrouter/chat/completions/inference",
     json={
         "run_id": "xyz-789",
-        "model": "deepseek-ai/DeepSeek-V3-0324",
+        "model": "anthropic/claude-sonnet-4-6",
         "messages": [{"role": "user", "content": "What is 2+2?"}],
     },
 )
@@ -2464,7 +933,6 @@ response2 = httpx.post(
 ---
 
 ## Best Practices
-
 
 ### Prompt Rules
 
@@ -2478,7 +946,6 @@ prompt = f"Current date: {datetime.now()}. Analyze this event: {description}"
 # GOOD - Static prompt leverages cache
 prompt = f"Analyze this event: {description}"
 ```
-
 
 ### Error Handling
 
@@ -2494,10 +961,10 @@ def query_llm_with_retry(prompt: str, max_retries: int = 3) -> Optional[str]:
     for attempt in range(max_retries):
         try:
             response = httpx.post(
-                f"{PROXY_URL}/api/gateway/chutes/chat/completions",
+                f"{PROXY_URL}/api/gateway/openrouter/chat/completions/inference",
                 json={
                     "run_id": RUN_ID,
-                    "model": "deepseek-ai/DeepSeek-V3-0324",
+                    "model": "anthropic/claude-sonnet-4-6",
                     "messages": [{"role": "user", "content": prompt}],
                 },
                 timeout=60.0,
@@ -2507,7 +974,7 @@ def query_llm_with_retry(prompt: str, max_retries: int = 3) -> Optional[str]:
                 result = response.json()
                 return result["choices"][0]["message"]["content"]
 
-            # Handle rate limits and cold models
+            # Handle rate limits and transient provider errors
             if response.status_code in [503, 429]:
                 if attempt < max_retries - 1:
                     delay = base_delay ** (attempt + 1)  # 2s, 4s, 8s
@@ -2546,169 +1013,6 @@ if time_remaining() < 30:
     # Not enough time for API call, use fallback
     return {"event_id": event_data["event_id"], "prediction": 0.5}
 ```
-
-
-### Model Selection
-
-Consider using the status endpoint to select the best-performing model dynamically:
-
-```python
-def get_best_model():
-    try:
-        response = httpx.get(
-            f"{PROXY_URL}/api/gateway/chutes/status",
-            timeout=5.0,
-        )
-
-        if response.status_code == 200:
-            status_list = response.json()
-
-            # Filter for low utilization
-            available = [
-                s for s in status_list
-                if s["utilization_current"] < 0.6 and s["rate_limit_ratio_5m"] < 0.2
-            ]
-
-            if available:
-                best = min(available, key=lambda x: x["utilization_current"])
-                return best["name"]
-    except:
-        pass
-
-    # Fallback to reliable default
-    return "deepseek-ai/DeepSeek-V3-0324"
-```
-
-### Search Strategy
-
-Use appropriate Desearch endpoints based on your needs:
-
-- **AI Search** (`/ai/search`): When you need summarized information
-- **Links** (`/ai/links`): When you need source URLs without summaries
-- **Web Search** (`/web/search`): Fastest option for raw search results
-- **Crawl** (`/web/crawl`): For extracting full content from specific URLs
-
-```python
-# Multi-step search strategy
-def gather_information(query: str):
-    # Step 1: Fast web search for relevant URLs
-    search = httpx.post(
-        f"{PROXY_URL}/api/gateway/desearch/web/search",
-        json={"run_id": RUN_ID, "query": query, "num": 10},
-        timeout=20.0,
-    )
-    urls = [r["link"] for r in search.json()["data"][:5]]
-
-    # Step 2: Crawl top results for full content
-    contents = []
-    for url in urls:
-        crawl = httpx.post(
-            f"{PROXY_URL}/api/gateway/desearch/web/crawl",
-            json={"run_id": RUN_ID, "url": url},
-            timeout=20.0,
-        )
-        if crawl.status_code == 200:
-            contents.append(crawl.json()["content"][:1000])  # Truncate
-
-    return contents
-```
-
----
-
-## Public Data Proxy
-
-The public data proxy gives agents access to a curated list of public APIs through a single generic endpoint. No API key linking required for most sources. Some sources require you to link your own API key — run `numi services sources` to see which.
-
-**Available on:** MAIN track only.
-
-**Cost:** Always $0.00.
-
-### Discovering Available Sources
-
-Run this from your terminal to see what sources are currently available:
-
-```bash
-numi services sources
-```
-
-This shows all sources grouped by whether they require an API key. The list is updated over time as new sources are added — always check this rather than hardcoding assumptions.
-
-For sources that require an API key, link yours with:
-
-```bash
-numi services link <source-name>
-```
-
-### POST /api/gateway/public-data/fetch
-
-Proxy a request to any whitelisted public data source.
-
-**URL:** `{SANDBOX_PROXY_URL}/api/gateway/public-data/fetch`
-
-**Request Body:**
-```json
-{
-  "run_id": "550e8400-e29b-41d4-a716-446655440000",
-  "url": "https://your-whitelisted-source.com/api/endpoint",
-  "method": "GET",
-  "headers": {},
-  "query_params": {},
-  "body": null,
-  "timeout": 30.0
-}
-```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `run_id` | UUID | Yes | Current run identifier |
-| `url` | string | Yes | Full URL of the public API to call |
-| `method` | string | No | HTTP method: `GET`, `POST`, `PUT`, `DELETE`. Default: `GET` |
-| `headers` | object | No | Additional request headers |
-| `query_params` | object | No | Query string parameters |
-| `body` | string | No | Request body (raw string) |
-| `timeout` | float | No | Timeout in seconds (1–60). Default: 30 |
-
-**Response:**
-```json
-{
-  "status_code": 200,
-  "response_headers": {"content-type": "application/json"},
-  "response_body": "{...}",
-  "content_type": "application/json",
-  "source_name": "source_name",
-  "source_category": "category",
-  "cost": 0.0
-}
-```
-
-The `response_body` is the raw response text (up to 5MB). Parse it as needed.
-
-**Error Responses:**
-- `400 Bad Request` — URL domain not in whitelist, or URL resolves to a private IP
-- `503 Service Unavailable` — upstream API unreachable
-
-**Example:**
-```python
-import os
-import httpx
-
-PROXY_URL = os.getenv("SANDBOX_PROXY_URL", "http://sandbox_proxy")
-RUN_ID = os.getenv("RUN_ID")
-
-def fetch_nfl_scoreboard() -> dict:
-    response = httpx.post(
-        f"{PROXY_URL}/api/gateway/public-data/fetch",
-        json={
-            "run_id": RUN_ID,
-            "url": "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard",
-        },
-        timeout=30.0,
-    )
-    response.raise_for_status()
-    return response.json()["response_body"]
-```
-
----
 
 ## Testing
 
@@ -2751,11 +1055,12 @@ Logs include:
 | Error | Cause | Solution |
 |-------|-------|----------|
 | `RUN_ID environment variable is required` | Missing `RUN_ID` in environment | Check environment variable retrieval |
-| `CHUTES_API_KEY not configured` | Gateway missing API key | Contact validator or check gateway configuration |
-| `DESEARCH_API_KEY not configured` | Gateway missing API key | Contact validator or check gateway configuration |
-| `503 Service Unavailable` | Model is cold (no active instances) | Retry with exponential backoff (2-8s delays) |
+| `403 Forbidden` | Endpoint is not on the SIGNAL allowlist | Use one of the five allowlisted prefixes (see [Overview](#overview)) |
+| `<SERVICE>_API_KEY not configured` | Gateway missing API key | Link the service with `numi services link`, or contact the validator |
+| `400 Bad Request` | Built-in or provider-run tool used on an inference route | Remove `web_search`, `plugins`, `:online` and `openrouter:*` tools |
+| `503 Service Unavailable` | Provider temporarily unavailable | Retry with exponential backoff (2-8s delays) |
 | `429 Too Many Requests` | Rate limit exceeded | Retry with exponential backoff |
-| `404 Not Found` | Invalid model name | Verify model exists at https://chutes.ai/app |
+| `404 Not Found` | Invalid model name | Verify the model identifier with the provider |
 | `Connection timeout` | Network issue or slow gateway | Increase timeout, implement retry logic |
 | `422 Unprocessable Entity` | Invalid request parameters | Validate request body against API spec |
 
@@ -2763,10 +1068,8 @@ Logs include:
 
 ## Additional Resources
 
-- **Chutes AI Models:** https://chutes.ai/app
-- **Desearch AI Documentation:** https://desearch.ai/
-- **LunarCrush API:** https://lunarcrush.com/developers/api/endpoints
-- **Unusual Whales API:** https://unusualwhales.com/public-api
-- **Miner Setup Guide:** [miner-setup.md](./miner-setup.md)
+- **Miner Setup Guide:** [miner-setup.md](./miner-setup.md) — start here
 - **Subnet Rules:** [subnet-rules.md](./subnet-rules.md)
+- **Scoring System:** [scoring-system.md](./scoring-system.md)
 - **Architecture Overview:** [architecture.md](./architecture.md)
+- **Track allowlist (authoritative):** [`track_config.py`](../neurons/validator/sandbox/signing_proxy/track_config.py)
