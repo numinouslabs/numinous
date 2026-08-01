@@ -12,7 +12,7 @@ from rich.table import Table
 
 console = Console()
 
-API_BASE_URL = "https://numinous.earth"
+API_BASE_URL = "https://api.numinouslabs.io"
 
 
 def list_available_agents() -> list[Path]:
@@ -121,42 +121,41 @@ def select_agent(agent_file: str | None) -> Path:
 
 def fetch_live_events(limit: int = 10, offset: int = 0) -> list[dict]:
     try:
-        with console.status("[cyan]Fetching live events from Numinous...[/cyan]"):
+        with console.status("[cyan]Fetching live markets from Numinous...[/cyan]"):
             response = httpx.get(
-                f"{API_BASE_URL}/api/v2/events",
-                params={"from_date": 0, "offset": offset, "limit": limit},
+                f"{API_BASE_URL}/api/v2/markets",
                 timeout=10.0,
             )
             response.raise_for_status()
             data = response.json()
 
-        events = data.get("items", [])
-        if not events:
+        # The markets endpoint returns the whole reforecast cohort at once,
+        # so pagination is applied client-side.
+        markets = data.get("results", [])[offset : offset + limit]
+        if not markets:
             return []
 
         parsed_events = []
-        for event in events:
-            cutoff_value = event.get("cutoff")
-            if isinstance(cutoff_value, (int, float)):
-                cutoff_str = datetime.fromtimestamp(cutoff_value).isoformat() + "Z"
-            else:
-                cutoff_str = str(cutoff_value) if cutoff_value else ""
-
+        for market in markets:
             parsed_events.append(
                 {
-                    "event_id": event.get("event_id"),
-                    "title": event.get("title", ""),
-                    "description": event.get("description", ""),
-                    "market_type": event.get("market_type", "binary"),
-                    "cutoff": cutoff_str,
-                    "metadata": event.get("event_metadata", {}),
+                    "event_id": market.get("event_id"),
+                    "title": market.get("title", ""),
+                    "description": market.get("description") or "",
+                    "market_type": "REFORECAST",
+                    "cutoff": market.get("cutoff") or "",
+                    "metadata": {
+                        "topics": market.get("topics", []),
+                        "condition_id": market.get("condition_id"),
+                        "event_slug": market.get("event_slug"),
+                    },
                 }
             )
 
         return parsed_events
 
     except httpx.HTTPError as e:
-        console.print(f"[red]✗ Failed to fetch events: {e}[/red]")
+        console.print(f"[red]✗ Failed to fetch markets: {e}[/red]")
         return []
     except Exception as e:
         console.print(f"[red]✗ Unexpected error: {e}[/red]")
