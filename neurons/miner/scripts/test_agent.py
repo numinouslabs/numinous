@@ -15,7 +15,7 @@ from neurons.miner.scripts.test_agent_lib import (  # noqa: E402
     preflight,
     selection,
 )
-from neurons.miner.scripts.track_utils import prompt_track_selection  # noqa: E402
+from neurons.miner.scripts.track_utils import resolve_agent_track  # noqa: E402
 from neurons.validator.models.track import TrackEnum  # noqa: E402
 
 console = Console()
@@ -32,7 +32,7 @@ console = Console()
     "--track",
     "-t",
     type=str,
-    help="Track to test with (controls endpoint filtering). Interactive prompt if not provided.",
+    help="Track to test with (controls endpoint filtering). Defaults to SIGNAL.",
 )
 def test(agent_file: typing.Optional[str] = None, track: typing.Optional[str] = None) -> None:
     """Test your forecasting agent locally with real events
@@ -87,12 +87,7 @@ def test(agent_file: typing.Optional[str] = None, track: typing.Optional[str] = 
     console.print(f"[green]✓[/green] Selected [cyan]{len(events)}[/cyan] event(s)")
     console.print()
 
-    if not track:
-        track = prompt_track_selection()
-    else:
-        track = track.upper()
-
-    track_enum = TrackEnum(track)
+    track_enum = TrackEnum(resolve_agent_track(track, allow_dead_track=True))
     results = execution.run_tests(agent_path, events, track=track_enum)
     display.show_results(results)
 

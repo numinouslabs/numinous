@@ -1,7 +1,6 @@
 import base64
 import time
 import typing
-from getpass import getpass
 from pathlib import Path
 
 import click
@@ -10,6 +9,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 
+from neurons.miner.scripts.api_key_utils import prompt_for_api_key
 from neurons.miner.scripts.numinous_config import ENV_URLS
 from neurons.miner.scripts.wallet_utils import load_coldkey, load_keypair, prompt_wallet_selection
 from neurons.validator.models.track import TrackEnum
@@ -20,11 +20,7 @@ DESEARCH_API_URL = "https://api.desearch.ai/bt/miner/link"
 
 
 def link_desearch_impl(
-    wallet: typing.Optional[str] = None,
-    hotkey: typing.Optional[str] = None,
-    env: typing.Optional[str] = None,
-    wallet_path: typing.Optional[Path] = None,
-    track: str = TrackEnum.MAIN,
+    wallet: str | None, hotkey: str | None, env: str, wallet_path: Path | None, track: str
 ) -> None:
     """Link your Desearch account to your miner
 
@@ -123,10 +119,7 @@ def link_desearch_impl(
     )
     console.print()
 
-    desearch_api_key = getpass("Enter Desearch API key: ")
-    if not desearch_api_key:
-        console.print("[red]✗[/red] API key is required")
-        raise click.Abort()
+    desearch_api_key = prompt_for_api_key("Enter Desearch API key")
 
     console.print()
     console.print("[cyan]Loading coldkey (password required)...[/cyan]")
@@ -154,6 +147,9 @@ def link_desearch_impl(
     console.print()
     console.print("[bold cyan]Ready to link:[/bold cyan]")
     console.print(f"  [dim]Coldkey:[/dim] {coldkey_keypair.ss58_address[:16]}...")
+    console.print(
+        f"  [dim]Key:[/dim] {desearch_api_key} [dim]({len(desearch_api_key)} chars)[/dim]"
+    )
     console.print(f"  [dim]Version ID:[/dim] {version_id}")
     console.print(f"  [dim]Agent:[/dim] {agent_name}")
     console.print(f"  [dim]Network:[/dim] {env.upper()}")

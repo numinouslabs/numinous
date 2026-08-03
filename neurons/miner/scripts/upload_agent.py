@@ -12,7 +12,7 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from neurons.miner.scripts.numinous_config import ENV_URLS
-from neurons.miner.scripts.track_utils import prompt_track_selection
+from neurons.miner.scripts.track_utils import resolve_agent_track
 from neurons.miner.scripts.wallet_utils import load_keypair, prompt_wallet_selection
 
 console = Console()
@@ -115,7 +115,7 @@ def find_agent_file(agent_file: str) -> typing.Optional[Path]:
     "--track",
     "-t",
     type=str,
-    help="Track to upload agent for (e.g. MAIN, SIGNAL). Interactive prompt if not provided.",
+    help="Track to upload agent for. Defaults to SIGNAL; MAIN is rejected as it is not live.",
 )
 def upload(
     agent_file: typing.Optional[str] = None,
@@ -171,11 +171,7 @@ def upload(
     console.print(f"[dim]Network:[/dim] [yellow]{env.upper()}[/yellow]")
     console.print()
 
-    # Prompt for track if not provided
-    if not track:
-        track = prompt_track_selection()
-    else:
-        track = track.upper()
+    track = resolve_agent_track(track, allow_dead_track=False)
 
     console.print(f"[dim]Track:[/dim] [yellow]{track}[/yellow]")
     console.print()
