@@ -31,8 +31,16 @@ def check_docker() -> bool:
 check_gateway_health = gateway_manager.check_gateway_health
 get_gateway_pid = gateway_manager.get_gateway_pid
 stop_gateway = gateway_manager.stop_gateway
-check_env_vars = gateway_config.check_env_vars
+read_api_key_statuses = gateway_config.read_api_key_statuses
+undecided_api_keys = gateway_config.undecided_api_keys
 setup_api_keys = gateway_config.setup_api_keys
+ApiKeyStatus = gateway_config.ApiKeyStatus
+
+_STATUS_MARK = {
+    ApiKeyStatus.SET: "[green]✓[/green]",
+    ApiKeyStatus.SKIPPED: "[dim]— skipped[/dim]",
+    ApiKeyStatus.UNDECIDED: "[red]✗[/red]",
+}
 
 
 def check_sandbox_image() -> bool:
@@ -76,21 +84,18 @@ def run_preflight_checks() -> bool:
         all_passed = False
 
     if gateway_ok:
-        env_vars = check_env_vars()
-        all_env_ok = all(env_vars.values())
+        statuses = read_api_key_statuses()
+        undecided_keys = [
+            key for key, status in statuses.items() if status is ApiKeyStatus.UNDECIDED
+        ]
 
-        if all_env_ok:
-            console.print("  [green]✓[/green] Environment variables")
-            for key in env_vars.keys():
-                console.print(f"    • {key}: [green]✓[/green]")
-        else:
-            console.print("  [yellow]⚠[/yellow] Environment variables")
-            for key, ok in env_vars.items():
-                status = "[green]✓[/green]" if ok else "[red]✗[/red]"
-                console.print(f"    • {key}: {status}")
+        header = "[yellow]⚠[/yellow]" if undecided_keys else "[green]✓[/green]"
+        console.print(f"  {header} Environment variables")
+        for key, status in statuses.items():
+            console.print(f"    • {key}: {_STATUS_MARK[status]}")
 
-            if not all_env_ok:
-                all_passed = False
+        if undecided_keys:
+            all_passed = False
 
     console.print()
 
@@ -138,8 +143,7 @@ def run_preflight_checks() -> bool:
                 )
                 console.print()
                 gateway_ok = True
-                env_vars_ok = all(check_env_vars().values())
-                all_passed = env_vars_ok
+                all_passed = not undecided_api_keys()
             else:
                 console.print()
                 console.print(
@@ -162,16 +166,15 @@ def run_preflight_checks() -> bool:
             )
             console.print()
 
-    if gateway_ok and not all(check_env_vars().values()):
-        env_vars = check_env_vars()
-        missing_keys = [key for key, ok in env_vars.items() if not ok]
-
+    if gateway_ok and undecided_api_keys():
         console.print(
             Panel.fit(
-                f"[yellow]⚠ Missing API keys: {', '.join(missing_keys)}[/yellow]\n\n"
-                "[dim]These keys are required to run agents that use LLM APIs.[/dim]",
+                f"[yellow]⚠ API keys not set up yet: "
+                f"{', '.join(undecided_api_keys())}[/yellow]\n\n"
+                "[dim]Needed only for agents that call those services — "
+                "press Enter to skip the ones you do not use.[/dim]",
                 border_style="yellow",
-                title="⚠️ API Keys Required",
+                title="⚠️ API Keys",
             )
         )
         console.print()
@@ -180,8 +183,7 @@ def run_preflight_checks() -> bool:
             "[bold cyan]Would you like to set up your API keys now?[/bold cyan]", default=True
         ):
             if setup_api_keys():
-                env_vars_ok = all(check_env_vars().values())
-                if env_vars_ok:
+                if not undecided_api_keys():
                     console.print("[green]✓[/green] All API keys configured!")
                     console.print()
 

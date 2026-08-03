@@ -2,7 +2,6 @@ import base64
 import time
 import typing
 from dataclasses import dataclass
-from getpass import getpass
 from pathlib import Path
 
 import click
@@ -11,6 +10,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm
 
+from neurons.miner.scripts.api_key_utils import prompt_for_api_key
 from neurons.miner.scripts.numinous_config import ENV_URLS
 from neurons.miner.scripts.wallet_utils import load_keypair, prompt_wallet_selection
 
@@ -88,11 +88,11 @@ def get_all_linkable_services(env: str) -> list[ServiceConfig]:
 
 def link_api_key_impl(
     service: ServiceConfig,
-    wallet: typing.Optional[str] = None,
-    hotkey: typing.Optional[str] = None,
-    env: typing.Optional[str] = None,
-    wallet_path: typing.Optional[Path] = None,
-    track: str = "MAIN",
+    wallet: str | None,
+    hotkey: str | None,
+    env: str,
+    wallet_path: Path | None,
+    track: str,
 ) -> None:
     console.print()
     console.print(
@@ -135,14 +135,12 @@ def link_api_key_impl(
     )
     console.print()
 
-    api_key = getpass("Enter your API key: ")
-    if not api_key or not api_key.strip():
-        console.print("[red]✗[/red] API key cannot be empty")
-        raise click.Abort()
+    api_key = prompt_for_api_key("Enter your API key")
 
     console.print()
     console.print("[bold cyan]Ready to link:[/bold cyan]")
     console.print(f"  [dim]Hotkey:[/dim] {hotkey_keypair.ss58_address[:16]}...")
+    console.print(f"  [dim]Key:[/dim] {api_key} [dim]({len(api_key)} chars)[/dim]")
     console.print(f"  [dim]Service:[/dim] {service.display_name}")
     console.print(f"  [dim]Network:[/dim] {env.upper()}")
     console.print(f"  [dim]Track:[/dim] {track}")

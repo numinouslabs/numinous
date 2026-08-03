@@ -13,6 +13,12 @@ from neurons.miner.scripts.gateway_lib import config, manager  # noqa: E402
 
 console = Console()
 
+_STATUS_DISPLAY = {
+    config.ApiKeyStatus.SET: "[green]✓ Set[/green]",
+    config.ApiKeyStatus.SKIPPED: "[dim]— skipped[/dim]",
+    config.ApiKeyStatus.UNDECIDED: "[red]✗ Not set[/red]",
+}
+
 
 @click.group()
 def gateway():
@@ -92,12 +98,10 @@ def start():
             console.print()
             return
 
-    env_vars = config.check_env_vars()
-    all_env_ok = all(env_vars.values())
+    undecided_keys = config.undecided_api_keys()
 
-    if not all_env_ok:
-        missing_keys = [key for key, ok in env_vars.items() if not ok]
-        console.print(f"[yellow]⚠ Missing API keys: {', '.join(missing_keys)}[/yellow]")
+    if undecided_keys:
+        console.print(f"[yellow]⚠ API keys not set up yet: {', '.join(undecided_keys)}[/yellow]")
         console.print()
 
         if Confirm.ask(
@@ -186,19 +190,18 @@ def configure():
     console.print("[cyan]🔑 API Key Configuration[/cyan]")
     console.print()
 
-    env_vars = config.check_env_vars()
+    statuses = config.read_api_key_statuses()
 
     console.print("[dim]Current status:[/dim]")
-    for key, is_set in env_vars.items():
-        status = "[green]✓ Set[/green]" if is_set else "[red]✗ Not set[/red]"
-        console.print(f"  {key}: {status}")
+    for key, status in statuses.items():
+        console.print(f"  {key}: {_STATUS_DISPLAY[status]}")
     console.print()
 
-    all_set = all(env_vars.values())
+    everything_decided = config.ApiKeyStatus.UNDECIDED not in statuses.values()
 
-    if all_set:
+    if everything_decided:
         if not Confirm.ask(
-            "[bold cyan]All keys are configured. Do you wish to update any of them?[/bold cyan]",
+            "[bold cyan]Every key has been set or skipped. Review them all?[/bold cyan]",
             default=False,
         ):
             console.print()
@@ -208,11 +211,11 @@ def configure():
         force_all = True
     else:
         force_all = False
-        if any(env_vars.values()):
-            if Confirm.ask(
-                "[bold cyan]Update all keys (including existing ones)?[/bold cyan]", default=False
-            ):
-                force_all = True
+        if Confirm.ask(
+            "[bold cyan]Review all keys, including ones already set or skipped?[/bold cyan]",
+            default=False,
+        ):
+            force_all = True
 
     if config.setup_api_keys(force_all=force_all):
         console.print("[green]✓ API keys configured![/green]")

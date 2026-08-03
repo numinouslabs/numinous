@@ -14,7 +14,7 @@ from rich.table import Table
 from neurons.miner.scripts.link_desearch import link_desearch_impl
 from neurons.miner.scripts.link_service import get_all_linkable_services, link_api_key_impl
 from neurons.miner.scripts.numinous_config import ENV_URLS
-from neurons.miner.scripts.track_utils import prompt_track_selection
+from neurons.miner.scripts.track_utils import prompt_credential_track
 from neurons.miner.scripts.wallet_utils import load_keypair, prompt_wallet_selection
 from neurons.validator.models.track import TrackEnum
 
@@ -242,7 +242,7 @@ def _fetch_public_data_sources(env: str) -> Optional[typing.List[dict]]:
     "--track",
     "-t",
     type=str,
-    help="Track to link credentials for (e.g. MAIN, SIGNAL). Default: MAIN.",
+    help="Track to link credentials for. Default: SIGNAL, the only live track.",
 )
 def link(
     service_name: Optional[str] = None,
@@ -299,7 +299,7 @@ def link(
         console.print()
 
     if not track:
-        track = prompt_track_selection(show_allowlist=False, show_credential_fallback=True)
+        track = prompt_credential_track(show_fallback_note=True)
     else:
         track = track.upper()
 
@@ -332,7 +332,7 @@ def link(
     "--track",
     "-t",
     type=str,
-    help="Track to unlink credentials for (e.g. MAIN, SIGNAL). Default: MAIN.",
+    help="Track to unlink credentials for. Default: SIGNAL, the only live track.",
 )
 def unlink(
     service_name: str,
@@ -389,7 +389,7 @@ def unlink(
     console.print(f"[green]✓[/green] Loaded wallet: [yellow]{keypair.ss58_address}[/yellow]")
 
     if not track:
-        track = prompt_track_selection(show_allowlist=False)
+        track = prompt_credential_track(show_fallback_note=False)
     else:
         track = track.upper()
 
@@ -398,16 +398,7 @@ def unlink(
         success = _unlink_service(env, keypair, service_name, track)
 
     if not success:
-        console.print()
-        console.print(
-            Panel.fit(
-                f"[red]✗ Failed to unlink {service_name}[/red]\n\n"
-                "[yellow]Service may not be linked or network error occurred[/yellow]",
-                border_style="red",
-            )
-        )
-        console.print()
-        raise click.Abort()
+        _report_unlink_failure(env, keypair, service_name, track)
 
     console.print()
     console.print(
@@ -418,6 +409,35 @@ def unlink(
         )
     )
     console.print()
+
+
+def _report_unlink_failure(env: str, keypair, service_name: str, track: str) -> typing.NoReturn:
+    linked_services = _fetch_linked_services(env, keypair) or []
+    normalized_name = service_name.replace("-", "_")
+    other_tracks = [
+        service["track"]
+        for service in linked_services
+        if service["service_name"] == normalized_name and service.get("track") != track
+    ]
+
+    if other_tracks:
+        detail = (
+            f"[yellow]{service_name} is linked on:[/yellow] {', '.join(other_tracks)}\n\n"
+            f"[dim]Retry with:[/dim] [cyan]numi services unlink {service_name} "
+            f"-t {other_tracks[0]}[/cyan]"
+        )
+    else:
+        detail = "[yellow]Service may not be linked or network error occurred[/yellow]"
+
+    console.print()
+    console.print(
+        Panel.fit(
+            f"[red]✗ Failed to unlink {service_name} on {track}[/red]\n\n{detail}",
+            border_style="red",
+        )
+    )
+    console.print()
+    raise click.Abort()
 
 
 def _fetch_linked_services(env: str, keypair) -> Optional[typing.List[dict]]:

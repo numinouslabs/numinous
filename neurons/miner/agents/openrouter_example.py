@@ -11,7 +11,7 @@ if not RUN_ID:
     raise ValueError("RUN_ID environment variable is required but not set")
 
 PROXY_URL = os.getenv("SANDBOX_PROXY_URL", "http://sandbox_proxy")
-OPENROUTER_URL = f"{PROXY_URL}/api/gateway/openrouter/chat/completions"
+OPENROUTER_URL = f"{PROXY_URL}/api/gateway/openrouter/chat/completions/inference"
 
 OPENROUTER_MODELS = [
     "anthropic/claude-sonnet-4-6",
