@@ -221,17 +221,16 @@ def run_preflight_checks() -> bool:
             else:
                 all_passed = False
         else:
+            key_sources = "\n".join(
+                f"   - {api_key.display_name}: " f"[link={api_key.key_url}]{api_key.key_url}[/link]"
+                for api_key in gateway_config.API_KEYS
+            )
             console.print()
             console.print(
                 Panel.fit(
                     f"[yellow]To set up API keys manually, edit:[/yellow]\n"
                     f"   [cyan]{GATEWAY_ENV_PATH}[/cyan]\n\n"
-                    "[yellow]Get your keys from:[/yellow]\n"
-                    "   - Chutes: [link=https://chutes.ai]https://chutes.ai[/link]\n"
-                    "   - Desearch: [link=https://desearch.ai]https://desearch.ai[/link]\n"
-                    "   - OpenAI: [link=https://platform.openai.com/api-keys]https://platform.openai.com/api-keys[/link]\n"
-                    "   - Perplexity: [link=https://www.perplexity.ai/settings/api]https://www.perplexity.ai/settings/api[/link]\n"
-                    "   - Vericore: [link=https://vericore.ai]https://vericore.ai[/link]",
+                    f"[yellow]Get your keys from:[/yellow]\n{key_sources}",
                     border_style="yellow",
                 )
             )

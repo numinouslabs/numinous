@@ -5,50 +5,27 @@ import time
 import aiohttp
 import aiohttp.typedefs
 from bittensor_wallet import Wallet
-from pydantic import ValidationError
 
-from neurons.validator.models.chutes import ChutesCompletion
-from neurons.validator.models.desearch import AISearchResponse
-from neurons.validator.models.lunar_crush import (
-    LunarCrushCoinsListResponse,
-    LunarCrushNewsResponse,
-    LunarCrushPostsResponse,
-    LunarCrushTimeSeriesResponse,
-    LunarCrushTopicResponse,
-    LunarCrushWhatsupResponse,
-)
 from neurons.validator.models.numinous_client import (
     BatchUpdateAgentRunsRequest,
-    ChutesInferenceRequest,
     CreateAgentRunRequest,
     CreateAgentRunResponse,
-    DesearchAISearchRequest,
     GetAgentsResponse,
     GetEventsDeletedResponse,
     GetEventsResolvedResponse,
     GetEventsResponse,
     GetWeightsResponse,
-    LunarCrushCoinsListRequest,
-    LunarCrushNewsRequest,
-    LunarCrushPostsRequest,
-    LunarCrushTimeSeriesRequest,
-    LunarCrushTopicRequest,
-    LunarCrushWhatsupRequest,
     MemoryCommitRequestBody,
     MemoryCommitResponse,
     MemoryEntry,
     MemoryPullRequestBody,
     MemoryPullResponse,
-    OpenRouterInferenceRequest,
     PostAgentLogsRequestBody,
     PostAgentRunsRequestBody,
     PostPredictionsRequestBody,
     PostReasoningRequestBody,
     PostSourcesRequestBody,
-    VericoreCalculateRatingRequest,
 )
-from neurons.validator.models.openrouter import OpenRouterCompletion
-from neurons.validator.models.vericore import VericoreResponse
 from neurons.validator.utils.config import NuminousEnvType
 from neurons.validator.utils.git import commit_short_hash
 from neurons.validator.utils.logger.logger import NuminousLogger
@@ -412,159 +389,6 @@ class NuminousClient:
                 data = await response.json()
 
                 return GetAgentsResponse.model_validate(data)
-
-    async def chutes_inference(self, body: dict | ChutesInferenceRequest):
-        if isinstance(body, dict):
-            try:
-                body = ChutesInferenceRequest.model_validate(body)
-            except ValidationError as e:
-                raise ValueError(f"Invalid parameters: {e}")
-
-        data = body.model_dump_json()
-        auth_headers = self.make_auth_headers(data=data)
-
-        async with self.create_session(
-            other_headers={**auth_headers, "Content-Type": "application/json"}
-        ) as session:
-            path = "/api/gateway/chutes/chat/completions"
-
-            async with session.post(path, data=data) as response:
-                response.raise_for_status()
-
-                data = await response.json()
-                return ChutesCompletion.model_validate(data)
-
-    async def desearch_ai_search(self, body: dict | DesearchAISearchRequest):
-        if isinstance(body, dict):
-            try:
-                body = DesearchAISearchRequest.model_validate(body)
-            except ValidationError as e:
-                raise ValueError(f"Invalid parameters: {e}")
-
-        data = body.model_dump_json()
-        auth_headers = self.make_auth_headers(data=data)
-
-        async with self.create_session(
-            other_headers={**auth_headers, "Content-Type": "application/json"}
-        ) as session:
-            path = "/api/gateway/desearch/ai/search"
-
-            async with session.post(path, data=data) as response:
-                response.raise_for_status()
-
-                data = await response.json()
-                return AISearchResponse.model_validate(data)
-
-    async def vericore_calculate_rating(
-        self, body: dict | VericoreCalculateRatingRequest
-    ) -> VericoreResponse:
-        if isinstance(body, dict):
-            try:
-                body = VericoreCalculateRatingRequest.model_validate(body)
-            except ValidationError as e:
-                raise ValueError(f"Invalid parameters: {e}")
-
-        data = body.model_dump_json()
-        auth_headers = self.make_auth_headers(data=data)
-
-        async with self.create_session(
-            other_headers={**auth_headers, "Content-Type": "application/json"}
-        ) as session:
-            path = "/api/gateway/vericore/calculate-rating"
-
-            async with session.post(path, data=data) as response:
-                response.raise_for_status()
-
-                data = await response.json()
-                return VericoreResponse.model_validate(data)
-
-    async def openrouter_chat_completion(
-        self, body: dict | OpenRouterInferenceRequest
-    ) -> OpenRouterCompletion:
-        if isinstance(body, dict):
-            try:
-                body = OpenRouterInferenceRequest.model_validate(body)
-            except ValidationError as e:
-                raise ValueError(f"Invalid parameters: {e}")
-
-        data = body.model_dump_json()
-        auth_headers = self.make_auth_headers(data=data)
-
-        async with self.create_session(
-            other_headers={**auth_headers, "Content-Type": "application/json"}
-        ) as session:
-            path = "/api/gateway/openrouter/chat/completions"
-
-            async with session.post(path, data=data) as response:
-                response.raise_for_status()
-
-                data = await response.json()
-                return OpenRouterCompletion.model_validate(data)
-
-    async def _lunar_crush_call(self, path: str, body_model, response_model, body: dict):
-        try:
-            validated = body_model.model_validate(body)
-        except ValidationError as e:
-            raise ValueError(f"Invalid parameters: {e}")
-
-        data = validated.model_dump_json()
-        auth_headers = self.make_auth_headers(data=data)
-
-        async with self.create_session(
-            other_headers={**auth_headers, "Content-Type": "application/json"}
-        ) as session:
-            async with session.post(path, data=data) as response:
-                response.raise_for_status()
-                resp_data = await response.json()
-                return response_model.model_validate(resp_data)
-
-    async def lunar_crush_get_topic(self, body: dict) -> LunarCrushTopicResponse:
-        return await self._lunar_crush_call(
-            "/api/gateway/lunar-crush/topic",
-            LunarCrushTopicRequest,
-            LunarCrushTopicResponse,
-            body,
-        )
-
-    async def lunar_crush_get_time_series(self, body: dict) -> LunarCrushTimeSeriesResponse:
-        return await self._lunar_crush_call(
-            "/api/gateway/lunar-crush/time-series",
-            LunarCrushTimeSeriesRequest,
-            LunarCrushTimeSeriesResponse,
-            body,
-        )
-
-    async def lunar_crush_get_news(self, body: dict) -> LunarCrushNewsResponse:
-        return await self._lunar_crush_call(
-            "/api/gateway/lunar-crush/news",
-            LunarCrushNewsRequest,
-            LunarCrushNewsResponse,
-            body,
-        )
-
-    async def lunar_crush_get_whatsup(self, body: dict) -> LunarCrushWhatsupResponse:
-        return await self._lunar_crush_call(
-            "/api/gateway/lunar-crush/whatsup",
-            LunarCrushWhatsupRequest,
-            LunarCrushWhatsupResponse,
-            body,
-        )
-
-    async def lunar_crush_get_posts(self, body: dict) -> LunarCrushPostsResponse:
-        return await self._lunar_crush_call(
-            "/api/gateway/lunar-crush/posts",
-            LunarCrushPostsRequest,
-            LunarCrushPostsResponse,
-            body,
-        )
-
-    async def lunar_crush_get_coins_list(self, body: dict) -> LunarCrushCoinsListResponse:
-        return await self._lunar_crush_call(
-            "/api/gateway/lunar-crush/coins-list",
-            LunarCrushCoinsListRequest,
-            LunarCrushCoinsListResponse,
-            body,
-        )
 
     async def get_weights(self):
         auth_headers = self.make_get_auth_headers()

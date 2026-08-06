@@ -8,6 +8,8 @@ from neurons.validator.models.numinous_signals import (
     CorpusFetchResponse,
     CorpusSearchResponse,
     DeepResearchReportResponse,
+    NewsFeedPage,
+    NewsOrder,
     SignalsResponse,
 )
 
@@ -115,6 +117,36 @@ class NuminousSignalsClient:
                 response.raise_for_status()
                 data = await response.json()
                 return CorpusSearchResponse.model_validate(data)
+
+    async def get_news_feed(
+        self,
+        event_id: UUID,
+        language: str | None = None,
+        min_impact_score: float | None = None,
+        order: NewsOrder = NewsOrder.RECENT,
+        published_within_hours: float | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> NewsFeedPage:
+        params: dict[str, str | int | float] = {
+            "event_id": str(event_id),
+            "order": str(order),
+            "limit": limit,
+            "offset": offset,
+        }
+        if language is not None:
+            params["language"] = language
+        if min_impact_score is not None:
+            params["min_impact_score"] = min_impact_score
+        if published_within_hours is not None:
+            params["published_within_hours"] = published_within_hours
+
+        url = f"{self.__base_url}/api/v1/signals/news"
+        async with aiohttp.ClientSession(timeout=self.__timeout, headers=self.__headers) as session:
+            async with session.get(url, params=params) as response:
+                response.raise_for_status()
+                data = await response.json()
+                return NewsFeedPage.model_validate(data)
 
     async def fetch_corpus_source(self, source_id: UUID) -> CorpusFetchResponse:
         url = f"{self.__base_url}/api/v1/corpus/fetch/{source_id}"

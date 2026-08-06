@@ -3,7 +3,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from neurons.validator.models.chutes import ChatCompletionChoice
+from neurons.validator.models.chat_completion import ChatCompletionChoice
 
 
 class OpenRouterUsage(BaseModel):

@@ -4,7 +4,6 @@ import click
 
 from neurons.miner.scripts.fetch_agent_logs import fetch_logs
 from neurons.miner.scripts.gateway import gateway
-from neurons.miner.scripts.inspect_agent import inspect_agent
 from neurons.miner.scripts.list_agents import list_agents
 from neurons.miner.scripts.services import services
 from neurons.miner.scripts.test_agent import test
@@ -24,9 +23,8 @@ def numi():
       numi test-agent      # Test your agent locally
       numi upload-agent    # Submit your agent's code
       numi list-agents     # List your uploaded agents
-      numi inspect-agent   # View/download any activated agent code
       numi fetch-logs      # Fetch agent run logs
-      numi services        # Manage linked services (Desearch, Chutes, OpenAI)
+      numi services        # Manage linked services (OpenAI, OpenRouter, Lightning Rod)
 
     \b
     For detailed help on any command, run:
@@ -40,7 +38,6 @@ numi.add_command(gateway)
 numi.add_command(test, name="test-agent")
 numi.add_command(upload, name="upload-agent")
 numi.add_command(list_agents, name="list-agents")
-numi.add_command(inspect_agent, name="inspect-agent")
 numi.add_command(fetch_logs, name="fetch-logs")
 numi.add_command(services)
 

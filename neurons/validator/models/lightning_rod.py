@@ -3,7 +3,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
-from neurons.validator.models.chutes import ChatCompletionChoice
+from neurons.validator.models.chat_completion import ChatCompletionChoice
 
 INPUT_COST_PER_1M = Decimal("1.0")
 OUTPUT_COST_PER_1M = Decimal("6.0")

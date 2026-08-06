@@ -36,113 +36,44 @@ class TestCheckTrackAccess:
         finally:
             os.environ.pop("RUN_REGISTRY_DIR", None)
 
-    def test_signal_blocked_on_disallowed_endpoint(self, registry_dir: Path):
+    @pytest.mark.parametrize(
+        "endpoint",
+        [
+            "/api/gateway/openai/responses",
+            "/api/gateway/openrouter/chat/completions",
+            "/api/gateway/some-unlisted-service/fetch",
+        ],
+    )
+    def test_signal_blocked_off_allowlist(self, endpoint: str, registry_dir: Path):
         proxy = self._make_proxy(registry_dir)
-        run_id = "test-run-signal"
+        run_id = "test-run-signal-blocked"
         (registry_dir / run_id).write_text("SIGNAL")
 
         body = json.dumps({"run_id": run_id}).encode()
-        result = proxy._check_track_access("/api/gateway/openai/responses", body)
+        result = proxy._check_track_access(endpoint, body)
 
         assert result is not None
         assert result.status == 403
 
-    def test_signal_blocked_on_desearch(self, registry_dir: Path):
+    @pytest.mark.parametrize(
+        "endpoint",
+        [
+            "/api/gateway/openai/responses/inference",
+            "/api/gateway/openrouter/chat/completions/inference",
+            "/api/gateway/numinous-indicia/x-osint",
+            "/api/gateway/lightning-rod/chat/completions",
+            "/api/gateway/numinous-signals/signals",
+        ],
+    )
+    def test_signal_allowed_on_allowlist(self, endpoint: str, registry_dir: Path):
         proxy = self._make_proxy(registry_dir)
-        run_id = "test-run-signal-2"
+        run_id = "test-run-signal-allowed"
         (registry_dir / run_id).write_text("SIGNAL")
 
         body = json.dumps({"run_id": run_id}).encode()
-        result = proxy._check_track_access("/api/gateway/desearch/ai/search", body)
-
-        assert result is not None
-        assert result.status == 403
-
-    def test_signal_blocked_on_perplexity(self, registry_dir: Path):
-        proxy = self._make_proxy(registry_dir)
-        run_id = "test-run-signal-3"
-        (registry_dir / run_id).write_text("SIGNAL")
-
-        body = json.dumps({"run_id": run_id}).encode()
-        result = proxy._check_track_access("/api/gateway/perplexity/chat/completions", body)
-
-        assert result is not None
-        assert result.status == 403
-
-    def test_signal_blocked_on_chutes(self, registry_dir: Path):
-        proxy = self._make_proxy(registry_dir)
-        run_id = "test-run-signal-chutes"
-        (registry_dir / run_id).write_text("SIGNAL")
-
-        body = json.dumps({"run_id": run_id}).encode()
-        result = proxy._check_track_access("/api/gateway/chutes/chat/completions", body)
-
-        assert result is not None
-        assert result.status == 403
-
-    def test_signal_blocked_on_lunar_crush(self, registry_dir: Path):
-        proxy = self._make_proxy(registry_dir)
-        run_id = "test-run-signal-lunar-crush"
-        (registry_dir / run_id).write_text("SIGNAL")
-
-        body = json.dumps({"run_id": run_id}).encode()
-        result = proxy._check_track_access("/api/gateway/lunar-crush/coins", body)
-
-        assert result is not None
-        assert result.status == 403
-
-    def test_signal_blocked_on_unusual_whales(self, registry_dir: Path):
-        proxy = self._make_proxy(registry_dir)
-        run_id = "test-run-signal-unusual-whales"
-        (registry_dir / run_id).write_text("SIGNAL")
-
-        body = json.dumps({"run_id": run_id}).encode()
-        result = proxy._check_track_access("/api/gateway/unusual-whales/option-trades", body)
-
-        assert result is not None
-        assert result.status == 403
-
-    def test_signal_blocked_on_public_data(self, registry_dir: Path):
-        proxy = self._make_proxy(registry_dir)
-        run_id = "test-run-signal-public-data"
-        (registry_dir / run_id).write_text("SIGNAL")
-
-        body = json.dumps({"run_id": run_id}).encode()
-        result = proxy._check_track_access("/api/gateway/public-data/fetch", body)
-
-        assert result is not None
-        assert result.status == 403
-
-    def test_signal_allowed_on_numinous_indicia(self, registry_dir: Path):
-        proxy = self._make_proxy(registry_dir)
-        run_id = "test-run-signal-indicia"
-        (registry_dir / run_id).write_text("SIGNAL")
-
-        body = json.dumps({"run_id": run_id}).encode()
-        result = proxy._check_track_access("/api/gateway/numinous-indicia/x-osint", body)
+        result = proxy._check_track_access(endpoint, body)
 
         assert result is None
-
-    def test_signal_allowed_on_openai_inference_only(self, registry_dir: Path):
-        proxy = self._make_proxy(registry_dir)
-        run_id = "test-run-signal-openai-inference"
-        (registry_dir / run_id).write_text("SIGNAL")
-
-        body = json.dumps({"run_id": run_id}).encode()
-        result = proxy._check_track_access("/api/gateway/openai/responses/inference", body)
-
-        assert result is None
-
-    def test_signal_blocked_on_openai_responses(self, registry_dir: Path):
-        proxy = self._make_proxy(registry_dir)
-        run_id = "test-run-signal-openai-responses"
-        (registry_dir / run_id).write_text("SIGNAL")
-
-        body = json.dumps({"run_id": run_id}).encode()
-        result = proxy._check_track_access("/api/gateway/openai/responses", body)
-
-        assert result is not None
-        assert result.status == 403
 
     def test_main_allowed_on_everything(self, registry_dir: Path):
         proxy = self._make_proxy(registry_dir)
@@ -153,11 +84,9 @@ class TestCheckTrackAccess:
 
         for endpoint in [
             "/api/gateway/openai/responses",
-            "/api/gateway/desearch/ai/search",
-            "/api/gateway/chutes/chat/completions",
-            "/api/gateway/perplexity/chat/completions",
-            "/api/gateway/vericore/calculate-rating",
+            "/api/gateway/openai/responses/inference",
             "/api/gateway/numinous-indicia/x-osint",
+            "/api/gateway/some-unlisted-service/fetch",
         ]:
             result = proxy._check_track_access(endpoint, body)
             assert result is None, f"MAIN should be allowed on {endpoint}"

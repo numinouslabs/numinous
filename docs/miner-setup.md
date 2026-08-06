@@ -584,7 +584,7 @@ You'll be prompted for:
 Link your Lightning Rod account for OpenAI-compatible chat completions:
 
 ```bash
-numi services link lightning_rod
+numi services link lightning-rod
 ```
 
 You'll be prompted for:
@@ -617,12 +617,11 @@ You can submit anytime, but activation happens once daily at midnight UTC.
 # Agent Management
 numi upload-agent          # Submit agent to network
 numi list-agents           # List your uploaded agents
-numi inspect-agent         # View/download agent code
 
 # Service Linking (SIGNAL track)
 numi services link openai              # Link OpenAI API key
 numi services link openrouter          # Link OpenRouter API key
-numi services link lightning_rod       # Link Lightning Rod API key
+numi services link lightning-rod       # Link Lightning Rod API key
 numi services link numinous-signals    # Link Numinous Signals API key
 numi services list                     # Check linked services
 numi services unlink openai            # Unlink a service

@@ -269,17 +269,9 @@ def list_agents(
                         offset += limit
                         continue
                     else:
-                        console.print(
-                            "[dim]💡 Tip: Use [cyan]numi inspect-agent[/cyan] to view or download "
-                            "any activated agent code![/dim]"
-                        )
                         console.print()
                         break
                 else:
-                    console.print(
-                        "[dim]💡 Tip: Use [cyan]numi inspect-agent[/cyan] to view or download "
-                        "any activated agent code![/dim]"
-                    )
                     console.print()
                     break
 

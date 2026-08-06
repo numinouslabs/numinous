@@ -5,7 +5,7 @@ from rich.prompt import Prompt
 console = Console()
 
 MINIMUM_API_KEY_LENGTH = 8
-MAXIMUM_API_KEY_LENGTH = 200
+MAXIMUM_API_KEY_LENGTH = 512
 
 
 def find_api_key_problem(api_key: str) -> str | None:
