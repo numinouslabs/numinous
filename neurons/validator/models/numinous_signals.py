@@ -1,9 +1,26 @@
 from datetime import datetime
 from decimal import Decimal
+from enum import StrEnum
 from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+class SignalDirection(StrEnum):
+    SUPPORTS_YES = "supports_yes"
+    SUPPORTS_NO = "supports_no"
+    NEUTRAL = "neutral"
+
+
+class NewsOrder(StrEnum):
+    RECENT = "recent"
+    IMPACT = "impact"
+    PUBLISHED = "published"
+
+
+class FeedLanguage(StrEnum):
+    ENGLISH = "en"
 
 
 class WeightedSignal(BaseModel):
@@ -131,11 +148,75 @@ class CorpusFetchResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
-COST_PER_CALL = Decimal("0.001")
+class NewsFeedImpactedMarket(BaseModel):
+    condition_id: str
+    question: str
+    market_slug: str | None = None
+    impact: bool
+    direction: SignalDirection
+    impact_score: float
+    rationale: str
+
+    model_config = ConfigDict(extra="allow")
+
+
+class NewsFeedItem(BaseModel):
+    id: str
+    headline: str
+    summary: str
+    source: str
+    source_url: str | None = None
+    source_timestamp: datetime
+    emitted_at: datetime
+    category: str
+    impacted_markets: list[NewsFeedImpactedMarket]
+
+    model_config = ConfigDict(extra="allow")
+
+
+class NewsFeedPage(BaseModel):
+    count: int
+    items: list[NewsFeedItem]
+
+    model_config = ConfigDict(extra="allow")
+
+
+class NewsFeedArticle(BaseModel):
+    id: str
+    headline: str
+    source_url: str | None = None
+    source_timestamp: datetime
+    emitted_at: datetime
+    direction: SignalDirection
+    impact_score: float
+    rationale: str
+
+    model_config = ConfigDict(extra="allow")
+
+    @classmethod
+    def from_item(cls, item: NewsFeedItem) -> "NewsFeedArticle | None":
+        if not item.impacted_markets:
+            return None
+
+        market = max(item.impacted_markets, key=lambda entry: entry.impact_score)
+        return cls(
+            id=item.id,
+            headline=item.headline,
+            source_url=item.source_url,
+            source_timestamp=item.source_timestamp,
+            emitted_at=item.emitted_at,
+            direction=market.direction,
+            impact_score=market.impact_score,
+            rationale=market.rationale,
+        )
+
+
+COST_PER_CALL = Decimal("0.035")
 CAUSAL_DRIVERS_COST = Decimal("0.0")
 DEEP_RESEARCH_COST = Decimal("0.0")
-CORPUS_SEARCH_COST = Decimal("0.0")
-CORPUS_FETCH_COST = Decimal("0.0")
+CORPUS_SEARCH_COST = Decimal("0.0015")
+CORPUS_FETCH_COST = Decimal("0.0005")
+NEWS_FEED_COST = Decimal("0.002")
 
 
 def calculate_cost() -> Decimal:
@@ -156,3 +237,7 @@ def calculate_corpus_search_cost() -> Decimal:
 
 def calculate_corpus_fetch_cost() -> Decimal:
     return CORPUS_FETCH_COST
+
+
+def calculate_news_feed_cost() -> Decimal:
+    return NEWS_FEED_COST

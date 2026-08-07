@@ -7,7 +7,9 @@ from fastapi.testclient import TestClient
 
 from neurons.miner.gateway.app import app
 from neurons.miner.gateway.cache import _cache, _cache_lock, generate_request_hash
-from neurons.validator.models.chutes import ChutesCompletion
+from neurons.validator.models.openrouter import OpenRouterCompletion
+
+_INFERENCE_PATH = "/api/gateway/openrouter/chat/completions/inference"
 
 
 @pytest.fixture
@@ -54,14 +56,13 @@ class TestCache:
             endpoint, payload2
         )
 
-    @patch("neurons.miner.gateway.app.ChutesClient")
-    @patch.dict("os.environ", {"CHUTES_API_KEY": "test-key"})
-    def test_cache_hit_reuses_result(self, mock_client_class, client: TestClient):
-        mock_response = ChutesCompletion(
-            id="chatcmpl-123",
+    @staticmethod
+    def _mock_completion() -> OpenRouterCompletion:
+        return OpenRouterCompletion(
+            id="gen-abc123",
             object="chat.completion",
             created=1677652288,
-            model="deepseek-ai/DeepSeek-R1",
+            model="anthropic/claude-sonnet-4-6",
             choices=[
                 {
                     "index": 0,
@@ -69,58 +70,51 @@ class TestCache:
                     "finish_reason": "stop",
                 }
             ],
-            usage={"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+            usage={
+                "prompt_tokens": 10,
+                "completion_tokens": 20,
+                "total_tokens": 30,
+                "cost": 0.00165,
+            },
         )
 
+    @patch("neurons.miner.gateway.app.OpenRouterClient")
+    @patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"})
+    def test_cache_hit_reuses_result(self, mock_client_class, client: TestClient):
         mock_instance = mock_client_class.return_value
-        mock_instance.chat_completion = AsyncMock(return_value=mock_response)
+        mock_instance.chat_completion = AsyncMock(return_value=self._mock_completion())
 
         request_body = {
             "run_id": str(uuid4()),
-            "model": "deepseek-ai/DeepSeek-R1",
+            "model": "anthropic/claude-sonnet-4-6",
             "messages": [{"role": "user", "content": "Hello"}],
             "temperature": 0.7,
         }
 
-        response1 = client.post("/api/gateway/chutes/chat/completions", json=request_body)
-        response2 = client.post("/api/gateway/chutes/chat/completions", json=request_body)
+        response1 = client.post(_INFERENCE_PATH, json=request_body)
+        response2 = client.post(_INFERENCE_PATH, json=request_body)
 
         assert response1.status_code == 200
         assert response2.status_code == 200
         assert response1.json() == response2.json()
         assert mock_instance.chat_completion.call_count == 1
 
-    @patch("neurons.miner.gateway.app.ChutesClient")
-    @patch.dict("os.environ", {"CHUTES_API_KEY": "test-key"})
+    @patch("neurons.miner.gateway.app.OpenRouterClient")
+    @patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"})
     def test_run_id_excluded_from_cache_key(self, mock_client_class, client: TestClient):
-        mock_response = ChutesCompletion(
-            id="chatcmpl-123",
-            object="chat.completion",
-            created=1677652288,
-            model="deepseek-ai/DeepSeek-R1",
-            choices=[
-                {
-                    "index": 0,
-                    "message": {"role": "assistant", "content": "Test response"},
-                    "finish_reason": "stop",
-                }
-            ],
-            usage={"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
-        )
-
         mock_instance = mock_client_class.return_value
-        mock_instance.chat_completion = AsyncMock(return_value=mock_response)
+        mock_instance.chat_completion = AsyncMock(return_value=self._mock_completion())
 
         request_body_1 = {
             "run_id": str(uuid4()),
-            "model": "deepseek-ai/DeepSeek-R1",
+            "model": "anthropic/claude-sonnet-4-6",
             "messages": [{"role": "user", "content": "Hello"}],
             "temperature": 0.7,
         }
         request_body_2 = {**request_body_1, "run_id": str(uuid4())}
 
-        response1 = client.post("/api/gateway/chutes/chat/completions", json=request_body_1)
-        response2 = client.post("/api/gateway/chutes/chat/completions", json=request_body_2)
+        response1 = client.post(_INFERENCE_PATH, json=request_body_1)
+        response2 = client.post(_INFERENCE_PATH, json=request_body_2)
 
         assert response1.status_code == 200
         assert response2.status_code == 200

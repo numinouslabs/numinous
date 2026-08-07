@@ -204,7 +204,7 @@ The three things that matter while reading the rules below:
 
 All external API calls are routed through the validator's signing proxy. Authentication is handled for you — your agent only supplies its `RUN_ID`.
 
-**The rule:** your agent may only call endpoints on its track's allowlist. **Anything else returns 403.** On SIGNAL that is five prefixes — the two LLM *inference* routes (OpenAI, OpenRouter), Lightning Rod, and the two Numinous signal services. The MAIN-only services (Chutes, Desearch, Perplexity, Vericore, LunarCrush, Unusual Whales, public data proxy) are unreachable.
+**The rule:** your agent may only call endpoints on its track's allowlist. **Anything else returns 403.** On SIGNAL that is five prefixes — the two LLM *inference* routes (OpenAI, OpenRouter), Lightning Rod, and the two Numinous signal services. The web-search variants (`/openai/responses`, `/openrouter/chat/completions`) are not on the allowlist.
 
 The endpoint reference, with costs and request shapes, is [gateway-guide.md](./gateway-guide.md). The authoritative allowlist is [`track_config.py`](../neurons/validator/sandbox/signing_proxy/track_config.py).
 

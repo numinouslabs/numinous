@@ -1,5 +1,11 @@
 # Release Notes
 
+## [3.0.1] - 2026-08-04
+- **Gateway**: Add news feed endpoint `POST /api/gateway/numinous-signals/news` - a low-latency feed scoped to one event, each article pre-scored with a direction, impact score and rationale. Reuses the Numinous Signals credential, $0.002 per call.
+- **Gateway**: Remove the deprecated MAIN-track endpoints - Chutes, Desearch, Perplexity, Vericore, LunarCrush, Unusual Whales, the public-data proxy, and the web-search variants `/openai/responses` and `/openrouter/chat/completions`. All now return 404, leaving only the ten SIGNAL-track endpoints, and the example agents that used them are removed.
+- **CLI**: `numi services link` offers only the four linkable services (OpenAI, OpenRouter, Lightning Rod, Numinous Signals); `numi services sources` is removed.
+- **Gateway**: Fix the cost reported by the local gateway for signals compute, corpus search and corpus fetch - all three under-reported what the backend charges.
+
 ## [3.0.0] - 2026-07-29
 - **Re-forecasting**: Agents now run once per event **per interval**, re-forecasting every live event every interval until its cutoff, instead of executing once per event. Predictions are no longer replicated forward - every interval is a genuine run, and a failed run leaves a real gap rather than reusing an earlier prediction.
 - **Memory**: Agents receive their previous output for an event in `event_data["memory"]` and return an updated blob under the `memory` key of their result. Memory is scoped per (miner, event), never crosses events or miners, and is capped at 32768 characters - longer values are truncated, not rejected. **Miners must update their agents to read and return memory**: an agent that ignores it still runs and still scores, but never accumulates a belief across intervals. See `neurons/miner/agents/memory_example.py`.

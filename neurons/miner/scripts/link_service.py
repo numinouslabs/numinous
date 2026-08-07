@@ -24,21 +24,13 @@ class ServiceConfig:
     key_url: str
 
 
-HARDCODED_SERVICES: list[ServiceConfig] = [
-    ServiceConfig(name="chutes", display_name="Chutes", key_url="https://chutes.ai/app"),
+LINKABLE_SERVICES: list[ServiceConfig] = [
     ServiceConfig(
         name="openai", display_name="OpenAI", key_url="https://platform.openai.com/api-keys"
     ),
     ServiceConfig(
         name="openrouter", display_name="OpenRouter", key_url="https://openrouter.ai/settings/keys"
     ),
-    ServiceConfig(
-        name="perplexity",
-        display_name="Perplexity",
-        key_url="https://www.perplexity.ai/settings/api",
-    ),
-    ServiceConfig(name="vericore", display_name="Vericore", key_url="https://vericore.ai"),
-    ServiceConfig(name="lunar_crush", display_name="LunarCrush", key_url="https://lunarcrush.com"),
     ServiceConfig(
         name="lightning_rod", display_name="Lightning Rod", key_url="https://lightningrod.ai"
     ),
@@ -47,43 +39,7 @@ HARDCODED_SERVICES: list[ServiceConfig] = [
         display_name="Numinous Signals",
         key_url="https://eversight.numinouslabs.io/api-keys",
     ),
-    ServiceConfig(
-        name="unusual_whales",
-        display_name="Unusual Whales",
-        key_url="https://unusualwhales.com/pricing?product=api",
-    ),
 ]
-
-
-def fetch_public_data_sources(env: str) -> list[ServiceConfig]:
-    api_url = ENV_URLS[env]
-
-    try:
-        with httpx.Client(timeout=15.0) as client:
-            response = client.get(f"{api_url}/api/v3/miner/public-data/sources")
-
-        if response.status_code != 200:
-            return []
-
-        sources = response.json().get("sources", [])
-        return [
-            ServiceConfig(
-                name=source["name"],
-                display_name=source["name"].replace("_", " ").title(),
-                key_url=source.get("base_url") or source.get("domain", ""),
-            )
-            for source in sources
-            if source.get("requires_auth")
-        ]
-    except Exception:
-        return []
-
-
-def get_all_linkable_services(env: str) -> list[ServiceConfig]:
-    hardcoded_names = {service.name for service in HARDCODED_SERVICES}
-    public_data_services = fetch_public_data_sources(env)
-    new_services = [s for s in public_data_services if s.name not in hardcoded_names]
-    return HARDCODED_SERVICES + new_services
 
 
 def link_api_key_impl(

@@ -2,7 +2,6 @@ import asyncio
 import base64
 import json
 from datetime import datetime, timezone
-from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
@@ -14,14 +13,10 @@ from aioresponses import aioresponses
 from bittensor_wallet import Wallet
 from yarl import URL
 
-from neurons.validator.models.chutes import ChuteModel, ChutesCompletion
-from neurons.validator.models.desearch import AISearchResponse, ModelEnum, ToolEnum
 from neurons.validator.models.numinous_client import (
     BatchUpdateAgentRunsRequest,
-    ChutesInferenceRequest,
     CreateAgentRunRequest,
     CreateAgentRunResponse,
-    DesearchAISearchRequest,
     GetAgentsResponse,
     GetEventsDeletedResponse,
     GetEventsResolvedResponse,
@@ -33,13 +28,11 @@ from neurons.validator.models.numinous_client import (
     MemoryPairKey,
     MemoryPullRequestBody,
     MemoryPullResponse,
-    OpenRouterInferenceRequest,
     PostAgentLogsRequestBody,
     PostAgentRunsRequestBody,
     PostPredictionsRequestBody,
     UpdateAgentRunRequest,
 )
-from neurons.validator.models.openrouter import OpenRouterCompletion
 from neurons.validator.numinous_client.client import NuminousClient, NuminousEnvType
 from neurons.validator.utils.git import commit_short_hash
 from neurons.validator.utils.logger.logger import NuminousLogger
@@ -1121,218 +1114,6 @@ class TestNuminousClient:
             assert result.count == 100
             assert len(result.items) == 1
 
-    async def test_chutes_inference_invalid_params(self, client_test_env: NuminousClient):
-        invalid_body = {"invalid_field": "value"}
-        with pytest.raises(ValueError, match="Invalid parameters"):
-            await client_test_env.chutes_inference(body=invalid_body)
-
-    async def test_chutes_inference(self, client_test_env: NuminousClient):
-        mock_response_data = {
-            "id": "chatcmpl-123",
-            "object": "chat.completion",
-            "created": 1677652288,
-            "model": "deepseek-ai/DeepSeek-R1",
-            "choices": [
-                {
-                    "index": 0,
-                    "message": {"role": "assistant", "content": "This is a test response."},
-                    "finish_reason": "stop",
-                }
-            ],
-            "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
-        }
-
-        request_body = ChutesInferenceRequest.model_validate(
-            {
-                "run_id": "123e4567-e89b-12d3-a456-426614174000",
-                "model": ChuteModel.DEEPSEEK_R1,
-                "messages": [
-                    {"role": "system", "content": "You are a helpful assistant."},
-                    {"role": "user", "content": "Hello!"},
-                ],
-                "temperature": 0.7,
-                "max_tokens": 100,
-            }
-        )
-
-        with aioresponses() as mocked:
-            url_path = "/api/gateway/chutes/chat/completions"
-
-            mocked.post(
-                url_path,
-                status=200,
-                body=json.dumps(mock_response_data).encode("utf-8"),
-            )
-
-            result = await client_test_env.chutes_inference(body=request_body)
-
-            mocked.assert_called_with(
-                url=url_path, method="POST", data=request_body.model_dump_json()
-            )
-
-            assert isinstance(result, ChutesCompletion)
-            assert result.id == "chatcmpl-123"
-            assert result.model == "deepseek-ai/DeepSeek-R1"
-            assert len(result.choices) == 1
-            assert result.choices[0].message.content == "This is a test response."
-
-    async def test_chutes_inference_with_dict(self, client_test_env: NuminousClient):
-        mock_response_data = {
-            "id": "chatcmpl-456",
-            "object": "chat.completion",
-            "created": 1677652288,
-            "model": "Qwen/Qwen3-32B",
-            "choices": [
-                {
-                    "index": 0,
-                    "message": {"role": "assistant", "content": "Response from dict input."},
-                    "finish_reason": "stop",
-                }
-            ],
-        }
-
-        request_body_dict = {
-            "run_id": "223e4567-e89b-12d3-a456-426614174001",
-            "model": ChuteModel.QWEN_3_32B,
-            "messages": [
-                {"role": "user", "content": "Test message"},
-            ],
-        }
-
-        with aioresponses() as mocked:
-            url_path = "/api/gateway/chutes/chat/completions"
-
-            mocked.post(
-                url_path,
-                status=200,
-                body=json.dumps(mock_response_data).encode("utf-8"),
-            )
-
-            result = await client_test_env.chutes_inference(body=request_body_dict)
-
-            assert isinstance(result, ChutesCompletion)
-            assert result.id == "chatcmpl-456"
-
-    async def test_chutes_inference_error_raised(self, client_test_env: NuminousClient):
-        mock_response_data = {"error": "Service unavailable"}
-
-        request_body = ChutesInferenceRequest.model_validate(
-            {
-                "run_id": "323e4567-e89b-12d3-a456-426614174002",
-                "model": ChuteModel.DEEPSEEK_V3_1,
-                "messages": [{"role": "user", "content": "Test"}],
-            }
-        )
-        status_code = 503
-
-        with aioresponses() as mocked:
-            url_path = "/api/gateway/chutes/chat/completions"
-
-            mocked.post(
-                url_path,
-                status=status_code,
-                body=json.dumps(mock_response_data).encode("utf-8"),
-            )
-
-            with pytest.raises(ClientResponseError) as e:
-                await client_test_env.chutes_inference(body=request_body)
-
-            mocked.assert_called_with(
-                url=url_path, method="POST", data=request_body.model_dump_json()
-            )
-            assert e.value.status == status_code
-
-    async def test_desearch_ai_search_invalid_params(self, client_test_env: NuminousClient):
-        invalid_body = {"invalid_field": "value"}
-        with pytest.raises(ValueError, match="Invalid parameters"):
-            await client_test_env.desearch_ai_search(body=invalid_body)
-
-    async def test_desearch_ai_search(self, client_test_env: NuminousClient):
-        mock_response_data = {"id": "search-123", "results": [], "summary": "Test summary"}
-
-        request_body = DesearchAISearchRequest.model_validate(
-            {
-                "run_id": "423e4567-e89b-12d3-a456-426614174003",
-                "prompt": "What is quantum computing?",
-                "model": ModelEnum.NOVA,
-                "tools": [ToolEnum.WEB],
-            }
-        )
-
-        with aioresponses() as mocked:
-            url_path = "/api/gateway/desearch/ai/search"
-
-            mocked.post(
-                url_path,
-                status=200,
-                body=json.dumps(mock_response_data).encode("utf-8"),
-            )
-
-            result = await client_test_env.desearch_ai_search(body=request_body)
-
-            mocked.assert_called_with(
-                url=url_path, method="POST", data=request_body.model_dump_json()
-            )
-
-            assert isinstance(result, AISearchResponse)
-            assert result.model_dump(exclude_none=True) == mock_response_data
-
-    async def test_desearch_ai_search_with_dict(self, client_test_env: NuminousClient):
-        mock_response_data = {"id": "search-456", "results": []}
-
-        request_body_dict = {
-            "run_id": "523e4567-e89b-12d3-a456-426614174004",
-            "prompt": "Latest AI news",
-            "model": ModelEnum.ORBIT,
-            "tools": [ToolEnum.WEB],
-        }
-
-        with aioresponses() as mocked:
-            url_path = "/api/gateway/desearch/ai/search"
-
-            mocked.post(
-                url_path,
-                status=200,
-                body=json.dumps(mock_response_data).encode("utf-8"),
-            )
-
-            result = await client_test_env.desearch_ai_search(body=request_body_dict)
-
-            assert isinstance(result, AISearchResponse)
-            assert result.model_dump(exclude_none=True) == mock_response_data
-
-    async def test_desearch_ai_search_error_raised(self, client_test_env: NuminousClient):
-        mock_response_data = {"error": "Rate limit exceeded"}
-
-        request_body = DesearchAISearchRequest.model_validate(
-            {
-                "run_id": "623e4567-e89b-12d3-a456-426614174005",
-                "prompt": "Test query",
-                "model": ModelEnum.NOVA,
-                "tools": [ToolEnum.WEB],
-            }
-        )
-
-        status_code = 429
-
-        with aioresponses() as mocked:
-            url_path = "/api/gateway/desearch/ai/search"
-
-            mocked.post(
-                url_path,
-                status=status_code,
-                body=json.dumps(mock_response_data).encode("utf-8"),
-            )
-
-            with pytest.raises(ClientResponseError) as e:
-                await client_test_env.desearch_ai_search(body=request_body)
-
-            mocked.assert_called_with(
-                url=url_path, method="POST", data=request_body.model_dump_json()
-            )
-
-            assert e.value.status == status_code
-
     async def test_get_weights_response(self, client_test_env: NuminousClient):
         mock_response_data = {
             "aggregated_at": "2025-01-30T12:00:00Z",
@@ -1408,129 +1189,5 @@ class TestNuminousClient:
                 await client_test_env.get_weights()
 
             mocked.assert_called_with(url_path)
-
-            assert e.value.status == status_code
-
-    async def test_openrouter_chat_completion_invalid_params(self, client_test_env: NuminousClient):
-        invalid_body = {"invalid_field": "value"}
-        with pytest.raises(ValueError, match="Invalid parameters"):
-            await client_test_env.openrouter_chat_completion(body=invalid_body)
-
-    async def test_openrouter_chat_completion(self, client_test_env: NuminousClient):
-        mock_response_data = {
-            "id": "gen-abc123",
-            "object": "chat.completion",
-            "created": 1700000000,
-            "model": "anthropic/claude-sonnet-4-6",
-            "choices": [
-                {
-                    "index": 0,
-                    "message": {"role": "assistant", "content": "This is a test response."},
-                    "finish_reason": "stop",
-                }
-            ],
-            "usage": {
-                "prompt_tokens": 25,
-                "completion_tokens": 10,
-                "total_tokens": 35,
-                "cost": 0.000225,
-            },
-        }
-
-        request_body = OpenRouterInferenceRequest.model_validate(
-            {
-                "run_id": "123e4567-e89b-12d3-a456-426614174000",
-                "model": "anthropic/claude-sonnet-4-6",
-                "messages": [
-                    {"role": "system", "content": "You are a helpful assistant."},
-                    {"role": "user", "content": "Hello!"},
-                ],
-                "temperature": 0.7,
-                "max_tokens": 100,
-            }
-        )
-
-        with aioresponses() as mocked:
-            url_path = "/api/gateway/openrouter/chat/completions"
-
-            mocked.post(
-                url_path,
-                status=200,
-                body=json.dumps(mock_response_data).encode("utf-8"),
-            )
-
-            result = await client_test_env.openrouter_chat_completion(body=request_body)
-
-            assert isinstance(result, OpenRouterCompletion)
-            assert result.id == "gen-abc123"
-            assert result.model == "anthropic/claude-sonnet-4-6"
-            assert len(result.choices) == 1
-            assert result.choices[0].message.content == "This is a test response."
-            assert result.usage is not None
-            assert result.usage.prompt_tokens == 25
-            assert result.usage.completion_tokens == 10
-            assert result.usage.cost == Decimal("0.000225")
-
-    async def test_openrouter_chat_completion_with_dict(self, client_test_env: NuminousClient):
-        mock_response_data = {
-            "id": "gen-def456",
-            "object": "chat.completion",
-            "created": 1700000000,
-            "model": "google/gemini-2.5-flash",
-            "choices": [
-                {
-                    "index": 0,
-                    "message": {"role": "assistant", "content": "Response from dict input."},
-                    "finish_reason": "stop",
-                }
-            ],
-        }
-
-        request_body_dict = {
-            "run_id": "223e4567-e89b-12d3-a456-426614174001",
-            "model": "google/gemini-2.5-flash",
-            "messages": [
-                {"role": "user", "content": "Test message"},
-            ],
-        }
-
-        with aioresponses() as mocked:
-            url_path = "/api/gateway/openrouter/chat/completions"
-
-            mocked.post(
-                url_path,
-                status=200,
-                body=json.dumps(mock_response_data).encode("utf-8"),
-            )
-
-            result = await client_test_env.openrouter_chat_completion(body=request_body_dict)
-
-            assert isinstance(result, OpenRouterCompletion)
-            assert result.id == "gen-def456"
-            assert result.model == "google/gemini-2.5-flash"
-
-    async def test_openrouter_chat_completion_error_raised(self, client_test_env: NuminousClient):
-        mock_response_data = {"error": "Service unavailable"}
-
-        request_body = OpenRouterInferenceRequest.model_validate(
-            {
-                "run_id": "323e4567-e89b-12d3-a456-426614174002",
-                "model": "anthropic/claude-sonnet-4-6",
-                "messages": [{"role": "user", "content": "Test"}],
-            }
-        )
-        status_code = 503
-
-        with aioresponses() as mocked:
-            url_path = "/api/gateway/openrouter/chat/completions"
-
-            mocked.post(
-                url_path,
-                status=status_code,
-                body=json.dumps(mock_response_data).encode("utf-8"),
-            )
-
-            with pytest.raises(ClientResponseError) as e:
-                await client_test_env.openrouter_chat_completion(body=request_body)
 
             assert e.value.status == status_code

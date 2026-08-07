@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from neurons.validator.models.chutes import ChatCompletionChoice, ChatCompletionMessage
+from neurons.validator.models.chat_completion import ChatCompletionChoice, ChatCompletionMessage
 from neurons.validator.models.openrouter import (
     OpenRouterCompletion,
     OpenRouterUsage,

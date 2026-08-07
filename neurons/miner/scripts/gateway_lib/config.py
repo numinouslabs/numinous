@@ -5,9 +5,6 @@ from typing import NamedTuple
 from rich.console import Console
 from rich.prompt import Prompt
 
-from neurons.validator.models.track import TrackEnum
-from neurons.validator.sandbox.signing_proxy.track_config import TRACK_ALLOWED_PREFIXES
-
 console = Console()
 
 GATEWAY_ENV_PATH = Path("neurons/miner/gateway/.env")
@@ -17,7 +14,6 @@ class GatewayApiKey(NamedTuple):
     env_var: str
     display_name: str
     key_url: str
-    gateway_route: str
 
 
 API_KEYS = [
@@ -25,50 +21,23 @@ API_KEYS = [
         "OPENAI_API_KEY",
         "OpenAI",
         "https://platform.openai.com/api-keys",
-        "/api/gateway/openai",
     ),
     GatewayApiKey(
         "OPENROUTER_API_KEY",
         "OpenRouter",
         "https://openrouter.ai",
-        "/api/gateway/openrouter",
     ),
     GatewayApiKey(
         "NUMINOUS_SIGNALS_API_KEY",
         "Numinous Signals",
         "https://eversight.numinouslabs.io/api-keys",
-        "/api/gateway/numinous-signals",
     ),
     GatewayApiKey(
         "LIGHTNING_ROD_API_KEY",
         "Lightning Rod",
         "https://lightningrod.ai",
-        "/api/gateway/lightning-rod",
-    ),
-    GatewayApiKey("CHUTES_API_KEY", "Chutes", "https://chutes.ai", "/api/gateway/chutes"),
-    GatewayApiKey("DESEARCH_API_KEY", "Desearch", "https://desearch.ai", "/api/gateway/desearch"),
-    GatewayApiKey(
-        "PERPLEXITY_API_KEY",
-        "Perplexity",
-        "https://www.perplexity.ai/settings/api",
-        "/api/gateway/perplexity",
-    ),
-    GatewayApiKey("VERICORE_API_KEY", "Vericore", "https://vericore.ai", "/api/gateway/vericore"),
-    GatewayApiKey(
-        "UNUSUAL_WHALES_API_KEY",
-        "Unusual Whales",
-        "https://unusualwhales.com/pricing?product=api",
-        "/api/gateway/unusual-whales",
     ),
 ]
-
-
-def usable_on_signal(api_key: GatewayApiKey) -> bool:
-    allowed_prefixes = TRACK_ALLOWED_PREFIXES[TrackEnum.SIGNAL.value]
-    return any(
-        prefix == api_key.gateway_route or prefix.startswith(f"{api_key.gateway_route}/")
-        for prefix in allowed_prefixes
-    )
 
 
 class ApiKeyStatus(StrEnum):
@@ -117,9 +86,8 @@ def undecided_api_keys() -> list[str]:
 
 def _prompt_for_key(api_key: GatewayApiKey, current_status: ApiKeyStatus) -> str | None:
     hint = "Enter to keep" if current_status is ApiKeyStatus.SET else "Enter to skip"
-    unused_note = "" if usable_on_signal(api_key) else " · not used on SIGNAL"
     value = Prompt.ask(
-        f"[cyan]{api_key.display_name} API Key[/cyan] [dim]({hint}{unused_note})[/dim]",
+        f"[cyan]{api_key.display_name} API Key[/cyan] [dim]({hint})[/dim]",
         default="",
         show_default=False,
     ).strip()
@@ -180,16 +148,12 @@ def setup_api_keys(force_all: bool = False) -> bool:
     console.print("[cyan]API Key Setup[/cyan]")
     console.print()
     console.print("[dim]Skipped keys are remembered — you will not be asked again.[/dim]")
-    console.print(
-        "[dim]Only the services on the SIGNAL allowlist are reachable by a scored agent.[/dim]"
-    )
     console.print()
     console.print("[dim]You can get your API keys from:[/dim]")
     for api_key in keys_to_prompt:
-        note = "" if usable_on_signal(api_key) else " [dim](not used on SIGNAL)[/dim]"
         console.print(
             f"[dim]  - {api_key.display_name}: "
-            f"[link={api_key.key_url}]{api_key.key_url}[/link][/dim]{note}"
+            f"[link={api_key.key_url}]{api_key.key_url}[/link][/dim]"
         )
     console.print()
 

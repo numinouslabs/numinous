@@ -12,11 +12,11 @@ The Gateway API provides miner agents with access to external services during sa
 | `/api/gateway/openrouter/chat/completions/inference` | [OpenRouter](#openrouter-endpoints) — hundreds of models, inference only | $0.10 per run, linked account required |
 | `/api/gateway/lightning-rod/` | [Lightning Rod](#lightning-rod-endpoints) — OpenAI-compatible chat completions | Metered per token, linked account required |
 | `/api/gateway/numinous-indicia/` | [Numinous Indicia](#numinous-indicia-endpoints) — geopolitical/OSINT signals | Free, no linking |
-| `/api/gateway/numinous-signals/` | [Numinous Signals](#numinous-signals-endpoints) — scored news signals, causal drivers, deep research, corpus search | $0.10 per run, linked account required |
+| `/api/gateway/numinous-signals/` | [Numinous Signals](#numinous-signals-endpoints) — scored news signals, causal drivers, deep research, corpus search, low-latency news feed | $0.10 per run, linked account required |
 
-Note that the **inference-only** routes are the allowlisted ones: the web-search variants (`/openai/responses`, `/openrouter/chat/completions`) are not reachable from SIGNAL. Bring your own search via the signals endpoints instead.
+Note that the **inference-only** routes are the ones served: the web-search variants (`/openai/responses`, `/openrouter/chat/completions`) have been removed. Bring your own search via the signals endpoints instead.
 
-The MAIN track has access to everything, including Chutes, Desearch, Perplexity, Vericore, LunarCrush, Unusual Whales and the public data proxy. MAIN is **unscored and earns no emissions**, so those services are no longer documented here — see [`track_config.py`](../neurons/validator/sandbox/signing_proxy/track_config.py) for the authoritative per-track allowlist.
+Every endpoint the gateway serves is documented here. The MAIN track is **unscored and earns no emissions**, and the services that were once MAIN-only have been removed — see [`track_config.py`](../neurons/validator/sandbox/signing_proxy/track_config.py) for the authoritative per-track allowlist.
 
 All requests are cached to optimize performance and reduce costs.
 
@@ -271,7 +271,7 @@ print(result["choices"][0]["message"]["content"])
 
 A complete working agent is available at [`lightning_rod_example.py`](../neurons/miner/agents/lightning_rod_example.py).
 
-> **Note:** Link your Lightning Rod API key via `numi services link lightning_rod` (get one at https://lightningrod.ai). There is no free tier.
+> **Note:** Link your Lightning Rod API key via `numi services link lightning-rod` (get one at https://lightningrod.ai). There is no free tier.
 
 ---
 
@@ -883,6 +883,133 @@ print(data["content"])
 ```
 
 **Note:** Corpus fetch requires linking your Eversight API key (same as Numinous Signals). The endpoint is free ($0.00 per call) but authentication is required. A `404` is returned if the `source_id` does not exist in the corpus.
+
+---
+
+### POST /api/gateway/numinous-signals/news
+
+The latest news on your event, already mapped to it and scored for impact.
+
+Markets move on news. The hard part is knowing which headline actually matters, which means watching dozens of sources at once and judging each one against what would settle the event. That happens continuously, before you ask.
+
+This endpoint hands you the result: the stories moving your event right now, each with a direction, an impact score, and a line on why it matters. Ask it what changed and you get an answer, not a reading list.
+
+It is built for speed — the mapping and scoring are done ahead of time, so responses land in milliseconds. For a re-forecasting agent that is the point: `corpus/search` tells you what the informational landscape *was* as of the last corpus build, while the news feed tells you what changed since. Use it to decide *when* your belief should move, then use corpus search and deep research to decide *how far*.
+
+The feed only covers the last 48 hours. `published_within_hours` narrows within that window; it cannot widen it.
+
+**URL:** `{SANDBOX_PROXY_URL}/api/gateway/numinous-signals/news`
+
+**Request Body:**
+```json
+{
+  "run_id": "550e8400-e29b-41d4-a716-446655440000",
+  "event_id": "0b7c2f5e-2b3a-4d1f-9c7e-2f5a1b3c4d5e",
+  "min_impact_score": 0.55,
+  "order": "recent",
+  "limit": 20
+}
+```
+
+**Parameters:**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `run_id` | string (UUID) | Yes | - | Execution tracking ID from environment |
+| `event_id` | string (UUID) | Yes | - | The event to pull news for — use the `event_id` from your `event_data` |
+| `min_impact_score` | float | No | `0.55` | Only return articles scored at or above this impact on the event (0.0–1.0) |
+| `order` | string | No | `recent` | `recent`, `impact`, or `published` |
+| `published_within_hours` | float | No | `null` | Only articles published within this many hours |
+| `language` | string | No | `null` | Filter by language, e.g. `en` |
+| `limit` | int | No | `20` | Articles per page (1–30) |
+| `offset` | int | No | `0` | Articles to skip |
+
+`event_id` is the only way to scope the feed, and it is required. Your agent already has it in `event_data["event_id"]`.
+
+**Response:**
+```json
+{
+  "event_id": "0b7c2f5e-2b3a-4d1f-9c7e-2f5a1b3c4d5e",
+  "count": 1,
+  "articles": [
+    {
+      "id": "news-1",
+      "headline": "Carrier strike group repositions toward the strait",
+      "source_url": "https://example.com/article",
+      "source_timestamp": "2026-08-04T10:00:00Z",
+      "emitted_at": "2026-08-04T10:05:00Z",
+      "direction": "supports_yes",
+      "impact_score": 0.82,
+      "rationale": "Direct movement toward the resolution threshold"
+    }
+  ],
+  "cost": 0.002
+}
+```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `event_id` | string (UUID) | The requested event ID |
+| `count` | int | Total articles matching the filters, ignoring `limit`/`offset` — use it to page |
+| `articles` | array | The requested page (see below) |
+| `cost` | float | Cost for this request ($0.002 per call) |
+
+`count` is the total, not the page size, so there is more to pull whenever `offset + len(articles) < count`.
+
+**Article Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Stable ID for the news item; the same story keeps this ID over time |
+| `headline` | string | Source headline |
+| `source_url` | string \| null | Link to the original |
+| `source_timestamp` | string | When the source published it |
+| `emitted_at` | string | When it entered the feed |
+| `direction` | string | `supports_yes`, `supports_no`, or `neutral` |
+| `impact_score` | float | How strongly it moves your event (0.0–1.0) |
+| `rationale` | string | Why it was scored that way |
+
+Every article is already scoped to your event — there is no list of impacted markets to sift through, and no market identifiers are returned. Each article carries exactly one direction, score and rationale, and they describe *your* event.
+
+**Example (using httpx):**
+```python
+import os
+import httpx
+
+PROXY_URL = os.getenv("SANDBOX_PROXY_URL")
+RUN_ID = os.getenv("RUN_ID")
+
+SIGNALS_URL = f"{PROXY_URL}/api/gateway/numinous-signals"
+
+
+def agent_main(event_data):
+    response = httpx.post(
+        f"{SIGNALS_URL}/news",
+        json={
+            "run_id": RUN_ID,
+            "event_id": event_data["event_id"],
+            "min_impact_score": 0.6,
+            "order": "impact",
+            "published_within_hours": 24,
+            "limit": 10,
+        },
+        timeout=30.0,
+    )
+    articles = response.json()["articles"]
+
+    for article in articles:
+        print(article["direction"], article["impact_score"], article["headline"])
+
+    return {"event_id": event_data["event_id"], "prediction": 0.5}
+```
+
+**Prerequisite:** you must have linked a Numinous Signals credential — `numi services link numinous-signals`. This is the same provider as `corpus/search`, `corpus/fetch`, `deep-research/report` and `causal-drivers/drivers`; one key covers all of them, and there is no new service to link. Without it the call returns **403**.
+
+**Authentication and billing:** like every gateway endpoint, the request is signed by the validator through the sandbox proxy — your agent never handles an API key. The cost is charged to your run's gateway budget alongside your other gateway calls, not to an Eversight credit balance.
+
+**Errors:** a `404` is returned if the event does not exist or has no tracked market.
 
 ---
 

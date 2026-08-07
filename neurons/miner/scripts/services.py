@@ -11,8 +11,7 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
 
-from neurons.miner.scripts.link_desearch import link_desearch_impl
-from neurons.miner.scripts.link_service import get_all_linkable_services, link_api_key_impl
+from neurons.miner.scripts.link_service import LINKABLE_SERVICES, link_api_key_impl
 from neurons.miner.scripts.numinous_config import ENV_URLS
 from neurons.miner.scripts.track_utils import prompt_credential_track
 from neurons.miner.scripts.wallet_utils import load_keypair, prompt_wallet_selection
@@ -27,7 +26,6 @@ def services():
 
     \b
     Available Commands:
-      numi services sources           # List all available public data sources
       numi services list              # List your linked services
       numi services link              # Link a service (interactive)
       numi services link <name>       # Link a specific service directly
@@ -35,13 +33,11 @@ def services():
 
     \b
     Examples:
-      numi services sources
       numi services list
       numi services link
-      numi services link desearch
-      numi services link chutes
-      numi services link chutes -t SIGNAL
-      numi services unlink chutes
+      numi services link openai
+      numi services link openrouter -t SIGNAL
+      numi services unlink openai
     """
     pass
 
@@ -142,87 +138,6 @@ def list(
     console.print()
 
 
-@services.command(name="sources")
-@click.option(
-    "--env",
-    "-e",
-    type=click.Choice(["test", "prod"], case_sensitive=False),
-    help="Network environment",
-)
-def sources(env: Optional[str] = None) -> None:
-    """List all available public data sources
-
-    \b
-    Examples:
-      numi services sources
-      numi services sources -e prod
-    """
-    if not env:
-        env_choice = Prompt.ask(
-            "[bold cyan]Select environment[/bold cyan]", choices=["test", "prod"], default="test"
-        )
-        env = env_choice.lower()
-
-    console.print()
-    with console.status("[cyan]Fetching public data sources...[/cyan]"):
-        all_sources = _fetch_public_data_sources(env)
-
-    if not all_sources:
-        console.print(
-            Panel.fit(
-                "[yellow]No public data sources available[/yellow]\n\n"
-                "[dim]Sources are added over time. Check back later.[/dim]",
-                border_style="yellow",
-            )
-        )
-        console.print()
-        return
-
-    free_sources = [s for s in all_sources if not s.get("requires_auth")]
-    auth_sources = [s for s in all_sources if s.get("requires_auth")]
-
-    console.print()
-    if free_sources:
-        console.print("[bold cyan]Free Sources[/bold cyan] [dim](no API key needed)[/dim]")
-        table = Table(show_header=True, header_style="bold cyan", box=None, padding=(0, 2))
-        table.add_column("Name", style="green")
-        table.add_column("Domain", style="dim")
-        table.add_column("Category", style="magenta")
-        for source in free_sources:
-            table.add_row(source["name"], source["domain"], source["category"])
-        console.print(table)
-        console.print()
-
-    if auth_sources:
-        console.print(
-            "[bold cyan]Auth-Required Sources[/bold cyan] [dim](link via: numi services link)[/dim]"
-        )
-        table = Table(show_header=True, header_style="bold cyan", box=None, padding=(0, 2))
-        table.add_column("Name", style="green")
-        table.add_column("Domain", style="dim")
-        table.add_column("Category", style="magenta")
-        for source in auth_sources:
-            table.add_row(source["name"], source["domain"], source["category"])
-        console.print(table)
-        console.print()
-
-
-def _fetch_public_data_sources(env: str) -> Optional[typing.List[dict]]:
-    api_url = ENV_URLS[env]
-    try:
-        with httpx.Client(timeout=15.0) as client:
-            response = client.get(f"{api_url}/api/v3/miner/public-data/sources")
-        if response.status_code == 200:
-            return response.json().get("sources", [])
-        console.print(
-            f"[red]✗ HTTP {response.status_code}:[/red] {api_url}/api/v3/miner/public-data/sources"
-        )
-        return None
-    except Exception as exc:
-        console.print(f"[red]✗ Failed to fetch sources:[/red] {exc}")
-        return None
-
-
 @services.command()
 @click.argument("service_name", required=False)
 @click.option("--wallet", "-w", type=str, help="Wallet name")
@@ -256,10 +171,9 @@ def link(
 
     \b
     Examples:
-      numi services link                      # Interactive mode
-      numi services link desearch             # Link Desearch directly
-      numi services link chutes               # Link Chutes directly
-      numi services link chutes -t SIGNAL     # Link for SIGNAL track
+      numi services link                       # Interactive mode
+      numi services link openai                # Link OpenAI directly
+      numi services link openrouter -t SIGNAL  # Link for SIGNAL track
     """
     if not env:
         env_choice = Prompt.ask(
@@ -267,19 +181,18 @@ def link(
         )
         env = env_choice.lower()
 
-    all_services = get_all_linkable_services(env)
-    service_names_by_cli_name = {"desearch": None}
-    for service in all_services:
-        cli_name = service.name.replace("_", "-")
-        service_names_by_cli_name[cli_name] = service
+    service_names_by_cli_name = {
+        service.name.replace("_", "-"): service for service in LINKABLE_SERVICES
+    }
 
     if not service_name:
         cli_names = [*service_names_by_cli_name.keys()]
         console.print()
         for index, name in enumerate(cli_names, 1):
             service_config = service_names_by_cli_name[name]
-            display = service_config.display_name if service_config else "Desearch"
-            console.print(f"  [cyan]{index:>2}.[/cyan] {display} [dim]({name})[/dim]")
+            console.print(
+                f"  [cyan]{index:>2}.[/cyan] {service_config.display_name} [dim]({name})[/dim]"
+            )
         console.print()
 
         selection = Prompt.ask(
@@ -303,14 +216,13 @@ def link(
     else:
         track = track.upper()
 
-    if service_name == "desearch":
-        link_desearch_impl(wallet, hotkey, env, wallet_path, track)
-    elif service_name in service_names_by_cli_name:
-        service_config = service_names_by_cli_name[service_name]
-        link_api_key_impl(service_config, wallet, hotkey, env, wallet_path, track)
-    else:
+    if service_name not in service_names_by_cli_name:
         console.print(f"[red]✗ Unknown service:[/red] {service_name}")
         raise click.Abort()
+
+    link_api_key_impl(
+        service_names_by_cli_name[service_name], wallet, hotkey, env, wallet_path, track
+    )
 
 
 @services.command()
@@ -346,8 +258,8 @@ def unlink(
 
     \b
     Examples:
-      numi services unlink desearch
-      numi services unlink chutes -t SIGNAL
+      numi services unlink openai
+      numi services unlink openrouter -t SIGNAL
     """
     console.print()
     console.print(
