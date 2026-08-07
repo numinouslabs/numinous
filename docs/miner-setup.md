@@ -113,7 +113,7 @@ See [wallet-setup.md](./wallet-setup.md) for complete wallet creation and regist
 
 **Quick summary:**
 1. Create coldkey and hotkey with `btcli`
-2. Get testnet TAO from https://app.minersunion.ai/testnet-faucet
+2. Get testnet TAO from https://taoswap.org/testnet-faucet
 3. Register on subnet (netuid 155 testnet, 6 mainnet)
 4. Verify registration with `btcli wallet overview`
 
