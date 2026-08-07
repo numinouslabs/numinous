@@ -28,7 +28,7 @@ For system architecture details, see [architecture.md](./architecture.md).
 - **Docker:** Docker Engine 20.10+ and Docker Compose V2
 
 **Minimum Stake Requirements:**
-- **Testnet (netuid 155):** Minimal TAO (available from faucet)
+- **Testnet (netuid 155):** Minimal TAO (see [wallet-setup.md](./wallet-setup.md#for-testnet) for the faucet)
 - **Mainnet (netuid 6):** 10,000 TAO minimum stake
 
 ---

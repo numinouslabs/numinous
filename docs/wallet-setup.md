@@ -40,7 +40,9 @@ btcli w regen_hotkey --wallet-name miner --wallet.hotkey default \
 
 ### For Testnet
 
-Request faucet TAO at: https://app.minersunion.ai/testnet-faucet
+Request faucet TAO at: https://taoswap.org/testnet-faucet — paste your **coldkey** ss58 address, solve the captcha, and it sends up to 5 test TAO immediately. There is a fair-use cap per IP per week.
+
+If that is unavailable, ask in the **Requests for Testnet Tao** channel of the [Bittensor Discord](https://discord.gg/qasY3HA9F9) — a moderator sends it manually, so expect hours rather than seconds.
 
 ### For Mainnet
 
