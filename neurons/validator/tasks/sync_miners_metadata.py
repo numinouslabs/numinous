@@ -1,10 +1,19 @@
 from datetime import datetime, timezone
 
-from bittensor import AsyncSubtensor
+from bittensor import Metagraph, Subtensor
 
 from neurons.validator.db.operations import DatabaseOperations
 from neurons.validator.scheduler.task import AbstractTask
 from neurons.validator.utils.logger.logger import NuminousLogger
+
+UNSERVED_AXON_IP = "0.0.0.0"
+
+
+def axon_ip(served_axon: str | None) -> str:
+    if not served_axon:
+        return UNSERVED_AXON_IP
+
+    return served_axon.rsplit(":", 1)[0].strip("[]")
 
 
 class SyncMinersMetadata(AbstractTask):
@@ -12,7 +21,7 @@ class SyncMinersMetadata(AbstractTask):
 
     interval: float
     db_operations: DatabaseOperations
-    subtensor: AsyncSubtensor
+    network: str
     netuid: int
     logger: NuminousLogger
 
@@ -21,7 +30,7 @@ class SyncMinersMetadata(AbstractTask):
         interval_seconds: float,
         db_operations: DatabaseOperations,
         netuid: int,
-        subtensor: AsyncSubtensor,
+        network: str,
         logger: NuminousLogger,
     ):
         if not isinstance(interval_seconds, float) or interval_seconds <= 0:
@@ -33,8 +42,8 @@ class SyncMinersMetadata(AbstractTask):
         if not isinstance(netuid, int) or netuid < 0:
             raise ValueError("netuid must be a non-negative integer.")
 
-        if not isinstance(subtensor, AsyncSubtensor):
-            raise TypeError("subtensor must be an instance of AsyncSubtensor.")
+        if not isinstance(network, str) or not network:
+            raise ValueError("network must be a non-empty string.")
 
         if not isinstance(logger, NuminousLogger):
             raise TypeError("logger must be an instance of NuminousLogger.")
@@ -42,7 +51,7 @@ class SyncMinersMetadata(AbstractTask):
         self.interval = interval_seconds
         self.db_operations = db_operations
         self.netuid = netuid
-        self.subtensor = subtensor
+        self.network = network
         self.logger = logger
 
     @property
@@ -54,10 +63,10 @@ class SyncMinersMetadata(AbstractTask):
         return self.interval
 
     async def run(self) -> None:
-        async with self.subtensor as subtensor:
-            metagraph = await subtensor.metagraph(netuid=self.netuid, lite=True)
+        async with Subtensor(self.network) as chain_client:
+            metagraph: Metagraph = await chain_client.subnets.metagraph(self.netuid)
 
-        block = metagraph.block.item()
+        block = metagraph.block
         miners_count = await self.db_operations.get_miners_count()
 
         registered_date = (
@@ -67,27 +76,17 @@ class SyncMinersMetadata(AbstractTask):
         )
 
         miners = []
-        for uid in metagraph.uids:
-            int_uid = int(uid)
-            axon = metagraph.axons[int_uid]
-
-            if axon is None:
-                continue
-
-            trust_value = metagraph.validator_trust[int_uid]
-            is_validating = bool(float(trust_value) > 0.0)
-            validator_permit = bool(int(metagraph.validator_permit[int_uid]) > 0)
+        for neuron in metagraph.neurons:
+            node_ip = axon_ip(neuron.axon)
 
             miners.append(
                 (
-                    int_uid,
-                    axon.hotkey,
-                    axon.ip,
+                    neuron.uid,
+                    neuron.hotkey,
+                    node_ip,
                     registered_date,
                     block,
-                    is_validating,
-                    validator_permit,
-                    axon.ip,
+                    node_ip,
                     block,
                 )
             )

@@ -12,8 +12,6 @@ class MinersModel(BaseModel):
     last_updated: Optional[datetime] = None
     blocktime: Optional[int] = None
     blocklisted: bool = False
-    is_validating: bool
-    validator_permit: bool
     model_config = {"arbitrary_types_allowed": True}
 
     @property

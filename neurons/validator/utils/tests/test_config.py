@@ -1,124 +1,138 @@
 import logging
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-from bittensor.core.config import Config
 
-from neurons.validator.utils.config import VALID_NETWORK_CONFIGS, get_config
+from neurons.validator.utils.config import VALID_NETWORK_CONFIGS, ValidatorSettings, get_config
 
 DEFAULT_DB_DIRECTORY = str(Path.cwd())
 
 
+def run_get_config(argv: list[str], env: dict[str, str] | None = None) -> ValidatorSettings:
+    with patch.dict("os.environ", env or {}, clear=False):
+        with patch("sys.argv", ["validator.py"] + argv):
+            return get_config()
+
+
 class TestConfig:
-    @pytest.fixture
-    def mock_subtensor(self):
-        with patch("neurons.validator.utils.config.AsyncSubtensor") as mock:
-            # Mock the add_args method
-            mock.add_args = MagicMock()
-            yield mock
+    def test_prod_compose_command_line(self):
+        settings = run_get_config(
+            (
+                "--netuid 6 --subtensor.network finney"
+                " --wallet.name wallet_name --wallet.hotkey wallet_hotkey"
+                " --db.directory /root/infinite_games/database --numinous.env prod"
+                " --sandbox.max_concurrent 50 --sandbox.timeout_seconds 240 --logging.debug"
+            ).split()
+        )
 
-    @pytest.fixture
-    def mock_logging_machine(self):
-        with patch("neurons.validator.utils.config.LoggingMachine") as mock:
-            # Mock the add_args method
-            mock.add_args = MagicMock()
-            yield mock
+        assert settings.netuid == 6
+        assert settings.subtensor_network == "finney"
+        assert settings.subtensor_connection == "finney"
+        assert settings.wallet_name == "wallet_name"
+        assert settings.wallet_hotkey == "wallet_hotkey"
+        assert settings.wallet_path == "~/.bittensor/wallets/"
+        assert settings.numinous_env == "prod"
+        assert settings.db_path == "/root/infinite_games/database/validator.db"
+        assert settings.logging_level == logging.DEBUG
+        assert settings.gateway_url == "https://numinous.earth"
+        assert settings.validator_sync_hour == 1
+        assert settings.sandbox_max_concurrent == 50
+        assert settings.sandbox_timeout_seconds == 240
 
-    @pytest.fixture
-    def mock_wallet(self):
-        with patch("neurons.validator.utils.config.Wallet") as mock:
-            # Mock the add_args method
-            mock.add_args = MagicMock()
-            yield mock
+    def test_defaults(self):
+        settings = run_get_config(["--netuid", "155", "--subtensor.network", "test"])
 
-    @pytest.fixture
-    def mock_config(self):
-        with patch("neurons.validator.utils.config.Config") as mock:
-            yield mock
+        assert settings.wallet_name == "default"
+        assert settings.wallet_hotkey == "default"
+        assert settings.wallet_path == "~/.bittensor/wallets/"
+        assert settings.subtensor_chain_endpoint is None
+        assert settings.db_path == str(Path(DEFAULT_DB_DIRECTORY) / "validator_test.db")
+        assert settings.logging_level == logging.WARNING
+        assert settings.validator_sync_hour == 1
+        assert settings.sandbox_max_concurrent == 50
+        assert settings.sandbox_timeout_seconds == 240
 
-    def create_mock_args(
-        self,
-        netuid=None,
-        network=None,
-        numinous_env=None,
-        db_directory=None,
-        logging_trace=None,
-        logging_debug=None,
-        logging_info=None,
-        validator_sync_hour=1,
-    ):
-        """Helper method to create a mock args object with the required attributes"""
-        mock_args = MagicMock()
+    def test_environment_variable_defaults(self):
+        settings = run_get_config(
+            ["--netuid", "155", "--subtensor.network", "test"],
+            env={
+                "BT_WALLET_NAME": "wallet_from_environment",
+                "BT_WALLET_HOTKEY": "hotkey_from_environment",
+                "BT_WALLET_PATH": "/wallets/from/environment",
+                "BT_LOGGING_DEBUG": "1",
+            },
+        )
 
-        mock_args.__getattribute__ = MagicMock()
-        mock_args.__getattribute__.side_effect = lambda x: {
-            "netuid": netuid,
-            "subtensor.network": network,
-            "numinous.env": numinous_env,
-            "db.directory": db_directory,
-            "logging.trace": logging_trace,
-            "logging.debug": logging_debug,
-            "logging.info": logging_info,
-            "validator.sync_hour": validator_sync_hour,
-        }.get(x)
+        assert settings.wallet_name == "wallet_from_environment"
+        assert settings.wallet_hotkey == "hotkey_from_environment"
+        assert settings.wallet_path == "/wallets/from/environment"
+        assert settings.logging_level == logging.DEBUG
 
-        return mock_args
+    def test_explicit_flag_overrides_environment_variable(self):
+        settings = run_get_config(
+            ["--netuid", "155", "--subtensor.network", "test", "--wallet.name", "from_flag"],
+            env={"BT_WALLET_NAME": "from_environment"},
+        )
 
-    def test_arg_additions(self, mock_subtensor, mock_logging_machine, mock_wallet):
-        """Test that all component add_args methods are called"""
-        with patch("argparse.ArgumentParser.parse_args") as mock_parse_args:
-            mock_parse_args.return_value = self.create_mock_args(netuid=6, network="finney")
+        assert settings.wallet_name == "from_flag"
 
-            config, env, db_path, logger_level, gateway_url, validator_sync_hour = get_config()
+    def test_chain_endpoint_overrides_network_for_connection(self):
+        settings = run_get_config(
+            [
+                "--netuid",
+                "155",
+                "--subtensor.network",
+                "test",
+                "--subtensor.chain_endpoint",
+                "ws://127.0.0.1:9944",
+            ]
+        )
 
-            mock_subtensor.add_args.assert_called_once()
-            mock_logging_machine.add_args.assert_called_once()
-            mock_wallet.add_args.assert_called_once()
+        assert settings.subtensor_network == "test"
+        assert settings.subtensor_connection == "ws://127.0.0.1:9944"
 
-            assert isinstance(config, Config)
-            assert env == "prod"
-            assert db_path == str(Path(DEFAULT_DB_DIRECTORY) / "validator.db")
-            assert logger_level == logging.WARNING
-            assert validator_sync_hour == 1
+    def test_test_env_gateway_url_defaults_to_local_backend(self):
+        settings = run_get_config(["--netuid", "155", "--subtensor.network", "test"])
+
+        assert settings.gateway_url in (
+            "http://172.17.0.1:8000",
+            "http://host.docker.internal:8000",
+        )
+
+    def test_gateway_url_argument_wins(self):
+        settings = run_get_config(
+            [
+                "--netuid",
+                "155",
+                "--subtensor.network",
+                "test",
+                "--backend.gateway_url",
+                "https://stg.numinous.earth",
+            ]
+        )
+
+        assert settings.gateway_url == "https://stg.numinous.earth"
 
     def test_required_args_missing(self):
-        """Test behavior when required arguments are missing"""
-        with patch("argparse.ArgumentParser.parse_args") as mock_parse_args:
-            mock_parse_args.return_value = self.create_mock_args(
-                netuid=None, network=None, numinous_env=None, db_directory=None
-            )
-
-            with pytest.raises(ValueError):
-                get_config()
+        with pytest.raises(ValueError):
+            run_get_config([])
 
     def test_db_directory_validation(self):
-        valid_dir = "/parent/test_db_dir"
+        settings = run_get_config(
+            ["--netuid", "6", "--subtensor.network", "finney", "--db.directory", "/parent/db_dir"]
+        )
 
-        with patch("argparse.ArgumentParser.parse_args") as mock_parse_args:
-            mock_parse_args.return_value = self.create_mock_args(
-                netuid=6, network="finney", numinous_env=None, db_directory=valid_dir
+        assert settings.numinous_env == "prod"
+        assert settings.db_path == str(Path("/parent/db_dir") / "validator.db")
+
+        with pytest.raises(ValueError, match="Invalid db.directory './' must be an absolute path."):
+            run_get_config(
+                ["--netuid", "6", "--subtensor.network", "finney", "--db.directory", "./"]
             )
-            _, env, db_path, _, _, _ = get_config()
-
-            assert env == "prod"
-            assert db_path == str(Path(valid_dir) / "validator.db")
-
-        invalid_dir = "./"
-
-        with patch("argparse.ArgumentParser.parse_args") as mock_parse_args:
-            mock_parse_args.return_value = self.create_mock_args(
-                netuid=6, network="finney", numinous_env=None, db_directory=invalid_dir
-            )
-            with pytest.raises(
-                ValueError, match=f"Invalid db.directory '{invalid_dir}' must be an absolute path."
-            ):
-                get_config()
 
     @pytest.mark.parametrize("test_config", VALID_NETWORK_CONFIGS)
-    def test_valid_network_configs_constant(self, test_config: dict[str, any]):
-        """Test that all configurations in VALID_NETWORK_CONFIGS are properly configured"""
-
+    def test_valid_network_configs_constant(self, test_config: dict):
         assert isinstance(test_config, dict)
         assert "subtensor.network" in test_config
         assert "netuid" in test_config
@@ -128,101 +142,95 @@ class TestConfig:
         assert test_config["numinous.env"] in ["prod", "test", None]
 
     @pytest.mark.parametrize(
-        "logging_trace,logging_debug,logging_info,expected_logger_level",
+        "logging_flags,expected_logger_level",
         [
-            (True, True, True, logging.DEBUG),
-            (True, None, None, logging.DEBUG),
-            (None, True, None, logging.DEBUG),
-            (None, None, True, logging.INFO),
-            (None, None, None, logging.WARNING),
+            (["--logging.trace", "--logging.debug", "--logging.info"], logging.DEBUG),
+            (["--logging.trace"], logging.DEBUG),
+            (["--logging.debug"], logging.DEBUG),
+            (["--logging.info"], logging.INFO),
+            ([], logging.WARNING),
         ],
     )
-    def test_logger_args(self, logging_trace, logging_debug, logging_info, expected_logger_level):
-        with patch("argparse.ArgumentParser.parse_args") as mock_parse_args:
-            mock_parse_args.return_value = self.create_mock_args(
-                netuid=6,
-                network="finney",
-                logging_trace=logging_trace,
-                logging_debug=logging_debug,
-                logging_info=logging_info,
-            )
+    def test_logger_args(self, logging_flags: list[str], expected_logger_level: int):
+        settings = run_get_config(
+            ["--netuid", "6", "--subtensor.network", "finney"] + logging_flags
+        )
 
-            _, _, _, logger_level, _, _ = get_config()
-
-            assert logger_level == expected_logger_level
+        assert settings.logging_level == expected_logger_level
 
     @pytest.mark.parametrize(
-        "test_args,expected_valid,expected_env,expected_db_path",
+        "test_args,expected_env,expected_db_path",
         [
-            ((6, "finney", None, "/p1/p2"), True, "prod", "/p1/p2/validator.db"),
-            ((155, "test", None, "/p1/"), True, "test", "/p1/validator_test.db"),
-            (
-                (6, "local", "prod", ""),
-                True,
-                "prod",
-                str(Path(DEFAULT_DB_DIRECTORY) / "validator.db"),
-            ),
-            ((155, "local", "test", "/"), True, "test", "/validator_test.db"),
-            (
-                (6, None, "prod", None),
-                True,
-                "prod",
-                str(Path(DEFAULT_DB_DIRECTORY) / "validator.db"),
-            ),
+            ((6, "finney", None, "/p1/p2"), "prod", "/p1/p2/validator.db"),
+            ((155, "test", None, "/p1/"), "test", "/p1/validator_test.db"),
+            ((6, "local", "prod", None), "prod", str(Path(DEFAULT_DB_DIRECTORY) / "validator.db")),
+            ((155, "local", "test", "/"), "test", "/validator_test.db"),
+            ((6, None, "prod", None), "prod", str(Path(DEFAULT_DB_DIRECTORY) / "validator.db")),
             (
                 (155, None, "test", None),
-                True,
                 "test",
                 str(Path(DEFAULT_DB_DIRECTORY) / "validator_test.db"),
             ),
             (
                 (6, "ws://fake_ip:fake_port", "prod", None),
-                True,
                 "prod",
                 str(Path(DEFAULT_DB_DIRECTORY) / "validator.db"),
             ),
             (
                 (155, "ws://fake_ip:fake_port", "test", None),
-                True,
                 "test",
                 str(Path(DEFAULT_DB_DIRECTORY) / "validator_test.db"),
             ),
-            ((7, "finney", None, None), False, None, None),
-            ((6, "invalid", None, None), False, None, None),
-            ((6, "local", None, None), False, None, None),
-            ((155, "local", "invalid", None), False, None, None),
-            ((155, None, "prod", None), False, None, None),
-            ((6, None, "test", None), False, None, None),
-            ((6, "ws://fake_ip:fake_port", "test", None), False, None, None),
-            ((155, "ws://fake_ip:fake_port", "prod", None), False, None, None),
         ],
     )
-    def test_configurations(
-        self,
-        test_args: tuple,
-        expected_valid: bool,
-        expected_env: str | None,
-        expected_db_path: str | None,
-        mock_config,
-    ):
-        """Test various network configurations for validity"""
+    def test_valid_configurations(self, test_args: tuple, expected_env: str, expected_db_path: str):
         netuid, network, numinous_env, db_directory = test_args
-        with patch("argparse.ArgumentParser.parse_args") as mock_parse_args:
-            mock_parse_args.return_value = self.create_mock_args(
-                netuid=netuid, network=network, numinous_env=numinous_env, db_directory=db_directory
-            )
 
-            if expected_valid:
-                _, env, db_path, _, _, _ = get_config()
+        argv = ["--netuid", str(netuid)]
+        if network is not None:
+            argv += ["--subtensor.network", network]
+        if numinous_env is not None:
+            argv += ["--numinous.env", numinous_env]
+        if db_directory is not None:
+            argv += ["--db.directory", db_directory]
 
-                mock_config.assert_called_once()
+        settings = run_get_config(argv)
 
-                # Assert env
-                assert env == expected_env
+        assert settings.numinous_env == expected_env
+        assert settings.db_path == expected_db_path
 
-                # Assert db_path
-                assert db_path == expected_db_path
-            else:
-                with pytest.raises(ValueError) as exc_info:
-                    get_config()
-                assert "Invalid netuid" in str(exc_info.value)
+    @pytest.mark.parametrize(
+        "test_args",
+        [
+            (6, "invalid", None),
+            (6, "local", None),
+            (155, None, "prod"),
+            (6, None, "test"),
+            (6, "ws://fake_ip:fake_port", "test"),
+            (155, "ws://fake_ip:fake_port", "prod"),
+        ],
+    )
+    def test_invalid_configurations(self, test_args: tuple):
+        netuid, network, numinous_env = test_args
+
+        argv = ["--netuid", str(netuid)]
+        if network is not None:
+            argv += ["--subtensor.network", network]
+        if numinous_env is not None:
+            argv += ["--numinous.env", numinous_env]
+
+        with pytest.raises(ValueError) as exc_info:
+            run_get_config(argv)
+
+        assert "Invalid netuid" in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["--netuid", "7", "--subtensor.network", "finney"],
+            ["--netuid", "155", "--subtensor.network", "local", "--numinous.env", "invalid"],
+        ],
+    )
+    def test_rejected_by_parser(self, argv: list[str]):
+        with pytest.raises(SystemExit):
+            run_get_config(argv)

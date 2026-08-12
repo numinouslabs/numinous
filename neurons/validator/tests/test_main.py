@@ -4,6 +4,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 import pytest
 
 from neurons.validator.main import main
+from neurons.validator.utils.config import ValidatorSettings
 
 
 @patch("neurons.validator.main.RunAgents", spec=True)
@@ -36,13 +37,10 @@ class TestValidatorMain:
             patch("neurons.validator.main.assert_requirements") as mock_assert_requirements,
             patch("neurons.validator.main.override_loggers_level") as mock_override_loggers_level,
             patch("neurons.validator.main.set_bittensor_logger") as mock_set_bittensor_logger,
-            patch(
-                "neurons.validator.main.set_async_substrate_interface_logger"
-            ) as mock_set_async_substrate_interface_logger,
             patch("neurons.validator.main.get_config", spec=True) as get_config,
             patch("neurons.validator.main.Wallet", spec=True) as MockWallet,
             patch("neurons.validator.main.SandboxManager", spec=True),
-            patch("neurons.validator.main.AsyncSubtensor", spec=True) as MockAsyncSubtensor,
+            patch("neurons.validator.main.Subtensor", spec=True) as MockAsyncSubtensor,
             patch("neurons.validator.main.NuminousClient", spec=True) as MockNuminousClient,
             patch("neurons.validator.main.DatabaseClient", spec=True) as MockDatabaseClient,
             patch("neurons.validator.main.TasksScheduler") as MockTasksScheduler,
@@ -56,13 +54,20 @@ class TestValidatorMain:
             netuid = 1234
             network = "testnet"
 
-            get_config.return_value = (
-                {"netuid": netuid, "subtensor": {"network": network}},
-                config_env,
-                db_path,
-                logger_level,
-                gateway_url,
-                validator_sync_hour,
+            get_config.return_value = ValidatorSettings(
+                netuid=netuid,
+                subtensor_network=network,
+                subtensor_chain_endpoint=None,
+                wallet_name="wallet_name",
+                wallet_hotkey="wallet_hotkey",
+                wallet_path="~/.bittensor/wallets/",
+                numinous_env=config_env,
+                db_path=db_path,
+                logging_level=logger_level,
+                gateway_url=gateway_url,
+                validator_sync_hour=validator_sync_hour,
+                sandbox_max_concurrent=50,
+                sandbox_timeout_seconds=240,
             )
 
             # Mock Wallet
@@ -74,7 +79,7 @@ class TestValidatorMain:
             mock_async_subtensor = AsyncMock()
             mock_metagraph = MagicMock()
             mock_metagraph.hotkeys = ["hk0", "hk1", "hk2", "hk3", "hk4"]
-            mock_async_subtensor.metagraph = AsyncMock(return_value=mock_metagraph)
+            mock_async_subtensor.subnets.metagraph = AsyncMock(return_value=mock_metagraph)
 
             MockAsyncSubtensor.return_value.__aenter__ = AsyncMock(
                 return_value=mock_async_subtensor
@@ -102,7 +107,6 @@ class TestValidatorMain:
             # Verify loggers set
             mock_override_loggers_level.assert_called_once_with(logger_level)
             mock_set_bittensor_logger.assert_called_once()
-            mock_set_async_substrate_interface_logger.assert_called_once()
 
             # Verify start session called
             mock_logger.start_session.assert_called_once()
@@ -112,6 +116,14 @@ class TestValidatorMain:
 
             # Verify DatabaseClient args
             MockDatabaseClient.assert_called_once_with(db_path=db_path, logger=mock_logger)
+
+            # Verify Wallet built from settings
+            MockWallet.assert_called_once_with(
+                name="wallet_name", hotkey="wallet_hotkey", path="~/.bittensor/wallets/"
+            )
+
+            # Verify the boot Subtensor built from the network name
+            MockAsyncSubtensor.assert_called_once_with(network)
 
             # Verify NuminousClient args
             MockNuminousClient.assert_called_once_with(

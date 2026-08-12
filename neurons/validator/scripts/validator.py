@@ -1,38 +1,40 @@
 import argparse
 
-import bittensor as bt
-from bittensor.core.config import Config
-from bittensor.core.subtensor import Subtensor
-from bittensor_wallet.wallet import Wallet
+from bittensor import Subtensor, Wallet
 
 
-def get_config():
+def get_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    Wallet.add_args(parser=parser)
-    Subtensor.add_args(parser=parser)
 
-    config = Config(parser=parser, strict=True)
+    parser.add_argument("--subtensor.network", type=str, default="finney")
+    parser.add_argument("--wallet.name", type=str, default="default")
+    parser.add_argument("--wallet.hotkey", type=str, default="default")
+    parser.add_argument("--wallet.path", type=str, default="~/.bittensor/wallets/")
 
-    return config
+    return parser.parse_args()
 
 
 def main(netuid: int):
-    config = get_config()
+    args = get_args()
 
-    subtensor = bt.subtensor(config=config)
-    metagraph = subtensor.metagraph(netuid=netuid)
-    wallet = Wallet(config=config)
+    client = Subtensor(getattr(args, "subtensor.network"))
+    metagraph = client.subnets.metagraph(netuid)
+    wallet = Wallet(
+        name=getattr(args, "wallet.name"),
+        hotkey=getattr(args, "wallet.hotkey"),
+        path=getattr(args, "wallet.path"),
+    )
 
     wallet_uid = metagraph.hotkeys.index(wallet.hotkey.ss58_address)
-    top_64_stake = sorted(metagraph.S)[-64:]
+    top_64_stake = sorted(neuron.total_stake for neuron in metagraph.neurons)[-64:]
 
     print(
         f"Current requirement for validator permits based on the top 64 stake stands at {min(top_64_stake)}"
     )
 
-    print(f"Wallet hotkey stake {metagraph.S[wallet_uid]}")
+    print(f"Wallet hotkey stake {metagraph.neuron(wallet_uid).total_stake}")
 
-    print(f"Validator permit: {metagraph.validator_permit[wallet_uid]}")
+    print(f"Validator permit: {metagraph.neuron(wallet_uid).validator_permit}")
 
 
 if __name__ == "__main__":

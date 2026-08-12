@@ -10,7 +10,7 @@ import pytest
 from aiohttp import ClientResponseError
 from aiohttp.web import Response
 from aioresponses import aioresponses
-from bittensor_wallet import Wallet
+from bittensor import Wallet
 from yarl import URL
 
 from neurons.validator.models.numinous_client import (

@@ -10,10 +10,10 @@ Create a coldkey and hotkey pair:
 
 ```bash
 # Create coldkey
-btcli wallet new_coldkey --wallet.name miner
+btcli wallet new-coldkey --wallet miner
 
 # Create hotkey
-btcli wallet new_hotkey --wallet.name miner --wallet.hotkey default
+btcli wallet new-hotkey --wallet miner --wallet-hotkey default
 ```
 
 **Important:**
@@ -28,11 +28,11 @@ If you have an existing wallet mnemonic:
 
 ```bash
 # Regenerate coldkey
-btcli w regen_coldkey --wallet-path ~/.bittensor/wallets/ \
-    --wallet-name miner --mnemonic "${MNEMONIC_COLDKEY}"
+btcli w regen-coldkey --wallet-path ~/.bittensor/wallets/ \
+    --wallet miner --mnemonic "${MNEMONIC_COLDKEY}"
 
 # Regenerate hotkey
-btcli w regen_hotkey --wallet-name miner --wallet.hotkey default \
+btcli w regen-hotkey --wallet miner --wallet-hotkey default \
     --mnemonic "${MNEMONIC_HOTKEY}"
 ```
 
@@ -55,13 +55,13 @@ Buy TAO on exchanges and withdraw to your wallet address.
 ### Testnet (netuid 155)
 
 ```bash
-btcli subnet register --wallet.name miner --wallet.hotkey default --subtensor.network test
+btcli subnet register --netuid 155 --wallet miner --wallet-hotkey default --network test
 ```
 
 ### Mainnet (netuid 6)
 
 ```bash
-btcli subnet register --wallet.name miner --wallet.hotkey default --netuid 6
+btcli subnet register --netuid 6 --wallet miner --wallet-hotkey default
 ```
 
 Follow the prompts:
@@ -81,10 +81,10 @@ Check your wallet status:
 
 ```bash
 # Testnet
-btcli wallet overview --wallet.name miner --subtensor.network test
+btcli wallet overview --wallet miner --network test
 
 # Mainnet
-btcli wallet overview --wallet.name miner
+btcli wallet overview --wallet miner
 ```
 
 You should see:

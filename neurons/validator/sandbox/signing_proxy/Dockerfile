@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 # Install async HTTP libraries
 RUN pip install --no-cache-dir \
-    bittensor-wallet \
+    bittensor-wallet==4.1.1 \
     httpx[http2] \
     aiohttp
 

@@ -79,21 +79,6 @@ def set_bittensor_logger():
     return bt_logger
 
 
-def set_async_substrate_interface_logger():
-    asi_logger = logging.getLogger("async_substrate_interface")
-    asi_logger.propagate = False
-    asi_logger.setLevel(loggers_level)
-
-    # Add a console handler with JSON formatter
-    json_handler = logging.StreamHandler()
-    json_handler.setFormatter(JSONFormatter())
-
-    asi_logger.handlers.clear()
-    asi_logger.addHandler(json_handler)
-
-    return asi_logger
-
-
 logger = create_logger("validator")
 miner_logger = create_logger("miner")
 api_logger = create_logger("api")

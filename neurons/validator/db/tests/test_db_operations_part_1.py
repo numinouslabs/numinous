@@ -33,15 +33,11 @@ class TestDbOperationsPart1(TestDbOperationsBase):
                 "miner_uid": "123",
                 "miner_hotkey": "abc",
                 "registered_date": datetime(2024, 1, 1, 11, 0, 1),
-                "is_validating": True,
-                "validator_permit": True,
             },
             {
                 "miner_uid": "456",
                 "miner_hotkey": "def",
                 "registered_date": datetime(2024, 1, 1, 11, 0, 1),
-                "is_validating": False,
-                "validator_permit": False,
             },
         ]
 
@@ -61,8 +57,6 @@ class TestDbOperationsPart1(TestDbOperationsBase):
                 "miner_uid": "456",
                 "miner_hotkey": "def",
                 "registered_date": datetime(2024, 1, 1, 11, 0, 1),
-                "is_validating": False,
-                "validator_permit": False,
             },
         ]
 
@@ -1124,8 +1118,6 @@ class TestDbOperationsPart1(TestDbOperationsBase):
                 "ip1",
                 "2000-12-02T14:30:00+00:00",
                 1,
-                False,
-                True,
                 "ip1",
                 1,
             ),
@@ -1135,8 +1127,6 @@ class TestDbOperationsPart1(TestDbOperationsBase):
                 "ip2",
                 "2000-12-02T14:30:00+00:00",
                 2,
-                True,
-                False,
                 "ip2",
                 2,
             ),
@@ -1150,9 +1140,7 @@ class TestDbOperationsPart1(TestDbOperationsBase):
                     miner_hotkey,
                     miner_uid,
                     registered_date,
-                    last_updated,
-                    is_validating,
-                    validator_permit
+                    last_updated
                 FROM
                     miners
             """
@@ -1175,14 +1163,6 @@ class TestDbOperationsPart1(TestDbOperationsBase):
         # Assert last_registration
         assert result[0][3] == ANY
         assert result[1][3] == ANY
-
-        # Assert is_validating
-        assert result[0][4] == 0
-        assert result[1][4] == 1
-
-        # Assert validator_permit
-        assert result[0][5] == 1
-        assert result[1][5] == 0
 
         # TODO: Test update fields on conflict
 

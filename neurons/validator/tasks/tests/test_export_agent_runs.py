@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
-from bittensor_wallet import Wallet
+from bittensor import Wallet
 
 from neurons.validator.db.client import DatabaseClient
 from neurons.validator.db.operations import DatabaseOperations
