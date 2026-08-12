@@ -12,15 +12,11 @@ class TestMinersModel:
             miner_hotkey="hotkey123",
             miner_uid="uid456",
             registered_date=datetime(2024, 1, 1, 10, 0, 0),
-            is_validating=False,
-            validator_permit=False,
         )
 
         assert model.miner_hotkey == "hotkey123"
         assert model.miner_uid == "uid456"
         assert model.registered_date == datetime(2024, 1, 1, 10, 0, 0)
-        assert model.is_validating is False
-        assert model.validator_permit is False
         # Optional fields
         assert model.node_ip is None
         assert model.last_updated is None
@@ -37,8 +33,6 @@ class TestMinersModel:
             last_updated=datetime(2024, 1, 2, 9, 0, 0),
             blocktime=123456789,
             blocklisted=True,
-            is_validating=False,
-            validator_permit=True,
         )
 
         assert model.miner_hotkey == "hotkey789"
@@ -48,8 +42,6 @@ class TestMinersModel:
         assert model.last_updated == datetime(2024, 1, 2, 9, 0, 0)
         assert model.blocktime == 123456789
         assert model.blocklisted is True
-        assert model.is_validating is False
-        assert model.validator_permit is True
 
     def test_blocklisted_int_to_bool(self):
         # blocklisted as integer should convert to bool
@@ -58,8 +50,6 @@ class TestMinersModel:
             miner_uid="uid222",
             registered_date=datetime(2024, 1, 1, 12, 0, 0),
             blocklisted=1,
-            is_validating=False,
-            validator_permit=False,
         )
         assert model.blocklisted is True
 
@@ -68,8 +58,6 @@ class TestMinersModel:
             miner_uid="uid444",
             registered_date=datetime(2024, 1, 1, 12, 0, 0),
             blocklisted=0,
-            is_validating=False,
-            validator_permit=False,
         )
         assert model2.blocklisted is False
 
@@ -80,8 +68,6 @@ class TestMinersModel:
                 miner_hotkey=123,  # invalid type
                 miner_uid="uidABC",
                 registered_date=datetime(2024, 1, 1),
-                is_validating=False,
-                validator_permit=False,
             )
 
         # registered_date must be datetime
@@ -90,8 +76,6 @@ class TestMinersModel:
                 miner_hotkey="hotkeyXYZ",
                 miner_uid="uidABC",
                 registered_date="not-a-datetime",
-                is_validating=False,
-                validator_permit=False,
             )
 
     def test_primary_key_property(self):
@@ -99,7 +83,5 @@ class TestMinersModel:
             miner_hotkey="hk",
             miner_uid="uid",
             registered_date=datetime(2024, 1, 1),
-            is_validating=False,
-            validator_permit=False,
         )
         assert model.primary_key == ["miner_hotkey", "miner_uid"]

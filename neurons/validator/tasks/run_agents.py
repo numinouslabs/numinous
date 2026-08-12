@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
-from bittensor import AsyncSubtensor
+from bittensor import Metagraph, Subtensor
 
 from neurons.validator.db.operations import DatabaseOperations
 from neurons.validator.models.agent_runs import AgentRunsModel, AgentRunStatus
@@ -37,7 +37,7 @@ class RunAgents(AbstractTask):
     interval: float
     db_operations: DatabaseOperations
     sandbox_manager: SandboxManager
-    subtensor_cm: AsyncSubtensor
+    network: str
     api_client: NuminousClient
     logger: NuminousLogger
     max_concurrent_sandboxes: int
@@ -52,7 +52,7 @@ class RunAgents(AbstractTask):
         db_operations: DatabaseOperations,
         sandbox_manager: SandboxManager,
         netuid: int,
-        subtensor: AsyncSubtensor,
+        network: str,
         api_client: NuminousClient,
         logger: NuminousLogger,
         max_concurrent_sandboxes: int = 5,
@@ -73,8 +73,8 @@ class RunAgents(AbstractTask):
         if not isinstance(netuid, int) or netuid < 0:
             raise ValueError("netuid must be a non-negative integer.")
 
-        if not isinstance(subtensor, AsyncSubtensor):
-            raise TypeError("subtensor must be an instance of AsyncSubtensor.")
+        if not isinstance(network, str) or not network:
+            raise ValueError("network must be a non-empty string.")
         if not isinstance(api_client, NuminousClient):
             raise TypeError("api_client must be an instance of NuminousClient.")
 
@@ -97,7 +97,7 @@ class RunAgents(AbstractTask):
         self.db_operations = db_operations
         self.sandbox_manager = sandbox_manager
         self.netuid = netuid
-        self.subtensor_cm = subtensor
+        self.network = network
         self.api_client = api_client
         self.logger = logger
         self.max_concurrent_sandboxes = max_concurrent_sandboxes
@@ -123,8 +123,8 @@ class RunAgents(AbstractTask):
         return self.interval
 
     async def run(self) -> None:
-        async with self.subtensor_cm as subtensor:
-            self.metagraph = await subtensor.metagraph(netuid=self.netuid, lite=True)
+        async with Subtensor(self.network) as chain_client:
+            self.metagraph: Metagraph = await chain_client.subnets.metagraph(self.netuid)
 
         current_hour_utc = datetime.now(timezone.utc).hour
 
@@ -135,9 +135,9 @@ class RunAgents(AbstractTask):
             )
             return
 
-        block = self.metagraph.block.item()
+        block = self.metagraph.block
         self.logger.debug(
-            "Synced metagraph", extra={"block": block, "neurons": len(self.metagraph.uids)}
+            "Synced metagraph", extra={"block": block, "neurons": self.metagraph.num_uids}
         )
 
         interval_start_minutes = get_interval_start_minutes()
@@ -172,31 +172,25 @@ class RunAgents(AbstractTask):
 
     def filter_agents_by_metagraph(self, agents: List[MinerAgentsModel]) -> List[MinerAgentsModel]:
         valid_agents = []
-        metagraph_uids = {int(uid): uid for uid in self.metagraph.uids}
+        neurons_by_uid = {neuron.uid: neuron for neuron in self.metagraph.neurons}
 
         for agent in agents:
-            if agent.miner_uid not in metagraph_uids:
+            neuron = neurons_by_uid.get(agent.miner_uid)
+
+            if neuron is None:
                 self.logger.debug(
                     "Skipping agent - UID not in metagraph",
                     extra={"agent_version_id": agent.version_id, "miner_uid": agent.miner_uid},
                 )
                 continue
 
-            axon = self.metagraph.axons[agent.miner_uid]
-            if axon is None:
-                self.logger.debug(
-                    "Skipping agent - no axon found",
-                    extra={"agent_version_id": agent.version_id, "miner_uid": agent.miner_uid},
-                )
-                continue
-
-            if axon.hotkey != agent.miner_hotkey:
+            if neuron.hotkey != agent.miner_hotkey:
                 self.logger.debug(
                     "Skipping agent - hotkey mismatch",
                     extra={
                         "agent_version_id": agent.version_id,
                         "agent_hotkey": agent.miner_hotkey,
-                        "metagraph_hotkey": axon.hotkey,
+                        "metagraph_hotkey": neuron.hotkey,
                     },
                 )
                 continue

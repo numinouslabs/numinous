@@ -1,25 +1,15 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-import numpy as np
 import pytest
-from bittensor import AsyncSubtensor
 
 from neurons.validator.db.client import DatabaseClient
 from neurons.validator.db.operations import DatabaseOperations
 from neurons.validator.tasks.sync_miners_metadata import SyncMinersMetadata
-from neurons.validator.utils.if_metagraph import IfMetagraph
 from neurons.validator.utils.logger.logger import NuminousLogger
 
 
-@pytest.fixture
-def mock_subtensor():
-    subtensor = MagicMock(spec=AsyncSubtensor)
-
-    return subtensor
-
-
 class TestSyncMinersMetadataInit:
-    def test_valid_initialization(self, mock_subtensor):
+    def test_valid_initialization(self):
         logger = MagicMock(spec=NuminousLogger)
         db_operations = MagicMock(spec=DatabaseOperations)
 
@@ -27,17 +17,17 @@ class TestSyncMinersMetadataInit:
             interval_seconds=300.0,
             db_operations=db_operations,
             netuid=99,
-            subtensor=mock_subtensor,
+            network="test",
             logger=logger,
         )
 
         assert task.interval == 300.0
         assert task.db_operations == db_operations
         assert task.netuid == 99
-        assert task.subtensor == mock_subtensor
+        assert task.network == "test"
         assert task.logger == logger
 
-    def test_invalid_interval_negative(self, mock_subtensor):
+    def test_invalid_interval_negative(self):
         logger = MagicMock(spec=NuminousLogger)
         db_operations = MagicMock(spec=DatabaseOperations)
 
@@ -46,11 +36,11 @@ class TestSyncMinersMetadataInit:
                 interval_seconds=-1.0,
                 db_operations=db_operations,
                 netuid=99,
-                subtensor=mock_subtensor,
+                network="test",
                 logger=logger,
             )
 
-    def test_invalid_interval_zero(self, mock_subtensor):
+    def test_invalid_interval_zero(self):
         logger = MagicMock(spec=NuminousLogger)
         db_operations = MagicMock(spec=DatabaseOperations)
 
@@ -59,11 +49,11 @@ class TestSyncMinersMetadataInit:
                 interval_seconds=0.0,
                 db_operations=db_operations,
                 netuid=99,
-                subtensor=mock_subtensor,
+                network="test",
                 logger=logger,
             )
 
-    def test_invalid_interval_not_float(self, mock_subtensor):
+    def test_invalid_interval_not_float(self):
         logger = MagicMock(spec=NuminousLogger)
         db_operations = MagicMock(spec=DatabaseOperations)
 
@@ -72,11 +62,11 @@ class TestSyncMinersMetadataInit:
                 interval_seconds=300,
                 db_operations=db_operations,
                 netuid=99,
-                subtensor=mock_subtensor,
+                network="test",
                 logger=logger,
             )
 
-    def test_invalid_db_operations_type(self, mock_subtensor):
+    def test_invalid_db_operations_type(self):
         logger = MagicMock(spec=NuminousLogger)
 
         with pytest.raises(TypeError, match="db_operations must be"):
@@ -84,11 +74,11 @@ class TestSyncMinersMetadataInit:
                 interval_seconds=300.0,
                 db_operations="not_db_ops",
                 netuid=99,
-                subtensor=mock_subtensor,
+                network="test",
                 logger=logger,
             )
 
-    def test_invalid_netuid(self, mock_subtensor):
+    def test_invalid_netuid(self):
         logger = MagicMock(spec=NuminousLogger)
         db_operations = MagicMock(spec=DatabaseOperations)
 
@@ -97,24 +87,24 @@ class TestSyncMinersMetadataInit:
                 interval_seconds=300.0,
                 db_operations=db_operations,
                 netuid=-1,
-                subtensor=mock_subtensor,
+                network="test",
                 logger=logger,
             )
 
-    def test_invalid_subtensor_type(self):
+    def test_invalid_network(self):
         logger = MagicMock(spec=NuminousLogger)
         db_operations = MagicMock(spec=DatabaseOperations)
 
-        with pytest.raises(TypeError, match="subtensor must be"):
+        with pytest.raises(ValueError, match="network must be"):
             SyncMinersMetadata(
                 interval_seconds=300.0,
                 db_operations=db_operations,
                 netuid=99,
-                subtensor="not_subtensor",
+                network="",
                 logger=logger,
             )
 
-    def test_invalid_logger_type(self, mock_subtensor):
+    def test_invalid_logger_type(self):
         db_operations = MagicMock(spec=DatabaseOperations)
 
         with pytest.raises(TypeError, match="logger must be"):
@@ -122,13 +112,13 @@ class TestSyncMinersMetadataInit:
                 interval_seconds=300.0,
                 db_operations=db_operations,
                 netuid=99,
-                subtensor=mock_subtensor,
+                network="test",
                 logger="not_logger",
             )
 
 
 class TestSyncMinersMetadataProperties:
-    def test_name_property(self, mock_subtensor):
+    def test_name_property(self):
         logger = MagicMock(spec=NuminousLogger)
         db_operations = MagicMock(spec=DatabaseOperations)
 
@@ -136,13 +126,13 @@ class TestSyncMinersMetadataProperties:
             interval_seconds=300.0,
             db_operations=db_operations,
             netuid=99,
-            subtensor=mock_subtensor,
+            network="test",
             logger=logger,
         )
 
         assert task.name == "sync-miners-metadata"
 
-    def test_interval_seconds_property(self, mock_subtensor):
+    def test_interval_seconds_property(self):
         logger = MagicMock(spec=NuminousLogger)
         db_operations = MagicMock(spec=DatabaseOperations)
 
@@ -150,7 +140,7 @@ class TestSyncMinersMetadataProperties:
             interval_seconds=300.0,
             db_operations=db_operations,
             netuid=99,
-            subtensor=mock_subtensor,
+            network="test",
             logger=logger,
         )
 
@@ -158,98 +148,88 @@ class TestSyncMinersMetadataProperties:
 
 
 class TestSyncMinersMetadataRun:
+    def _neuron(self, uid: int, hotkey: str, axon: str | None):
+        neuron = MagicMock()
+        neuron.uid = uid
+        neuron.hotkey = hotkey
+        neuron.axon = axon
+        return neuron
+
+    def _patched_subtensor(self, metagraph: MagicMock) -> tuple[MagicMock, AsyncMock]:
+        chain_client = AsyncMock()
+        chain_client.subnets.metagraph = AsyncMock(return_value=metagraph)
+
+        subtensor = MagicMock()
+        subtensor.return_value.__aenter__ = AsyncMock(return_value=chain_client)
+        subtensor.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        return subtensor, chain_client
+
     async def test_run_first_sync(self, db_client: DatabaseClient):
         logger = MagicMock(spec=NuminousLogger)
         db_operations = DatabaseOperations(db_client=db_client, logger=logger)
-        metagraph = MagicMock(spec=IfMetagraph)
 
-        metagraph.block = np.int64(12345)
-        metagraph.uids = np.array([0, 1, 2], dtype=np.int64)
+        metagraph = MagicMock()
+        metagraph.block = 12345
+        metagraph.neurons = [
+            self._neuron(0, "hotkey0", "192.168.1.1:8091"),
+            self._neuron(1, "hotkey1", "192.168.1.2:8091"),
+            self._neuron(2, "hotkey2", "192.168.1.3:8091"),
+        ]
 
-        axon0 = MagicMock()
-        axon0.hotkey = "hotkey0"
-        axon0.ip = "192.168.1.1"
-
-        axon1 = MagicMock()
-        axon1.hotkey = "hotkey1"
-        axon1.ip = "192.168.1.2"
-
-        axon2 = MagicMock()
-        axon2.hotkey = "hotkey2"
-        axon2.ip = "192.168.1.3"
-
-        metagraph.axons = {0: axon0, 1: axon1, 2: axon2}
-        metagraph.validator_trust = {
-            0: np.float64(0.0),
-            1: np.float64(0.5),
-            2: np.float64(0.0),
-        }
-        metagraph.validator_permit = np.array([0, 1, 0], dtype=np.int64)
-
-        subtensor = AsyncMock()
-        subtensor.metagraph = AsyncMock(return_value=metagraph)
-
-        subtensor_cm = AsyncMock(spec=AsyncSubtensor)
-        subtensor_cm.__aenter__ = AsyncMock(return_value=subtensor)
-        subtensor_cm.__aexit__ = AsyncMock(return_value=False)
+        subtensor, chain_client = self._patched_subtensor(metagraph)
 
         task = SyncMinersMetadata(
             interval_seconds=300.0,
             db_operations=db_operations,
             netuid=99,
-            subtensor=subtensor_cm,
+            network="test",
             logger=logger,
         )
 
-        await task.run()
+        with patch("neurons.validator.tasks.sync_miners_metadata.Subtensor", subtensor):
+            await task.run()
 
-        subtensor_cm.__aenter__.assert_awaited_once()
-        subtensor_cm.__aexit__.assert_awaited_once()
-        subtensor.metagraph.assert_called_once_with(netuid=99, lite=True)
+        subtensor.assert_called_once_with("test")
+        chain_client.subnets.metagraph.assert_awaited_once_with(99)
 
         miners_count = await db_operations.get_miners_count()
         assert miners_count == 3
 
-    async def test_run_skips_none_axons(self, db_client: DatabaseClient):
+        stored_ips = dict(
+            await db_client.many("SELECT miner_uid, node_ip FROM miners ORDER BY miner_uid")
+        )
+        assert stored_ips == {"0": "192.168.1.1", "1": "192.168.1.2", "2": "192.168.1.3"}
+
+    async def test_run_stores_unserved_axons_with_zero_ip(self, db_client: DatabaseClient):
         logger = MagicMock(spec=NuminousLogger)
         db_operations = DatabaseOperations(db_client=db_client, logger=logger)
-        metagraph = MagicMock(spec=IfMetagraph)
 
-        metagraph.block = np.int64(12345)
-        metagraph.uids = np.array([0, 1, 2], dtype=np.int64)
+        metagraph = MagicMock()
+        metagraph.block = 12345
+        metagraph.neurons = [
+            self._neuron(0, "hotkey0", "192.168.1.1:8091"),
+            self._neuron(1, "hotkey1", None),
+            self._neuron(2, "hotkey2", None),
+        ]
 
-        axon0 = MagicMock()
-        axon0.hotkey = "hotkey0"
-        axon0.ip = "192.168.1.1"
-
-        metagraph.axons = {0: axon0, 1: None, 2: None}
-        metagraph.validator_trust = {
-            0: np.float64(0.0),
-            1: np.float64(0.0),
-            2: np.float64(0.0),
-        }
-        metagraph.validator_permit = np.array([0, 0, 0], dtype=np.int64)
-
-        subtensor = AsyncMock()
-        subtensor.metagraph = AsyncMock(return_value=metagraph)
-
-        subtensor_cm = AsyncMock(spec=AsyncSubtensor)
-        subtensor_cm.__aenter__ = AsyncMock(return_value=subtensor)
-        subtensor_cm.__aexit__ = AsyncMock(return_value=False)
+        subtensor, chain_client = self._patched_subtensor(metagraph)
 
         task = SyncMinersMetadata(
             interval_seconds=300.0,
             db_operations=db_operations,
             netuid=99,
-            subtensor=subtensor_cm,
+            network="test",
             logger=logger,
         )
 
-        await task.run()
-
-        subtensor_cm.__aenter__.assert_awaited_once()
-        subtensor_cm.__aexit__.assert_awaited_once()
-        subtensor.metagraph.assert_called_once_with(netuid=99, lite=True)
+        with patch("neurons.validator.tasks.sync_miners_metadata.Subtensor", subtensor):
+            await task.run()
 
         miners_count = await db_operations.get_miners_count()
-        assert miners_count == 1
+        assert miners_count == 3
+
+        stored_ips = dict(
+            await db_client.many("SELECT miner_uid, node_ip FROM miners ORDER BY miner_uid")
+        )
+        assert stored_ips == {"0": "192.168.1.1", "1": "0.0.0.0", "2": "0.0.0.0"}

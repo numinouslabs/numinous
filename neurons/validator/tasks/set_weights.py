@@ -1,15 +1,13 @@
 import asyncio
-import copy
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
-from bittensor import AsyncSubtensor
-from bittensor.core.config import Config
-from bittensor.utils.weight_utils import process_weights
-from bittensor_wallet.wallet import Wallet
+from bittensor import ErrorCode
+from bittensor import SetWeights as SetWeightsIntent
+from bittensor import Subtensor, Wallet
 
 from neurons.validator.db.operations import DatabaseOperations
 from neurons.validator.models.numinous_client import GetWeightsResponse
@@ -18,6 +16,7 @@ from neurons.validator.numinous_client.client import NuminousClient
 from neurons.validator.scheduler.task import AbstractTask
 from neurons.validator.utils.common.converters import pydantic_models_to_dataframe
 from neurons.validator.utils.common.interval import BLOCK_DURATION
+from neurons.validator.utils.common.weights import U16_MAX, process_weights
 from neurons.validator.utils.logger.logger import NuminousLogger
 from neurons.validator.version import __spec_version__ as spec_version
 
@@ -40,7 +39,7 @@ class SetWeights(AbstractTask):
     db_operations: DatabaseOperations
     logger: NuminousLogger
     netuid: int
-    config: Config
+    network: str
     wallet: Wallet
     timeout_seconds: float
 
@@ -50,7 +49,7 @@ class SetWeights(AbstractTask):
         db_operations: DatabaseOperations,
         logger: NuminousLogger,
         netuid: int,
-        config: Config,
+        network: str,
         wallet: Wallet,
         api_client: NuminousClient,
         timeout_seconds: float = 60.0 * 15,
@@ -70,12 +69,15 @@ class SetWeights(AbstractTask):
         if not isinstance(netuid, int) or netuid < 0:
             raise ValueError("netuid must be a non-negative integer.")
 
+        if not isinstance(network, str) or not network:
+            raise ValueError("network must be a non-empty string.")
+
         self.interval = interval_seconds
         self.db_operations = db_operations
         self.logger = logger
 
         self.netuid = netuid
-        self.config = config
+        self.network = network
         self.wallet = wallet
         self.api_client = api_client
         self.timeout_seconds = timeout_seconds
@@ -97,21 +99,20 @@ class SetWeights(AbstractTask):
         return self.interval
 
     def copy_metagraph_state(self):
-        # hotkeys is list[str], uids is np.ndarray
-        self.current_hotkeys = copy.deepcopy(self.metagraph.hotkeys)
+        self.current_hotkeys = list(self.metagraph.hotkeys)
         self.n_hotkeys = len(self.current_hotkeys)
-        self.current_uids = copy.deepcopy(self.metagraph.uids)
+        self.current_uids = [neuron.uid for neuron in self.metagraph.neurons]
         self.current_miners_df = pd.DataFrame(
             {
                 "miner_hotkey": self.current_hotkeys,
-                "miner_uid": self.current_uids.tolist(),
+                "miner_uid": self.current_uids,
             }
         )
 
     async def time_to_set_weights(self):
         self.logger.debug("Weights rate limit", extra={"step": "fetching"})
 
-        weights_rate_limit = await self.subtensor.weights_rate_limit(netuid=self.netuid)
+        weights_rate_limit = await self.chain_client.hyperparameters.weights_rate_limit(self.netuid)
 
         self.logger.debug(
             "Weights rate limit",
@@ -242,13 +243,16 @@ class SetWeights(AbstractTask):
         miner_uids = np.array(normalized_scores[SWNames.miner_uid].values, dtype=np.int64)
         raw_weights = np.array(normalized_scores[SWNames.raw_weights].values, dtype=np.float32)
 
-        min_allowed_weights = await self.subtensor.min_allowed_weights(netuid=self.netuid)
-        max_weight_limit = await self.subtensor.max_weight_limit(netuid=self.netuid)
+        min_allowed_weights = await self.chain_client.hyperparameters.min_allowed_weights(
+            self.netuid
+        )
+        max_weight_limit_u16 = await self.chain_client.hyperparameters.max_weight_limit(self.netuid)
+        max_weight_limit = max_weight_limit_u16 / U16_MAX
 
         processed_uids, processed_weights = process_weights(
             uids=miner_uids,
             weights=raw_weights,
-            num_neurons=self.metagraph.n,
+            num_neurons=self.metagraph.num_uids,
             min_allowed_weights=min_allowed_weights,
             max_weight_limit=max_weight_limit,
         )
@@ -302,17 +306,20 @@ class SetWeights(AbstractTask):
         processed_uids: np.ndarray,
         processed_weights: np.ndarray,
     ):
-        response = await self.subtensor.set_weights(
-            wallet=self.wallet,
+        intent = SetWeightsIntent(
             netuid=self.netuid,
-            uids=processed_uids,
-            weights=processed_weights,
+            weights={
+                int(uid): float(weight) for uid, weight in zip(processed_uids, processed_weights)
+            },
             version_key=self.spec_version,
+        )
+
+        response = await self.chain_client.execute(
+            intent,
+            self.wallet,
             wait_for_inclusion=True,
             wait_for_finalization=True,
-            wait_for_revealed_execution=False,
-            max_attempts=2,
-            raise_error=True,
+            retries=2,
         )
 
         if not response.success:
@@ -324,7 +331,7 @@ class SetWeights(AbstractTask):
             }
             log_msg = "Failed to set the weights."
 
-            if response.message and "No attempt made" in response.message:
+            if response.error is not None and response.error.code == ErrorCode.RATE_LIMITED:
                 # do not consider this as an error - pollutes the logs
                 self.logger.warning(log_msg, extra=extra)
             else:
@@ -343,12 +350,9 @@ class SetWeights(AbstractTask):
         owner_uid = None
         owner_hotkey = self.metagraph.owner_hotkey
 
-        for idx, uid in enumerate(self.metagraph.uids):
-            int_uid = int(uid)
-            hotkey = self.metagraph.hotkeys[idx]
-
-            if hotkey == owner_hotkey:
-                owner_uid = int_uid
+        for neuron in self.metagraph.neurons:
+            if neuron.hotkey == owner_hotkey:
+                owner_uid = neuron.uid
                 break
 
         assert owner_uid is not None, "Owner uid not found in metagraph uids"
@@ -381,10 +385,10 @@ class SetWeights(AbstractTask):
 
     async def run(self):
         async with asyncio.timeout(delay=self.timeout_seconds):
-            async with AsyncSubtensor(config=self.config) as st:
-                self.subtensor = st
+            async with Subtensor(self.network) as chain_client:
+                self.chain_client = chain_client
 
-                self.metagraph = await st.metagraph(netuid=self.netuid, lite=True)
+                self.metagraph = await chain_client.subnets.metagraph(self.netuid)
 
                 self.copy_metagraph_state()
 

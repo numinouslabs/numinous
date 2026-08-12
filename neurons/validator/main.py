@@ -3,8 +3,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from bittensor import AsyncSubtensor
-from bittensor_wallet import Wallet
+from bittensor import Subtensor, Wallet
 
 from neurons.validator.db.client import DatabaseClient
 from neurons.validator.db.operations import DatabaseOperations
@@ -32,7 +31,6 @@ from neurons.validator.utils.env import assert_requirements
 from neurons.validator.utils.logger.logger import (
     logger,
     override_loggers_level,
-    set_async_substrate_interface_logger,
     set_bittensor_logger,
 )
 
@@ -44,28 +42,31 @@ async def main():
     # Start session id
     logger.start_session()
 
-    config, numinous_env, db_path, logging_level, gateway_url, validator_sync_hour = get_config()
+    settings = get_config()
 
     # Loggers
-    override_loggers_level(logging_level)
+    override_loggers_level(settings.logging_level)
     set_bittensor_logger()
-    set_async_substrate_interface_logger()
 
     # Bittensor stuff
-    bt_netuid = config.get("netuid")
-    bt_network = config.get("subtensor").get("network")
-    bt_wallet = Wallet(config=config)
+    bt_netuid = settings.netuid
+    bt_network = settings.subtensor_network
+    bt_wallet = Wallet(
+        name=settings.wallet_name, hotkey=settings.wallet_hotkey, path=settings.wallet_path
+    )
 
-    async with AsyncSubtensor(config=config) as subtensor:
-        metagraph = await subtensor.metagraph(netuid=bt_netuid, lite=True)
+    async with Subtensor(settings.subtensor_connection) as chain_client:
+        metagraph = await chain_client.subnets.metagraph(bt_netuid)
 
         validator_hotkey = bt_wallet.hotkey.ss58_address
         validator_uid = metagraph.hotkeys.index(validator_hotkey)
 
     # Components
-    db_client = DatabaseClient(db_path=db_path, logger=logger)
+    db_client = DatabaseClient(db_path=settings.db_path, logger=logger)
     db_operations = DatabaseOperations(db_client=db_client, logger=logger)
-    numinous_api_client = NuminousClient(env=numinous_env, logger=logger, bt_wallet=bt_wallet)
+    numinous_api_client = NuminousClient(
+        env=settings.numinous_env, logger=logger, bt_wallet=bt_wallet
+    )
 
     # Migrate db
     await db_client.migrate()
@@ -107,7 +108,7 @@ async def main():
         interval_seconds=300.0,
         db_operations=db_operations,
         netuid=bt_netuid,
-        subtensor=AsyncSubtensor(config=config),
+        network=settings.subtensor_connection,
         logger=logger,
     )
 
@@ -116,7 +117,7 @@ async def main():
 
     sandbox_manager = SandboxManager(
         bt_wallet=bt_wallet,
-        gateway_url=gateway_url,
+        gateway_url=settings.gateway_url,
         logger=logger,
         temp_base_dir=sandbox_temp_dir,
         force_rebuild=True,
@@ -128,11 +129,11 @@ async def main():
         api_client=numinous_api_client,
         sandbox_manager=sandbox_manager,
         netuid=bt_netuid,
-        subtensor=AsyncSubtensor(config=config),
+        network=settings.subtensor_connection,
         logger=logger,
-        max_concurrent_sandboxes=config.get("sandbox", {}).get("max_concurrent", 50),
-        timeout_seconds=config.get("sandbox", {}).get("timeout_seconds", 240),
-        sync_hour=validator_sync_hour,
+        max_concurrent_sandboxes=settings.sandbox_max_concurrent,
+        timeout_seconds=settings.sandbox_timeout_seconds,
+        sync_hour=settings.validator_sync_hour,
         validator_uid=validator_uid,
         validator_hotkey=validator_hotkey,
     )
@@ -198,7 +199,7 @@ async def main():
         db_operations=db_operations,
         logger=logger,
         netuid=bt_netuid,
-        config=config,
+        network=settings.subtensor_connection,
         wallet=bt_wallet,
         api_client=numinous_api_client,
     )
@@ -250,8 +251,8 @@ async def main():
             "validator_hotkey": validator_hotkey,
             "bt_network": bt_network,
             "bt_netuid": bt_netuid,
-            "numinous_env": numinous_env,
-            "db_path": db_path,
+            "numinous_env": settings.numinous_env,
+            "db_path": settings.db_path,
             "python": sys.version,
             "sqlite": sqlite3.sqlite_version,
         },

@@ -1,5 +1,9 @@
 # Release Notes
 
+## [3.1.0] - 2026-08-10
+- **Bittensor Upgrade**: Upgraded to Bittensor version 11.0.2 - a full SDK rewrite. Wallets created with Bittensor 11 now work across the validator and the `numi` CLI, and existing wallets keep working unchanged. `btcli` now ships inside Bittensor itself, so the separate `bittensor-cli` package is removed and its commands take new flags (`--wallet`, `--wallet-hotkey`, `--network`) - docs updated. Existing validator run commands and compose files work as-is.
+- **CLI**: Fix `numi` wallet loading for Bittensor 11 keyfiles and encrypted hotkeys.
+
 ## [3.0.1] - 2026-08-04
 - **Gateway**: Add news feed endpoint `POST /api/gateway/numinous-signals/news` - a low-latency feed scoped to one event, each article pre-scored with a direction, impact score and rationale. Reuses the Numinous Signals credential, $0.002 per call.
 - **Gateway**: Remove the deprecated MAIN-track endpoints - Chutes, Desearch, Perplexity, Vericore, LunarCrush, Unusual Whales, the public-data proxy, and the web-search variants `/openai/responses` and `/openrouter/chat/completions`. All now return 404, leaving only the ten SIGNAL-track endpoints, and the example agents that used them are removed.

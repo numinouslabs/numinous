@@ -13,7 +13,7 @@ import docker.errors
 import docker.types
 import requests.exceptions
 import urllib3.exceptions
-from bittensor_wallet import Wallet
+from bittensor import Wallet
 
 from neurons.validator.models.track import TrackEnum
 from neurons.validator.sandbox.agent_models import AgentOutput, AgentRunnerOutput, RunStatus

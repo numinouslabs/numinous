@@ -4,7 +4,7 @@ import time
 
 import aiohttp
 import aiohttp.typedefs
-from bittensor_wallet import Wallet
+from bittensor import Wallet
 
 from neurons.validator.models.numinous_client import (
     BatchUpdateAgentRunsRequest,

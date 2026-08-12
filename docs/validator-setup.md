@@ -95,13 +95,13 @@ Create and register your validator wallet. See [wallet-setup.md](./wallet-setup.
 
 ```bash
 # Create wallet
-btcli wallet new_coldkey --wallet.name validator
-btcli wallet new_hotkey --wallet.name validator --wallet.hotkey default
+btcli wallet new-coldkey --wallet validator
+btcli wallet new-hotkey --wallet validator --wallet-hotkey default
 
 # Register on subnet
 # Testnet: --netuid 155 --subtensor.network test
 # Mainnet: --netuid 6 --subtensor.network finney
-btcli subnet register --wallet.name validator --wallet.hotkey default --netuid 6 --subtensor.network finney
+btcli subnet register --netuid 6 --wallet validator --wallet-hotkey default --network finney
 ```
 
 ## 4. Configure Environment Variables

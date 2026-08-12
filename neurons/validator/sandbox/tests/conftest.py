@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import docker
 import pytest
-from bittensor_wallet import Wallet
+from bittensor import Wallet
 
 from neurons.validator.utils.logger.logger import NuminousLogger
 
@@ -25,7 +25,14 @@ def mock_docker_client() -> MagicMock:
 
 @pytest.fixture
 def mock_wallet() -> MagicMock:
-    return MagicMock(spec=Wallet)
+    # name/path/hotkey_str are instance attributes on the v11 Wallet, invisible
+    # to spec introspection - set them explicitly
+    wallet = MagicMock(spec=Wallet)
+    wallet.name = "wallet_name"
+    wallet.path = "~/.bittensor/wallets/"
+    wallet.hotkey_str = "hotkey_name"
+
+    return wallet
 
 
 @pytest.fixture

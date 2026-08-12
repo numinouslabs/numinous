@@ -324,9 +324,7 @@ class DatabaseOperations:
                         registered_date,
                         last_updated,
                         blocktime,
-                        blocklisted,
-                        is_validating,
-                        validator_permit
+                        blocklisted
                     )
                 VALUES
                     (
@@ -336,18 +334,14 @@ class DatabaseOperations:
                         ?,
                         CURRENT_TIMESTAMP,
                         ?,
-                        FALSE,
-                        ?,
-                        ?
+                        FALSE
                     )
                 ON CONFLICT
                     (miner_hotkey, miner_uid)
                 DO UPDATE
                     set node_ip = ?,
                     last_updated = CURRENT_TIMESTAMP,
-                    blocktime = ?,
-                    is_validating = excluded.is_validating,
-                    validator_permit = excluded.validator_permit
+                    blocktime = ?
             """,
             miners,
         )
