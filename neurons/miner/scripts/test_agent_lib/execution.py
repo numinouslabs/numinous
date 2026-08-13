@@ -4,7 +4,7 @@ import time
 import uuid
 from pathlib import Path
 
-from bittensor_wallet import Wallet
+from bittensor import Wallet
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
 from rich.prompt import Prompt
