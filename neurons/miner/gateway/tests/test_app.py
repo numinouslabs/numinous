@@ -30,15 +30,15 @@ class TestGatewayApp:
         assert "/api/gateway/lightning-rod/chat/completions" in routes
         assert "/api/gateway/numinous-indicia/x-osint" in routes
         assert "/api/gateway/numinous-indicia/liveuamap" in routes
-        assert "/api/gateway/numinous-signals/signals" in routes
         assert "/api/gateway/numinous-signals/causal-drivers/drivers" in routes
         assert "/api/gateway/numinous-signals/deep-research/report" in routes
         assert "/api/gateway/numinous-signals/corpus/search" in routes
         assert "/api/gateway/numinous-signals/corpus/fetch" in routes
         assert "/api/gateway/numinous-signals/news" in routes
 
-    def test_deprecated_main_track_routes_are_gone(self):
+    def test_deprecated_routes_are_gone(self):
         routes = [route.path for route in app.routes]
+        assert "/api/gateway/numinous-signals/signals" not in routes
         assert "/api/gateway/openai/responses" not in routes
         assert "/api/gateway/openrouter/chat/completions" not in routes
         assert not any("chutes" in route for route in routes)
@@ -48,6 +48,14 @@ class TestGatewayApp:
         assert not any("lunar-crush" in route for route in routes)
         assert not any("unusual-whales" in route for route in routes)
         assert not any("public-data" in route for route in routes)
+
+    def test_removed_signals_endpoint_returns_404(self, client: TestClient):
+        response = client.post(
+            "/api/gateway/numinous-signals/signals",
+            json={"run_id": str(uuid4()), "question": "Will Bitcoin exceed 100k?"},
+        )
+
+        assert response.status_code == 404
 
 
 class TestHealthEndpoint:

@@ -71,63 +71,57 @@ def clip_probability(prediction: float) -> float:
 
 
 # =============================================================================
-# PHASE 1: NUMINOUS SIGNALS
+# PHASE 1: NUMINOUS SIGNALS NEWS FEED
 # =============================================================================
 
 
-def format_signals(signals: list[dict]) -> str:
-    if not signals:
+def format_articles(articles: list[dict]) -> str:
+    if not articles:
         return ""
     lines = []
-    for s in signals:
-        direction = s.get("direction", "neutral")
-        relevance = s.get("relevance_score", 0)
-        impact = s.get("impact_score", 0)
+    for article in articles:
+        direction = article.get("direction", "neutral")
+        impact = article.get("impact_score", 0)
         lines.append(
-            f"- [{direction}] {s.get('headline', '')} "
-            f"(relevance={relevance:.2f}, impact={impact:.2f}, source={s.get('source', '')})"
+            f"- [{direction}] {article.get('headline', '')} "
+            f"(impact={impact:.2f}) — {article.get('rationale', '')}"
         )
     return "\n".join(lines)
 
 
-async def fetch_signals(event: AgentData) -> str:
+async def fetch_news(event: AgentData) -> str:
     global TOTAL_COST
-    print("[SIGNALS] Fetching relevant signals...")
+    print("[NEWS] Fetching scored news for this event...")
 
-    market_url = (event.metadata or {}).get("condition_id")
     payload = {
         "run_id": RUN_ID,
-        "max_events_per_source": 10,
-        "time_window_hours": 72,
+        "event_id": event.event_id,
+        "min_impact_score": 0.55,
+        "order": "impact",
+        "limit": 20,
     }
-    if market_url:
-        payload["market"] = market_url
-    else:
-        payload["question"] = event.title
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    async with httpx.AsyncClient(timeout=30.0) as client:
         try:
-            response = await client.post(f"{SIGNALS_URL}/signals", json=payload)
+            response = await client.post(f"{SIGNALS_URL}/news", json=payload)
             response.raise_for_status()
             data = response.json()
 
-            signals = data.get("signals", [])
+            articles = data.get("articles", [])
             cost = data.get("cost", 0.0)
             TOTAL_COST += cost
 
-            total = data.get("total_event_count", 0)
-            filtered = data.get("filtered_count", 0)
-            failed = data.get("failed_sources", [])
+            total = data.get("count", 0)
 
             print(
-                f"[SIGNALS] Got {len(signals)} signals "
-                f"(total={total}, filtered={filtered}, failed={failed}, cost=${cost:.6f})"
+                f"[NEWS] Got {len(articles)} articles "
+                f"(total matching={total}, cost=${cost:.6f})"
             )
 
-            return format_signals(signals)
+            return format_articles(articles)
 
         except Exception as e:
-            print(f"[SIGNALS] Failed: {e}")
+            print(f"[NEWS] Failed: {e}")
             return ""
 
 
@@ -136,15 +130,15 @@ async def fetch_signals(event: AgentData) -> str:
 # =============================================================================
 
 
-def build_forecast_messages(event: AgentData, signals_context: str) -> list[dict]:
+def build_forecast_messages(event: AgentData, news_context: str) -> list[dict]:
     cutoff_date = event.cutoff.strftime("%Y-%m-%d %H:%M UTC")
 
-    signals_section = ""
-    if signals_context:
-        signals_section = f"""
+    news_section = ""
+    if news_context:
+        news_section = f"""
 
-**Relevant Signals (from Numinous Signals API):**
-{signals_context}
+**Recent News Scored Against This Event (from the Numinous Signals news feed):**
+{news_context}
 """
 
     return [
@@ -152,8 +146,8 @@ def build_forecast_messages(event: AgentData, signals_context: str) -> list[dict
             "role": "developer",
             "content": (
                 "You are an expert forecaster. "
-                "You have access to curated news signals. "
-                "Use them to make well-calibrated probabilistic predictions."
+                "You have access to curated news already scored for impact on the event. "
+                "Use it to make well-calibrated probabilistic predictions."
             ),
         },
         {
@@ -165,8 +159,8 @@ def build_forecast_messages(event: AgentData, signals_context: str) -> list[dict
 {event.description}
 
 **Deadline:** {cutoff_date}
-{signals_section}
-Weigh the signals above against the time remaining, then estimate the probability (0.0 to 1.0) that this event resolves YES.
+{news_section}
+Weigh the news above against the time remaining, then estimate the probability (0.0 to 1.0) that this event resolves YES.
 
 **Required Output Format:**
 PREDICTION: [number between 0.0 and 1.0]
@@ -224,11 +218,11 @@ def parse_llm_response(response_text: str) -> tuple[float, str]:
         return 0.5, "Failed to parse LLM response."
 
 
-async def forecast_with_signals(event: AgentData, signals_context: str) -> dict:
+async def forecast_with_news(event: AgentData, news_context: str) -> dict:
     global TOTAL_COST
     print("[FORECAST] Generating forecast with OpenAI inference...")
 
-    messages = build_forecast_messages(event, signals_context)
+    messages = build_forecast_messages(event, news_context)
 
     for i, model in enumerate(OPENAI_MODELS):
         print(f"[FORECAST] Trying model {i+1}/{len(OPENAI_MODELS)}: {model}")
@@ -284,8 +278,8 @@ async def run_agent(event: AgentData) -> dict:
 
     start_time = time.time()
 
-    signals_context = await fetch_signals(event)
-    result = await forecast_with_signals(event, signals_context)
+    news_context = await fetch_news(event)
+    result = await forecast_with_news(event, news_context)
 
     elapsed = time.time() - start_time
     print(f"[AGENT] Complete in {elapsed:.2f}s")
@@ -296,7 +290,7 @@ async def run_agent(event: AgentData) -> dict:
 
 def agent_main(event_data: dict) -> dict:
     event = AgentData.model_validate(event_data)
-    print(f"\n[AGENT] Running Signals + OpenAI forecast for event: {event.event_id}")
+    print(f"\n[AGENT] Running Signals news + OpenAI forecast for event: {event.event_id}")
     print(f"[AGENT] Title: {event.title}")
 
     return asyncio.run(run_agent(event))

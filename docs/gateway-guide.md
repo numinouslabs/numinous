@@ -12,7 +12,7 @@ The Gateway API provides miner agents with access to external services during sa
 | `/api/gateway/openrouter/chat/completions/inference` | [OpenRouter](#openrouter-endpoints) — hundreds of models, inference only | $0.10 per run, linked account required |
 | `/api/gateway/lightning-rod/` | [Lightning Rod](#lightning-rod-endpoints) — OpenAI-compatible chat completions | Metered per token, linked account required |
 | `/api/gateway/numinous-indicia/` | [Numinous Indicia](#numinous-indicia-endpoints) — geopolitical/OSINT signals | Free, no linking |
-| `/api/gateway/numinous-signals/` | [Numinous Signals](#numinous-signals-endpoints) — scored news signals, causal drivers, deep research, corpus search, low-latency news feed | $0.10 per run, linked account required |
+| `/api/gateway/numinous-signals/` | [Numinous Signals](#numinous-signals-endpoints) — causal drivers, deep research, corpus search, low-latency news feed | $0.10 per run, linked account required |
 
 Note that the **inference-only** routes are the ones served: the web-search variants (`/openai/responses`, `/openrouter/chat/completions`) have been removed. Bring your own search via the signals endpoints instead.
 
@@ -400,133 +400,7 @@ See `neurons/miner/agents/indicia_openai_example.py` for a complete agent that c
 
 ## Numinous Signals Endpoints
 
-Numinous Signals scores recent news and events by relevance and impact to a given question or market, and returns ranked signals. Useful for getting structured context before making a prediction.
-
-### POST /api/gateway/numinous-signals/signals
-
-Compute scored signals for a question or Polymarket market.
-
-**URL:** `{SANDBOX_PROXY_URL}/api/gateway/numinous-signals/signals`
-
-**Request Body:**
-```json
-{
-  "run_id": "550e8400-e29b-41d4-a716-446655440000",
-  "question": "Will Bitcoin exceed 100k by end of March 2026?",
-  "relevance_threshold": 0.25,
-  "max_events_per_source": 10,
-  "time_window_hours": 72
-}
-```
-
-**Parameters:**
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `run_id` | string (UUID) | Yes | - | Execution tracking ID from environment |
-| `market` | string | One of market/question | - | Polymarket URL, slug, or condition ID |
-| `question` | string | One of market/question | - | Free-text question to find signals for |
-| `relevance_threshold` | float | No | 0.25 | Minimum relevance score to include (0.0-1.0) |
-| `max_events_per_source` | integer | No | 25 | Cap per source before dedup (1-100) |
-| `time_window_hours` | integer | No | 72 | Lookback window in hours (1-720) |
-
-Provide exactly one of `market` or `question`, not both.
-
-**Response:**
-```json
-{
-  "signals": [
-    {
-      "headline": "Bitcoin Price Prediction March 2026",
-      "source": "perplexity",
-      "timestamp": "2026-03-27T19:50:27.802990Z",
-      "relevance_score": 1.0,
-      "impact_score": 0.5,
-      "direction": "neutral",
-      "rationale": "Directly addresses BTC price prediction for March 2026.",
-      "source_url": "https://example.com/btc-prediction"
-    }
-  ],
-  "source_weights": [
-    {
-      "source_name": "perplexity",
-      "event_count": 5,
-      "avg_relevance_score": 0.68,
-      "avg_impact_score": 0.36
-    }
-  ],
-  "total_event_count": 20,
-  "filtered_count": 16,
-  "failed_sources": ["exa"],
-  "question_context": "Will Bitcoin exceed 100k by end of March 2026?",
-  "processing_metadata": {
-    "duration_seconds": 24.084,
-    "llm_scored_count": 20,
-    "total_ingested_events": 20,
-    "question_text": "Will Bitcoin exceed 100k by end of March 2026?",
-    "market_yes_price": null
-  },
-  "cost": 0.001
-}
-```
-
-**Signal Fields:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `signals` | array | Scored signals sorted by relevance |
-| `signals[].headline` | string | Signal headline |
-| `signals[].source` | string | Source that produced this signal |
-| `signals[].timestamp` | string (ISO 8601) | When the signal was captured |
-| `signals[].relevance_score` | float | How relevant to the question (0.0-1.0) |
-| `signals[].impact_score` | float | How much it moves the needle (0.0-1.0) |
-| `signals[].direction` | string | `supports_yes`, `supports_no`, or `neutral` |
-| `signals[].rationale` | string | One-sentence explanation of the score |
-| `signals[].source_url` | string | Original source URL (may be null) |
-| `source_weights` | array | Per-source aggregated stats |
-| `total_event_count` | integer | Events after dedup, before threshold filtering |
-| `filtered_count` | integer | Events removed by relevance threshold |
-| `failed_sources` | array | Sources that failed to respond |
-| `cost` | float | Cost for this request ($0.001) |
-
-**Example (using httpx):**
-```python
-import os
-import httpx
-
-PROXY_URL = os.getenv("SANDBOX_PROXY_URL")
-RUN_ID = os.getenv("RUN_ID")
-
-SIGNALS_URL = f"{PROXY_URL}/api/gateway/numinous-signals"
-
-response = httpx.post(
-    f"{SIGNALS_URL}/signals",
-    json={
-        "run_id": RUN_ID,
-        "question": "Will Bitcoin exceed 100k by end of March 2026?",
-        "max_events_per_source": 10,
-        "time_window_hours": 48,
-    },
-    timeout=120.0,
-)
-
-data = response.json()
-for s in data["signals"]:
-    print(f"[{s['direction']}] {s['headline']} (relevance={s['relevance_score']:.2f})")
-```
-
-**Error Handling:**
-
-| Status Code | Description | Recommended Action |
-|-------------|-------------|-------------------|
-| 422 | Validation error (e.g., both market and question provided) | Fix request parameters |
-| 429 | Budget limit exceeded | Reduce calls per run |
-| 503 | Service Unavailable | Retry with exponential backoff |
-| 500 | Internal server error | Retry with fallback |
-
-**Note:** Numinous Signals requires linking your Eversight API key. There is no free tier — you must link your account to use this endpoint. Get your API key at [eversight.numinouslabs.io/api-keys](https://eversight.numinouslabs.io/api-keys). This endpoint can take up to 30 seconds to respond. Set your timeout accordingly (120s recommended).
-
-See `neurons/miner/agents/signals_openai_example.py` for a complete agent that combines Numinous Signals with OpenAI web search for forecasting.
+Numinous Signals is the research layer: a causal graph over events, deep research reports, a searchable corpus of source snapshots, and a low-latency news feed scored against your event. Useful for getting structured context before making a prediction.
 
 ### POST /api/gateway/numinous-signals/causal-drivers/drivers
 
@@ -1010,6 +884,8 @@ def agent_main(event_data):
 **Authentication and billing:** like every gateway endpoint, the request is signed by the validator through the sandbox proxy — your agent never handles an API key. The cost is charged to your run's gateway budget alongside your other gateway calls, not to an Eversight credit balance.
 
 **Errors:** a `404` is returned if the event does not exist or has no tracked market.
+
+See `neurons/miner/agents/signals_openai_example.py` for a complete agent that feeds this news into an OpenAI inference forecast.
 
 ---
 
