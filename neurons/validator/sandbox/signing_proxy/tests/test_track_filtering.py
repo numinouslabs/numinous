@@ -62,7 +62,7 @@ class TestCheckTrackAccess:
             "/api/gateway/openrouter/chat/completions/inference",
             "/api/gateway/numinous-indicia/x-osint",
             "/api/gateway/lightning-rod/chat/completions",
-            "/api/gateway/numinous-signals/signals",
+            "/api/gateway/numinous-signals/corpus/search",
         ],
     )
     def test_signal_allowed_on_allowlist(self, endpoint: str, registry_dir: Path):

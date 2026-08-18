@@ -59,7 +59,7 @@ These are the only services reachable on the SIGNAL track. Anything else returns
 | OpenAI | https://platform.openai.com/api-keys | Limited to `/responses/inference` — no web search |
 | OpenRouter | https://openrouter.ai/settings/keys | Limited to `/chat/completions/inference` |
 | Lightning Rod | https://lightningrod.ai | OpenAI-compatible chat completions |
-| Numinous Signals | https://eversight.numinouslabs.io/api-keys | Scored news signals, causal drivers, deep research, corpus search |
+| Numinous Signals | https://eversight.numinouslabs.io/api-keys | Causal drivers, deep research, corpus search, scored news feed |
 | Numinous Indicia | — | Free, no key or linking required |
 
 Full request/response reference for each: [gateway-guide.md](./gateway-guide.md).
@@ -592,9 +592,9 @@ You'll be prompted for:
 
 **Note:** Lightning Rod has no free tier. Cost is metered per token — $1.00 per 1M input tokens, $6.00 per 1M output tokens.
 
-### Numinous Signals (Scored News Signals)
+### Numinous Signals (Research & Scored News)
 
-Link your Eversight account to access scored news signals for event forecasting:
+Link your Eversight account to access the research and scored news endpoints for event forecasting:
 
 ```bash
 numi services link numinous-signals
@@ -603,7 +603,7 @@ numi services link numinous-signals
 You'll be prompted for:
 - Your Numinous Signals API key (get from https://eversight.numinouslabs.io/api-keys)
 
-**Note:** Numinous Signals has no free tier. You must link your Eversight account. Uses your Eversight credits. The same link also unlocks the causal-drivers, deep-research, and corpus search/fetch endpoints (all free, but authentication is required). See the [gateway guide](./gateway-guide.md#numinous-signals-endpoints) for the full endpoint list.
+**Note:** Numinous Signals has no free tier — you must link your Eversight account, and without the link these endpoints return 403. One link covers the causal-drivers, deep-research, corpus search/fetch and news feed endpoints; their per-call cost is charged to your run's gateway budget. See the [gateway guide](./gateway-guide.md#numinous-signals-endpoints) for the full endpoint list.
 
 ## Activation Schedule
 

@@ -1,5 +1,8 @@
 # Release Notes
 
+## [3.1.1] - 2026-08-11
+- **Gateway**: Remove the on-demand signals endpoint `POST /api/gateway/numinous-signals/signals` - it now returns 404, and `signals_openai_example.py` moves onto the news feed. Miners still on it should switch to `POST /api/gateway/numinous-signals/news` for scored news on their event, or `corpus/search` and `corpus/fetch` for source research. The remaining Numinous Signals endpoints are unchanged, and the same linked credential covers all of them.
+
 ## [3.1.0] - 2026-08-10
 - **Bittensor Upgrade**: Upgraded to Bittensor version 11.0.2 - a full SDK rewrite. Wallets created with Bittensor 11 now work across the validator and the `numi` CLI, and existing wallets keep working unchanged. `btcli` now ships inside Bittensor itself, so the separate `bittensor-cli` package is removed and its commands take new flags (`--wallet`, `--wallet-hotkey`, `--network`) - docs updated. Existing validator run commands and compose files work as-is.
 - **CLI**: Fix `numi` wallet loading for Bittensor 11 keyfiles and encrypted hotkeys.

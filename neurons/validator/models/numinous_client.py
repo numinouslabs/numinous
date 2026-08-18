@@ -14,7 +14,6 @@ from neurons.validator.models.numinous_signals import (
     FeedLanguage,
     NewsFeedArticle,
     NewsOrder,
-    SignalsResponse,
 )
 from neurons.validator.models.openai import OpenAIResponse
 from neurons.validator.models.openrouter import OpenRouterCompletion
@@ -362,18 +361,6 @@ class NuminousIndiciaLiveuamapRequest(GatewayCall):
 
 
 class GatewayNuminousIndiciaSignalsResponse(IndiciaSignalsResponse, GatewayCallResponse):
-    pass
-
-
-class NuminousSignalsRequest(GatewayCall):
-    market: typing.Optional[str] = Field(None, description="Polymarket URL, slug, or condition ID")
-    question: typing.Optional[str] = Field(None, description="Free-text question")
-    relevance_threshold: float = Field(0.25, ge=0.0, le=1.0)
-    max_events_per_source: int = Field(25, ge=1, le=100)
-    time_window_hours: int = Field(72, ge=1, le=720)
-
-
-class GatewayNuminousSignalsResponse(SignalsResponse, GatewayCallResponse):
     pass
 
 

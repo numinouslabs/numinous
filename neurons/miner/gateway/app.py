@@ -22,11 +22,6 @@ from neurons.validator.models.numinous_signals import (
     calculate_causal_drivers_cost,
     calculate_corpus_fetch_cost,
     calculate_corpus_search_cost,
-)
-from neurons.validator.models.numinous_signals import (
-    calculate_cost as calculate_numinous_signals_cost,
-)
-from neurons.validator.models.numinous_signals import (
     calculate_deep_research_cost,
     calculate_news_feed_cost,
 )
@@ -242,36 +237,6 @@ async def lightning_rod_chat_completion(
 
     return models.GatewayLightningRodCompletion(
         **result.model_dump(), cost=calculate_lightning_rod_cost(result)
-    )
-
-
-@gateway_router.post(
-    "/numinous-signals/signals",
-    response_model=models.GatewayNuminousSignalsResponse,
-)
-@cached_gateway_call
-@handle_provider_errors("NuminousSignals")
-async def numinous_signals_compute(
-    request: models.NuminousSignalsRequest,
-) -> models.GatewayNuminousSignalsResponse:
-    api_key = os.getenv("NUMINOUS_SIGNALS_API_KEY")
-    if not api_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="NUMINOUS_SIGNALS_API_KEY not configured",
-        )
-
-    client = NuminousSignalsClient(api_key=api_key)
-    result = await client.compute_signals(
-        market=request.market,
-        question=request.question,
-        relevance_threshold=request.relevance_threshold,
-        max_events_per_source=request.max_events_per_source,
-        time_window_hours=request.time_window_hours,
-    )
-
-    return models.GatewayNuminousSignalsResponse(
-        **result.model_dump(), cost=calculate_numinous_signals_cost()
     )
 
 
