@@ -188,7 +188,7 @@ Weights Set
 
 Scoring lives in one place: **[scoring-system.md](./scoring-system.md)**.
 
-It covers the difficulty-adjusted formula, why matching the market scores exactly zero, the coverage gate, the eligibility ramp for new miners, and how the pool is split. For the system-level mechanics, see [architecture.md](./architecture.md#scoring).
+It covers the difficulty-adjusted formula, why matching the market scores exactly zero, the coverage gate, the eligibility ramp and confidence penalty for new miners, and how the pool is split. For the system-level mechanics, see [architecture.md](./architecture.md#scoring).
 
 The three things that matter while reading the rules below:
 

@@ -29,12 +29,49 @@ where `target` is the market price 7 days later, or the realized outcome if the 
 - A miner must cover at least **85%** of its available `(event, interval)` cells over a rolling 14-day window, or it earns zero regardless of score.
 - A new miner must also accumulate three scored days before it can rank, so first earnings land around `T+10`.
 
-### Splitting the pool
+### Confidence penalty for new miners
 
-Unlike the inactive pools below, the re-forecasting pool is **not winner-takes-all**. Among miners who clear coverage, each miner's take is the squared distance between its score and the 21st-best score, and weights are proportional to those takes:
+A miner is ranked and paid on a pessimistic bound of its mean, not the raw mean. The bound adds a penalty that depends only on how many scored forecast days the miner has accumulated, and it decays to zero within about two weeks:
 
 ```text
-take   = max(baseline - score, 0)^2      baseline = 21st-best mean score
+ucb    = mean + pen(T)
+pen(T) = z * lambda * sqrt(corr_sum[T] / T) * exp(-max(0, T - H0) / tau)
+```
+
+- `T` is the number of scored forecast days for this `(uid, hotkey)`. It resets on re-registration.
+- `z = 1.6449`, the one-sided 95% normal quantile.
+- `lambda` is the field's day-to-day volatility of the mean score, re-estimated every scoring run (see below).
+- `corr_sum[T]` accounts for consecutive forecast days sharing most of their 7-day scoring window, so `T` days are worth fewer than `T` independent samples. It is derived from the lag correlation `rho(l) = 0.95 * max(0, 7 - l) / 7`, which is fitted once field-wide and decays linearly to zero at the horizon:
+
+```text
+corr_sum[T] = 1 + 2 * sum_{l=1}^{T-1} (1 - l/T) * rho(l)
+```
+
+- `H0 = 3` days of full protection: through the first three scored days the penalty is essentially the full day-one gate.
+- `tau = 2.5` days sets the release: after `H0` the penalty decays exponentially, so a newcomer with real skill passes a weaker incumbent within about seven scored days.
+
+The penalty is a fixed handicap schedule: no per-miner statistic enters, so two miners with the same tenure carry the same penalty regardless of how their own scores look. Because lower is better, the penalty holds a debut miner below the ranks its raw mean would earn until its standing rests on enough days.
+
+**How `lambda` is estimated.** Each scoring run builds, per `(uid, hotkey)`, the series of daily mean point scores, keeping only days with at least 50 scored events. The variance of that series is bias-corrected for the same day-to-day correlation, since the sample mean of a correlated series absorbs `corr_sum` days of noise rather than one:
+
+```text
+g = var(m_1..m_T, ddof=1) * (T - 1) / max(T - corr_sum[T], 1)
+```
+
+Every miner with `T >= 4` scored days is included, and `lambda` is the 95th percentile of `sqrt(g)` across them. The tail, not the median, is what prices an unknown newcomer's risk; including short-history miners keeps the newcomers who matter inside that tail.
+
+Illustrative schedule with `lambda = 0.024`, so the day-one gate `z * lambda` is about `0.039`:
+
+| Scored days `T` | 1 | 3 | 5 | 7 | 10 | 14 |
+|---|---|---|---|---|---|---|
+| `pen(T)` | 0.039 | 0.036 | 0.015 | 0.006 | 0.002 | < 0.001 |
+
+### Splitting the pool
+
+Unlike the inactive pools below, the re-forecasting pool is **not winner-takes-all**. Among miners who clear coverage, each miner's take is the squared distance between its bound (`ucb` above) and the 21st-best bound, and weights are proportional to those takes:
+
+```text
+take   = max(baseline - ucb, 0)^2        baseline = 21st-best ucb
 weight = take / sum(takes)
 ```
 

@@ -178,7 +178,7 @@ Coverage uses a different denominator from the score average: it counts the coho
 
 **Eligibility** A miner's coverage denominator is anchored on its **first** activation plus the 7-day horizon, so newly activated miners are not penalised for cells that predate them. Anchoring on first rather than current activation matters: miners re-upload constantly, and anchoring on the latest version would make established miners look newborn.
 
-The miner must then accumulate **three scored days** before it enters the ranking, so that its standing is never computed from a single day's snapshot. These are counted as distinct cohort scoring days rather than calendar days, so a missed scoring run does not advance the clock. A held miner is reported as gated with a reason rather than silently omitted, and the deregistration immunity period is set to cover the whole window.
+The miner must then accumulate **three scored days** before it enters the ranking, so that its standing is never computed from a single day's snapshot. These are counted as distinct cohort scoring days rather than calendar days, so a missed scoring run does not advance the clock. A held miner is reported as gated with a reason rather than silently omitted, and the deregistration immunity period is set to cover the whole window. Once ranked, its value carries a tenure-only confidence penalty that decays to zero over roughly two weeks of scored days; see [scoring-system.md](./scoring-system.md#confidence-penalty-for-new-miners).
 
 Scoring is computed by the backend from the forecasts validators report. Validators no longer score locally.
 
