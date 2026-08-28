@@ -1,4 +1,5 @@
-from datetime import datetime
+from datetime import date, datetime
+from urllib.parse import quote
 from uuid import UUID
 
 import aiohttp
@@ -8,6 +9,7 @@ from neurons.validator.models.numinous_signals import (
     CorpusFetchResponse,
     CorpusSearchResponse,
     DeepResearchReportResponse,
+    MarketGraphResponse,
     NewsFeedPage,
     NewsOrder,
 )
@@ -129,3 +131,17 @@ class NuminousSignalsClient:
                 response.raise_for_status()
                 data = await response.json()
                 return CorpusFetchResponse.model_validate(data)
+
+    async def get_market_graph(
+        self, theme: str, method: str = "INTERSECTION", as_of: date | None = None
+    ) -> MarketGraphResponse:
+        params: dict[str, str] = {"method": method}
+        if as_of is not None:
+            params["as_of"] = as_of.isoformat()
+
+        url = f"{self.__base_url}/api/v1/market-graphs/{quote(theme, safe='')}"
+        async with aiohttp.ClientSession(timeout=self.__timeout, headers=self.__headers) as session:
+            async with session.get(url, params=params) as response:
+                response.raise_for_status()
+                data = await response.json()
+                return MarketGraphResponse.model_validate(data)

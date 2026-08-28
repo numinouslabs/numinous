@@ -23,6 +23,7 @@ from neurons.validator.models.numinous_signals import (
     calculate_corpus_fetch_cost,
     calculate_corpus_search_cost,
     calculate_deep_research_cost,
+    calculate_market_graph_cost,
     calculate_news_feed_cost,
 )
 from neurons.validator.models.openai import calculate_cost as calculate_openai_cost
@@ -387,6 +388,32 @@ async def numinous_signals_news(
         count=page.count,
         articles=articles,
         cost=float(calculate_news_feed_cost()),
+    )
+
+
+@gateway_router.post(
+    "/numinous-signals/market-graphs/graph",
+    response_model=models.GatewayMarketGraphResponse,
+)
+@cached_gateway_call
+@handle_provider_errors("NuminousSignals")
+async def numinous_signals_market_graph(
+    request: models.MarketGraphRequest,
+) -> models.GatewayMarketGraphResponse:
+    api_key = os.getenv("NUMINOUS_SIGNALS_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="NUMINOUS_SIGNALS_API_KEY not configured",
+        )
+
+    client = NuminousSignalsClient(api_key=api_key)
+    graph = await client.get_market_graph(
+        theme=request.theme, method=request.method, as_of=request.as_of
+    )
+
+    return models.GatewayMarketGraphResponse(
+        **graph.model_dump(), cost=float(calculate_market_graph_cost())
     )
 
 
