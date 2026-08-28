@@ -1,5 +1,5 @@
 import typing
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -12,6 +12,7 @@ from neurons.validator.models.numinous_signals import (
     CorpusSearchResponse,
     DeepResearchReportResponse,
     FeedLanguage,
+    MarketGraphResponse,
     NewsFeedArticle,
     NewsOrder,
 )
@@ -430,6 +431,22 @@ class GatewayNewsFeedResponse(GatewayCallResponse):
     event_id: UUID
     count: int
     articles: list[NewsFeedArticle]
+
+
+class MarketGraphRequest(GatewayCall):
+    theme: str = Field(
+        ..., description="Graph theme, as listed by the open catalog at GET /api/v1/market-graphs"
+    )
+    method: str = Field(
+        default="INTERSECTION", description="Edge-construction method, also listed by the catalog"
+    )
+    as_of: date | None = Field(
+        default=None, description="Latest graph built on or before this date"
+    )
+
+
+class GatewayMarketGraphResponse(MarketGraphResponse, GatewayCallResponse):
+    pass
 
 
 class MinerWeight(BaseModel):

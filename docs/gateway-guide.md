@@ -12,7 +12,7 @@ The Gateway API provides miner agents with access to external services during sa
 | `/api/gateway/openrouter/chat/completions/inference` | [OpenRouter](#openrouter-endpoints) — hundreds of models, inference only | $0.10 per run, linked account required |
 | `/api/gateway/lightning-rod/` | [Lightning Rod](#lightning-rod-endpoints) — OpenAI-compatible chat completions | Metered per token, linked account required |
 | `/api/gateway/numinous-indicia/` | [Numinous Indicia](#numinous-indicia-endpoints) — geopolitical/OSINT signals | Free, no linking |
-| `/api/gateway/numinous-signals/` | [Numinous Signals](#numinous-signals-endpoints) — causal drivers, deep research, corpus search, low-latency news feed | $0.10 per run, linked account required |
+| `/api/gateway/numinous-signals/` | [Numinous Signals](#numinous-signals-endpoints) — causal drivers, deep research, corpus search, low-latency news feed, market graphs | $0.10 per run, linked account required |
 
 Note that the **inference-only** routes are the ones served: the web-search variants (`/openai/responses`, `/openrouter/chat/completions`) have been removed. Bring your own search via the signals endpoints instead.
 
@@ -400,7 +400,7 @@ See `neurons/miner/agents/indicia_openai_example.py` for a complete agent that c
 
 ## Numinous Signals Endpoints
 
-Numinous Signals is the research layer: a causal graph over events, deep research reports, a searchable corpus of source snapshots, and a low-latency news feed scored against your event. Useful for getting structured context before making a prediction.
+Numinous Signals is the research layer: causal drivers for your event, deep research reports, a searchable corpus of source snapshots, a low-latency news feed scored against your event, and a theme-level market graph tying related markets to each other and to the listed companies they move. Useful for getting structured context before making a prediction.
 
 ### POST /api/gateway/numinous-signals/causal-drivers/drivers
 
@@ -889,6 +889,198 @@ See `neurons/miner/agents/signals_openai_example.py` for a complete agent that f
 
 ---
 
+### POST /api/gateway/numinous-signals/market-graphs/graph
+
+A causal graph over the markets in a theme, plus the listed companies those markets move.
+
+Markets are not independent. A chip export ban moves a fab's output, which moves a hyperscaler's capex, which moves the data-centre buildout — and a market on any one of them carries information about the others. A theme's graph is that structure, precomputed: the markets it covers as nodes, the causal links between them as directed edges, and the listed companies those markets move as asset links.
+
+Edges carry a mechanism in plain language, so you can see *why* two markets are tied rather than just that they move together, along with a direction and a strength. The graph is a DAG — edges are cycle-checked when it is built, so you can walk it without guarding against loops.
+
+**Check the catalog first.** Themes and methods are not fixed, and this guide deliberately does not list them: which graphs exist changes as new ones are built. Read the open catalog from your own machine before you write your agent:
+
+```bash
+curl https://signals.numinouslabs.io/api/v1/market-graphs
+```
+
+```json
+{
+  "graphs": [
+    {
+      "theme": "ai-infrastructure",
+      "method": "INTERSECTION",
+      "as_of": "2026-08-26",
+      "node_count": 58,
+      "edge_count": 37
+    }
+  ]
+}
+```
+
+No key and no auth — it is a public listing, one row per theme and method, and it is the only place that tells you which combinations actually exist and how recent each one is. Pick a `theme` and `method` from it and pass those. A combination that is not in the catalog is an error, not an empty graph, so re-check the listing if a call that used to work starts failing.
+
+Your agent cannot reach the catalog at runtime — the sandbox reaches the gateway and nothing else — so treat it as a build-time lookup while you are writing the agent, not a call to make inside `agent_main`.
+
+**URL:** `{SANDBOX_PROXY_URL}/api/gateway/numinous-signals/market-graphs/graph`
+
+**Request Body:**
+```json
+{
+  "run_id": "550e8400-e29b-41d4-a716-446655440000",
+  "theme": "ai-infrastructure"
+}
+```
+
+**Parameters:**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `run_id` | string (UUID) | Yes | - | Execution tracking ID from environment |
+| `theme` | string | Yes | - | A theme from the catalog, e.g. `ai-infrastructure` |
+| `method` | string | No | `INTERSECTION` | Edge-construction method, also from the catalog |
+| `as_of` | string (date) | No | today | Latest graph built on or before this date |
+
+`as_of` is a ceiling, not an exact match: you get the most recent graph built on or before that date. A date earlier than the first build returns **404**.
+
+**Response:**
+```json
+{
+  "theme": "ai-infrastructure",
+  "method": "INTERSECTION",
+  "as_of": "2026-08-26",
+  "nodes": [
+    {
+      "event_id": "79048_c2",
+      "event_sentence": "Anthropic completes an initial public offering",
+      "resolution_criteria": "Resolves YES if Anthropic completes its IPO before January 1, 2027."
+    }
+  ],
+  "edges": [
+    {
+      "source_event_id": "79048_c2",
+      "target_event_id": "193867",
+      "mechanism": "Anthropic completing its IPO by 2026 makes it more likely that Anthropic has completed the IPO before OpenAI.",
+      "positive_effect": true,
+      "strength": 10
+    }
+  ],
+  "asset_links": [
+    {
+      "ticker": "AAPL",
+      "event_id": "103636",
+      "weight": 1.0,
+      "shared_pages": 15,
+      "critique": {
+        "impact": 9,
+        "chip": "self",
+        "why": "An iPhone 18 launch would directly drive Apple's flagship product sales and supply-chain demand",
+        "quote": "",
+        "channel": "demand",
+        "evidence_real": true,
+        "tier": "CORE",
+        "selection_weight": 0.9
+      }
+    }
+  ],
+  "cost": 0.0
+}
+```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `theme` | string | Theme of this graph |
+| `method` | string | How the edges were built |
+| `as_of` | string (date) | Date the graph was built |
+| `nodes` | array | Markets in the graph |
+| `edges` | array | Directed causal links between markets |
+| `asset_links` | array | Listed companies the markets move |
+| `cost` | float | Cost for this request |
+
+**Node Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `event_id` | string | Stable ID for the market, referenced by the edges |
+| `event_sentence` | string | The market as a statement |
+| `resolution_criteria` | string | What has to happen for it to resolve YES |
+
+**Edge Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `source_event_id` | string | The market that moves the other |
+| `target_event_id` | string | The market that gets moved |
+| `mechanism` | string | Why the source moves the target, in plain language |
+| `positive_effect` | boolean | Whether the source resolving YES pushes the target toward YES |
+| `strength` | integer | How strongly |
+
+**Asset Link Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ticker` | string | Listed company |
+| `event_id` | string | The market it is linked to |
+| `weight` | float | Share of the market's evidence the company also covers (0.0–1.0) |
+| `shared_pages` | int | Wikipedia pages behind the link |
+| `critique` | object \| null | Review of the link; `null` when it has not been reviewed |
+| `critique.impact` | int | How much the outcome moves the business, 1–10 |
+| `critique.why` | string | The economic mechanism, or why the evidence is an artifact |
+| `critique.channel` | string \| null | `inputs`, `operations`, `demand`, `competition`, `regulation`, or `financial` |
+| `critique.chip` | string | How traceable the link is to the company's filings |
+| `critique.quote` | string | Verbatim filing extract, when there is one |
+| `critique.evidence_real` | boolean | `false` when the shared pages are coincidence rather than a real tie |
+| `critique.tier` | string | Verdict on the link (see below) |
+| `critique.selection_weight` | float | Final weight; `0` for every tier that is not retained |
+
+**Asset links are returned whether or not they survived review** — `tier` tells you what to do with each one. `CORE` and `INCLUDE` are the links to act on, `INDIRECT` is real but two hops out, `EXCLUDE` failed review and is returned so you can see what was considered and rejected, and anything beginning `WATCH_` is still under review. Filtering on `selection_weight > 0` leaves the links that were retained; read `tier` and `why` when you want the reasoning behind the cut.
+
+**Example (using httpx):**
+```python
+import os
+import httpx
+
+PROXY_URL = os.getenv("SANDBOX_PROXY_URL")
+RUN_ID = os.getenv("RUN_ID")
+
+SIGNALS_URL = f"{PROXY_URL}/api/gateway/numinous-signals"
+
+
+def agent_main(event_data):
+    response = httpx.post(
+        f"{SIGNALS_URL}/market-graphs/graph",
+        json={"run_id": RUN_ID, "theme": "ai-infrastructure"},
+        timeout=60.0,
+    )
+    graph = response.json()
+
+    for edge in graph["edges"]:
+        print(edge["strength"], edge["positive_effect"], edge["mechanism"])
+
+    for link in graph["asset_links"]:
+        print(link["ticker"], link["weight"], link["critique"])
+
+    return {"event_id": event_data["event_id"], "prediction": 0.5}
+```
+
+What you do with the graph is up to your agent — the nodes, edges and asset links are yours to read however your forecast needs them.
+
+**Errors:**
+
+| Status | Meaning |
+|--------|---------|
+| `400` | The theme is not served — check the catalog for what exists |
+| `404` | No graph for that theme, method and `as_of` combination |
+| `403` | No linked Numinous Signals credential |
+| `503` | Upstream rate limit or outage — retry later |
+
+**Prerequisite:** you must have linked a Numinous Signals credential — `numi services link numinous-signals`. This is the same provider as `news`, `corpus/search`, `corpus/fetch`, `deep-research/report` and `causal-drivers/drivers`; one key covers all of them, and there is no new service to link.
+
+**Authentication and billing:** like every gateway endpoint, the request is signed by the validator through the sandbox proxy — your agent never handles an API key. The call is metered per request and charged to your run's gateway budget; see the Payments page for current rates.
+
+---
+
 ## Caching
 
 The gateway implements request-level caching to increase consensus stabilit among validators, optimize performance, reduce API costs.
@@ -1076,3 +1268,4 @@ Logs include:
 - **Scoring System:** [scoring-system.md](./scoring-system.md)
 - **Architecture Overview:** [architecture.md](./architecture.md)
 - **Track allowlist (authoritative):** [`track_config.py`](../neurons/validator/sandbox/signing_proxy/track_config.py)
+- **Numinous Signals API reference:** [eversight.numinouslabs.io/docs/signals/endpoints](https://eversight.numinouslabs.io/docs/signals/endpoints) — upstream field-level docs for every signals endpoint

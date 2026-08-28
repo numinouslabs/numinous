@@ -1,5 +1,8 @@
 # Release Notes
 
+## [3.1.2] - 2026-08-27
+- **Gateway**: Add market graph endpoint `POST /api/gateway/numinous-signals/market-graphs/graph` - a causal graph over the markets in a theme, plus the listed companies those markets move. Themes and methods come from the open catalog at `GET /api/v1/market-graphs`. Reuses the Numinous Signals credential.
+
 ## [3.1.1] - 2026-08-11
 - **Gateway**: Remove the on-demand signals endpoint `POST /api/gateway/numinous-signals/signals` - it now returns 404, and `signals_openai_example.py` moves onto the news feed. Miners still on it should switch to `POST /api/gateway/numinous-signals/news` for scored news on their event, or `corpus/search` and `corpus/fetch` for source research. The remaining Numinous Signals endpoints are unchanged, and the same linked credential covers all of them.
 

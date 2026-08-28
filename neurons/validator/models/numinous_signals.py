@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
 from uuid import UUID
@@ -166,11 +166,64 @@ class NewsFeedArticle(BaseModel):
         )
 
 
+class MarketGraphNode(BaseModel):
+    event_id: str
+    event_sentence: str
+    resolution_criteria: str
+
+    model_config = ConfigDict(extra="allow")
+
+
+class MarketGraphEdge(BaseModel):
+    source_event_id: str
+    target_event_id: str
+    mechanism: str
+    positive_effect: bool
+    strength: int
+
+    model_config = ConfigDict(extra="allow")
+
+
+class MarketGraphLinkCritique(BaseModel):
+    impact: int
+    chip: str
+    why: str
+    quote: str
+    channel: str | None
+    evidence_real: bool
+    tier: str
+    selection_weight: float
+
+    model_config = ConfigDict(extra="allow")
+
+
+class MarketGraphAssetLink(BaseModel):
+    ticker: str
+    event_id: str
+    weight: float
+    shared_pages: int
+    critique: MarketGraphLinkCritique | None
+
+    model_config = ConfigDict(extra="allow")
+
+
+class MarketGraphResponse(BaseModel):
+    theme: str
+    method: str
+    as_of: date
+    nodes: list[MarketGraphNode]
+    edges: list[MarketGraphEdge]
+    asset_links: list[MarketGraphAssetLink]
+
+    model_config = ConfigDict(extra="allow")
+
+
 CAUSAL_DRIVERS_COST = Decimal("0.0")
 DEEP_RESEARCH_COST = Decimal("0.0")
 CORPUS_SEARCH_COST = Decimal("0.0015")
 CORPUS_FETCH_COST = Decimal("0.0005")
 NEWS_FEED_COST = Decimal("0.002")
+MARKET_GRAPH_COST = Decimal("0.0")
 
 
 def calculate_causal_drivers_cost() -> Decimal:
@@ -191,3 +244,7 @@ def calculate_corpus_fetch_cost() -> Decimal:
 
 def calculate_news_feed_cost() -> Decimal:
     return NEWS_FEED_COST
+
+
+def calculate_market_graph_cost() -> Decimal:
+    return MARKET_GRAPH_COST
