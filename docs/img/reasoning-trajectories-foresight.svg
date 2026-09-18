@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" style="background:#fff" viewBox="0 0 720 350" role="img" aria-label="Illustrative window: the price jumps on day 5 and day 11. Events E2, E3 and E5 lie within a day of those jumps and are key. The reasoning anticipated E3 and E4; only E3 is key, so the foresight share is one third.">
+ <g font-family="Georgia,serif" font-size="13">
+  <text x="36" y="30" font-size="14" font-weight="bold">An illustrative market</text>
+  <rect x="220" y="56" width="80" height="180" fill="#2a78d6" fill-opacity=".09"/>
+  <rect x="460" y="56" width="80" height="180" fill="#2a78d6" fill-opacity=".09"/>
+  <text x="260" y="50" text-anchor="middle" fill="#555" font-style="italic" font-size="12">largest move &#177; 1 day</text>
+  <text x="500" y="50" text-anchor="middle" fill="#555" font-style="italic" font-size="12">second largest &#177; 1 day</text>
+   <polyline fill="none" stroke="#8a8378" stroke-width="1.6" stroke-linejoin="round" points="60,161.2 100,158.8 140,163.6 180,156.4 220,154 260,122.8 300,125.2 340,120.4 380,118 420,122.8 460,115.6 500,84.4 540,86.8 580,82 620,79.6"/>
+  <line x1="220" y1="154" x2="260" y2="122.8" stroke="#2a78d6" stroke-width="3" stroke-linecap="round"/>
+  <line x1="460" y1="115.6" x2="500" y2="84.4" stroke="#2a78d6" stroke-width="3" stroke-linecap="round"/>
+  <text x="52" y="180" text-anchor="end" fill="#777" font-size="11.5">0.42</text>
+  <text x="628" y="78" fill="#777" font-size="11.5">0.76</text>
+   <line x1="60" y1="226" x2="620" y2="226" stroke="#c9c2b6" stroke-width="1.5"/>
+  <circle cx="140" cy="226" r="6" fill="#fff" stroke="#8a8378" stroke-width="1.5"/>
+  <circle cx="220" cy="226" r="6" fill="#2e6657" stroke="#fff" stroke-width="2"/>
+  <circle cx="260" cy="226" r="6" fill="#2e6657" stroke="#fff" stroke-width="2"/>
+  <circle cx="260" cy="226" r="11" fill="none" stroke="#2a78d6" stroke-width="2"/>
+  <circle cx="380" cy="226" r="6" fill="#fff" stroke="#8a8378" stroke-width="1.5"/>
+  <circle cx="380" cy="226" r="11" fill="none" stroke="#2a78d6" stroke-width="2"/>
+  <circle cx="500" cy="226" r="6" fill="#2e6657" stroke="#fff" stroke-width="2"/>
+  <circle cx="580" cy="226" r="6" fill="#fff" stroke="#8a8378" stroke-width="1.5"/>
+  <g text-anchor="middle" font-size="12">
+   <text x="140" y="208">E1</text><text x="220" y="208">E2</text><text x="260" y="206">E3</text><text x="380" y="206">E4</text><text x="500" y="208">E5</text><text x="580" y="208">E6</text>
+  </g>
+  <g text-anchor="middle" fill="#777" font-size="11.5">
+   <text x="60" y="254">day 0</text><text x="260" y="254">day 5</text><text x="500" y="254">day 11</text><text x="620" y="254">day 14</text>
+  </g>
+   <circle cx="66" cy="288" r="5" fill="#2e6657"/>
+  <text x="78" y="292" font-size="12">key event, K</text>
+  <circle cx="196" cy="288" r="5" fill="#fff" stroke="#8a8378" stroke-width="1.5"/>
+  <text x="208" y="292" font-size="12">other development</text>
+  <circle cx="366" cy="288" r="7" fill="none" stroke="#2a78d6" stroke-width="2"/>
+  <text x="380" y="292" font-size="12">anticipated by the reasoning, A</text>
+   <text x="60" y="326" fill="#555" font-style="italic" font-size="12.5">K = {E2, E3, E5} &#160;&#183;&#160; A = {E3, E4} &#160;&#183;&#160; foresight = 1/3 &#160;&#183;&#160; with a = 2, s = 2 + 2 &#215; 1/3 = 2.67</text>
+ </g>
+</svg>

@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" style="background:#fff" viewBox="0 0 720 300" role="img" aria-label="A 14-day window with the reasoning written at the start and the ledger written at the end, and the three conditions a market must meet to get a ledger">
+ <defs><marker id="h1" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#8a8378"/></marker></defs>
+ <g font-family="Georgia,serif" font-size="13">
+  <text x="36" y="32" font-size="14" font-weight="bold">A &#160;The window</text>
+  <line x1="60" y1="92" x2="660" y2="92" stroke="#c9c2b6" stroke-width="1.5"/>
+  <circle cx="90" cy="92" r="6" fill="#2a78d6" stroke="#fff" stroke-width="2"/>
+  <text x="90" y="117" text-anchor="middle">day 0 : reasoning written</text>
+  <text x="90" y="134" text-anchor="middle" fill="#777" font-size="11.5">first submission that day</text>
+  <circle cx="630" cy="92" r="6" fill="#2e6657" stroke="#fff" stroke-width="2"/>
+  <text x="630" y="117" text-anchor="middle" fill="#2e6657">day 14 : ledger written</text>
+  <text x="630" y="134" text-anchor="middle" fill="#777" font-size="11.5">evidence from the window only</text>
+  <path d="M610,70 H112" fill="none" stroke="#8a8378" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#h1)"/>
+  <text x="360" y="62" text-anchor="middle" fill="#555" font-style="italic" font-size="12">the ledger looks back over what the reasoning could only anticipate</text>
+   <text x="36" y="186" font-size="14" font-weight="bold">B &#160;Which markets get a ledger</text>
+  <rect fill="#f7f6f2" stroke="#c9c2b6" stroke-width="1.2" x="60" y="206" width="180" height="58" rx="6"/>
+  <text x="150" y="230" text-anchor="middle">forecast on day 0</text>
+  <text x="150" y="248" text-anchor="middle" fill="#777" font-size="11.5">someone wrote a reasoning</text>
+  <rect fill="#f7f6f2" stroke="#c9c2b6" stroke-width="1.2" x="270" y="206" width="180" height="58" rx="6"/>
+  <text x="360" y="230" text-anchor="middle">price moved &#8805; 0.10</text>
+  <text x="360" y="248" text-anchor="middle" fill="#777" font-size="11.5">there is a move to explain</text>
+  <rect fill="#f7f6f2" stroke="#c9c2b6" stroke-width="1.2" x="480" y="206" width="180" height="58" rx="6"/>
+  <text x="570" y="230" text-anchor="middle">&#8805; 3 dated items found</text>
+  <text x="570" y="248" text-anchor="middle" fill="#777" font-size="11.5">there is evidence to explain it</text>
+  <path d="M240,235 H264" fill="none" stroke="#8a8378" stroke-width="1.2" marker-end="url(#h1)"/>
+  <path d="M450,235 H474" fill="none" stroke="#8a8378" stroke-width="1.2" marker-end="url(#h1)"/>
+  <text x="360" y="286" text-anchor="middle" fill="#555" font-style="italic" font-size="12">a market failing any test is settled for that window and carries no reasoning score</text>
+ </g>
+</svg>

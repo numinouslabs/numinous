@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" style="background:#fff" viewBox="0 0 720 312" role="img" aria-label="Pipeline that builds a hindsight ledger: market and window, a model call for search queries, corpus search and the market's news stream merged into dated evidence, a second model call that writes the ledger using the price path">
+ <defs><marker id="h2" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#8a8378"/></marker></defs>
+ <g font-family="Georgia,serif" font-size="13">
+  <text x="36" y="30" font-size="14" font-weight="bold">One market, one window</text>
+  <g fill="none" stroke="#8a8378" stroke-width="1.2">
+   <path d="M190,80 H224" marker-end="url(#h2)"/>
+   <path d="M420,80 H454" marker-end="url(#h2)"/>
+   <path d="M110,106 V138" marker-end="url(#h2)"/>
+   <path d="M575,106 V138" marker-end="url(#h2)"/>
+   <path d="M300,166 H394" marker-end="url(#h2)"/>
+   <path d="M450,192 V224" marker-end="url(#h2)"/>
+   <path d="M190,256 H224" marker-end="url(#h2)"/>
+   <path d="M500,256 H534" marker-end="url(#h2)"/>
+  </g>
+   <rect fill="#f7f6f2" stroke="#c9c2b6" stroke-width="1.2" x="30" y="54" width="160" height="52" rx="6"/>
+  <text x="110" y="85" text-anchor="middle">market title</text>
+   <rect fill="#e3f3ec" stroke="#2e6657" stroke-width="1.6" x="230" y="54" width="190" height="52" rx="6"/>
+  <text x="325" y="85" text-anchor="middle" fill="#2e6657" font-weight="bold">model call 1</text>
+   <rect fill="#f7f6f2" stroke="#c9c2b6" stroke-width="1.2" x="460" y="54" width="230" height="52" rx="6"/>
+  <text x="575" y="85" text-anchor="middle">corpus search</text>
+   <rect fill="#f7f6f2" stroke="#c9c2b6" stroke-width="1.2" x="30" y="140" width="270" height="52" rx="6"/>
+  <text x="165" y="162" text-anchor="middle">this market's news stream</text>
+  <text x="165" y="180" text-anchor="middle" fill="#777" font-size="11.5">impact &#8805; 0.3</text>
+   <rect fill="#f7f6f2" stroke="#c9c2b6" stroke-width="1.2" x="400" y="140" width="290" height="52" rx="6"/>
+  <text x="545" y="162" text-anchor="middle">dated evidence, at most 60 items</text>
+  <text x="545" y="180" text-anchor="middle" fill="#777" font-size="11.5">[N1], [N2] &#8230; news &#160;&#183;&#160; [C1], [C2] &#8230; corpus</text>
+   <rect fill="#f7f6f2" stroke="#c9c2b6" stroke-width="1.2" x="30" y="230" width="160" height="52" rx="6"/>
+  <text x="110" y="261" text-anchor="middle">market price path</text>
+   <rect fill="#e3f3ec" stroke="#2e6657" stroke-width="1.6" x="230" y="226" width="270" height="60" rx="6"/>
+  <text x="365" y="251" text-anchor="middle" fill="#2e6657" font-weight="bold">model call 2</text>
+  <text x="365" y="270" text-anchor="middle" fill="#2e6657" font-weight="bold">find market moving events ex post</text>
+   <rect x="540" y="226" width="150" height="60" rx="6" fill="#fff" stroke="#2a78d6" stroke-width="1.6"/>
+  <text x="554" y="249" fill="#2a78d6" font-weight="bold">Ledger</text>
+  <text x="554" y="270" font-size="12">E1 &#8230; E8 dated events</text>
+ </g>
+</svg>
