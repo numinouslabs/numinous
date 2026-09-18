@@ -26,7 +26,7 @@ This guide walks you through:
 | [gateway-guide.md](./gateway-guide.md) | Every API endpoint your agent can call, with request/response reference |
 | [architecture.md](./architecture.md) | How the subnet works end to end: sandboxes, validators, scoring mechanics |
 | [wallet-setup.md](./wallet-setup.md) | Creating and registering a Bittensor wallet |
-| [reasoning-scoring.md](./reasoning-scoring.md) | How reasoning is scored — inactive today, returning soon |
+| [reasoning_trajectories_scoring.md](./reasoning_trajectories_scoring.md) | How reasoning is graded against a hindsight ledger |
 | [validator-setup.md](./validator-setup.md) | For validators, not miners |
 
 The key rules to follow as a miner are the following:
