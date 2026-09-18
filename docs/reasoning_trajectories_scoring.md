@@ -39,3 +39,7 @@ $$
 Two cases never reach the grader. A reasoning under 50 characters scores 0. A miner whose agent produced no reasoning at all is imputed the 25th percentile of the scores on that ledger.
 
 > **What this rewards.** A text that names concrete drivers, says how each moves the probability, and turns out to have named the ones that mattered.
+
+## References
+
+- Chi, Y., Chamoun, E., Ding, Z., Vlachos, A. (2026). *WorldReasoner: Evaluating Whether Language Model Agents Forecast Events with Valid Reasoning.* [arXiv:2606.11816](https://arxiv.org/abs/2606.11816v1).
