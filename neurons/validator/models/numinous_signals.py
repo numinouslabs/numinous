@@ -218,6 +218,60 @@ class MarketGraphResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+NUMINOUS1_MODEL_ID = "numinous/numinous-1"
+NUMINOUS1_MAX_OUTPUT_TOKENS = 4096
+
+
+class ChatRole(StrEnum):
+    SYSTEM = "system"
+    USER = "user"
+    ASSISTANT = "assistant"
+    TOOL = "tool"
+
+
+class Numinous1Message(BaseModel):
+    role: ChatRole
+    content: str | None = None
+
+    model_config = ConfigDict(extra="allow")
+
+
+class Numinous1Usage(BaseModel):
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    cost: float
+
+    model_config = ConfigDict(extra="allow")
+
+
+class Numinous1ResponseMessage(BaseModel):
+    role: ChatRole
+    content: str | None = None
+    tool_calls: list[dict] | None = None
+
+    model_config = ConfigDict(extra="allow")
+
+
+class Numinous1Choice(BaseModel):
+    index: int
+    message: Numinous1ResponseMessage
+    finish_reason: str | None
+
+    model_config = ConfigDict(extra="allow")
+
+
+class Numinous1Response(BaseModel):
+    id: str
+    object: str = "chat.completion"
+    created: int
+    model: str
+    choices: list[Numinous1Choice]
+    usage: Numinous1Usage
+
+    model_config = ConfigDict(extra="allow")
+
+
 CAUSAL_DRIVERS_COST = Decimal("0.0")
 DEEP_RESEARCH_COST = Decimal("0.0")
 CORPUS_SEARCH_COST = Decimal("0.0015")

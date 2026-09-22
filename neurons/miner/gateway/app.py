@@ -28,6 +28,7 @@ from neurons.validator.models.numinous_signals import (
 )
 from neurons.validator.models.openai import calculate_cost as calculate_openai_cost
 from neurons.validator.models.openrouter import calculate_cost as calculate_openrouter_cost
+from neurons.validator.models.openrouter import calculate_decision_cost
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +175,31 @@ async def openrouter_chat_completion_inference(
 
     return models.GatewayOpenRouterCompletion(
         **result.model_dump(), cost=calculate_openrouter_cost(result)
+    )
+
+
+@gateway_router.post(
+    "/openrouter/decisions/inference", response_model=models.GatewayOpenRouterDecision
+)
+@cached_gateway_call
+@handle_provider_errors("OpenRouter")
+async def openrouter_decisions_inference(
+    request: models.OpenRouterDecisionsRequest,
+) -> models.GatewayOpenRouterDecision:
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="OPENROUTER_API_KEY not configured",
+        )
+
+    client = OpenRouterClient(api_key=api_key)
+    result = await client.decisions(
+        model=request.model, state=request.state, questions=request.questions
+    )
+
+    return models.GatewayOpenRouterDecision(
+        **result.model_dump(), cost=calculate_decision_cost(result)
     )
 
 
@@ -415,6 +441,41 @@ async def numinous_signals_market_graph(
     return models.GatewayMarketGraphResponse(
         **graph.model_dump(), cost=float(calculate_market_graph_cost())
     )
+
+
+@gateway_router.post(
+    "/numinous-signals/numinous-1/chat/completions",
+    response_model=models.GatewayNuminous1Response,
+)
+@cached_gateway_call
+@handle_provider_errors("NuminousSignals")
+async def numinous_signals_numinous1(
+    request: models.Numinous1Request,
+) -> models.GatewayNuminous1Response:
+    api_key = os.getenv("NUMINOUS_SIGNALS_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="NUMINOUS_SIGNALS_API_KEY not configured",
+        )
+
+    client = NuminousSignalsClient(api_key=api_key)
+    completion = await client.numinous1_chat_completion(
+        messages=[message.model_dump(exclude_none=True) for message in request.messages],
+        model=request.model,
+        temperature=request.temperature,
+        max_tokens=request.max_tokens,
+        top_p=request.top_p,
+        stop=request.stop,
+        seed=request.seed,
+        logprobs=request.logprobs,
+        top_logprobs=request.top_logprobs,
+        response_format=request.response_format,
+        tools=request.tools,
+        tool_choice=request.tool_choice,
+    )
+
+    return models.GatewayNuminous1Response(**completion.model_dump(), cost=completion.usage.cost)
 
 
 app.include_router(gateway_router)

@@ -6,5 +6,6 @@ TRACK_ALLOWED_PREFIXES: dict[str, list[str]] = {
         "/api/gateway/numinous-signals/",
         "/api/gateway/openai/responses/inference",
         "/api/gateway/openrouter/chat/completions/inference",
+        "/api/gateway/openrouter/decisions/inference",
     ],
 }

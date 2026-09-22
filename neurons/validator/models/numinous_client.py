@@ -2,11 +2,13 @@ import typing
 from datetime import date, datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from neurons.validator.models.lightning_rod import LightningRodCompletion
 from neurons.validator.models.numinous_indicia import IndiciaSignalsResponse
 from neurons.validator.models.numinous_signals import (
+    NUMINOUS1_MAX_OUTPUT_TOKENS,
+    NUMINOUS1_MODEL_ID,
     CausalDriversResponse,
     CorpusFetchResponse,
     CorpusSearchResponse,
@@ -15,9 +17,15 @@ from neurons.validator.models.numinous_signals import (
     MarketGraphResponse,
     NewsFeedArticle,
     NewsOrder,
+    Numinous1Message,
+    Numinous1Response,
 )
 from neurons.validator.models.openai import OpenAIResponse
-from neurons.validator.models.openrouter import OpenRouterCompletion
+from neurons.validator.models.openrouter import (
+    DecisionQuestion,
+    OpenRouterCompletion,
+    OpenRouterDecision,
+)
 from neurons.validator.models.sources import SourceItem
 from neurons.validator.models.track import TrackEnum
 
@@ -326,6 +334,22 @@ class GatewayOpenRouterCompletion(OpenRouterCompletion, GatewayCallResponse):
     pass
 
 
+class OpenRouterDecisionsRequest(GatewayCall):
+    model: str = Field(..., description="OpenRouter model ID (e.g. typesafe/jev-1.13)")
+    state: JsonValue = Field(..., description="The situation to decide about")
+    questions: dict[str, DecisionQuestion] = Field(
+        ...,
+        min_length=1,
+        description="Questions to answer, keyed by a caller-chosen name",
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class GatewayOpenRouterDecision(OpenRouterDecision, GatewayCallResponse):
+    pass
+
+
 class LightningRodMessage(BaseModel):
     role: str = Field(..., description="Message role: 'system', 'user', 'assistant', or 'tool'")
     content: typing.Optional[typing.Union[str, list]] = Field(
@@ -446,6 +470,29 @@ class MarketGraphRequest(GatewayCall):
 
 
 class GatewayMarketGraphResponse(MarketGraphResponse, GatewayCallResponse):
+    pass
+
+
+class Numinous1Request(GatewayCall):
+    messages: list[Numinous1Message] = Field(..., min_length=1)
+    model: str = Field(default=NUMINOUS1_MODEL_ID, description="Served model id")
+    temperature: float = Field(default=0.0, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=1024, ge=1, le=NUMINOUS1_MAX_OUTPUT_TOKENS)
+    top_p: float | None = Field(default=None, gt=0.0, le=1.0)
+    stop: str | list[str] | None = None
+    seed: int | None = None
+    logprobs: bool | None = None
+    top_logprobs: int | None = Field(default=None, ge=0, le=20)
+    response_format: dict | None = Field(
+        default=None, description="Use this to force structured output"
+    )
+    tools: list[dict] | None = None
+    tool_choice: str | dict | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class GatewayNuminous1Response(Numinous1Response, GatewayCallResponse):
     pass
 
 

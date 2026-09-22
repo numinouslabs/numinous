@@ -2,7 +2,11 @@ import typing
 
 import aiohttp
 
-from neurons.validator.models.openrouter import OpenRouterCompletion
+from neurons.validator.models.openrouter import (
+    DecisionQuestion,
+    OpenRouterCompletion,
+    OpenRouterDecision,
+)
 
 
 class OpenRouterClient:
@@ -58,3 +62,25 @@ class OpenRouterClient:
                 response.raise_for_status()
                 data = await response.json()
                 return OpenRouterCompletion.model_validate(data)
+
+    async def decisions(
+        self,
+        model: str,
+        state: typing.Any,
+        questions: dict[str, DecisionQuestion],
+    ) -> OpenRouterDecision:
+        body: dict[str, typing.Any] = {
+            "model": model,
+            "state": state,
+            "questions": {
+                key: question.model_dump(exclude_none=True) for key, question in questions.items()
+            },
+        }
+
+        url = f"{self.__base_url}/systemone"
+
+        async with aiohttp.ClientSession(timeout=self.__timeout, headers=self.__headers) as session:
+            async with session.post(url, json=body) as response:
+                response.raise_for_status()
+                data = await response.json()
+                return OpenRouterDecision.model_validate(data)
