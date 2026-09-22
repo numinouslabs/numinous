@@ -1,5 +1,9 @@
 # Release Notes
 
+## [3.1.3] - 2026-09-22
+- **Gateway**: Add the Jev decisions endpoint `POST /api/gateway/openrouter/decisions/inference` - TypeSafe's System One model, which returns typed answers with calibrated probabilities instead of text: `noul` for a yes/no probability, `choice` for a pick with a distribution, `score` for a position on an ordered scale, all answered in one call. Reuses the OpenRouter credential, input billed at $0.042/MTok and output free. See `neurons/miner/agents/jev_example.py`.
+- **Gateway**: Add the Numinous-1 endpoint `POST /api/gateway/numinous-signals/numinous-1/chat/completions` - our own forecasting model, trained to weigh evidence and commit to a calibrated probability. Ask for structured output with `response_format`; streaming is not served. Reuses the Numinous Signals credential, metered per token. See `neurons/miner/agents/numinous1_example.py`.
+
 ## [3.1.2] - 2026-08-27
 - **Gateway**: Add market graph endpoint `POST /api/gateway/numinous-signals/market-graphs/graph` - a causal graph over the markets in a theme, plus the listed companies those markets move. Themes and methods come from the open catalog at `GET /api/v1/market-graphs`. Reuses the Numinous Signals credential.
 

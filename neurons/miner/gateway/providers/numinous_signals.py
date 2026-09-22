@@ -12,6 +12,7 @@ from neurons.validator.models.numinous_signals import (
     MarketGraphResponse,
     NewsFeedPage,
     NewsOrder,
+    Numinous1Response,
 )
 
 DEFAULT_BASE_URL = "https://signals.numinouslabs.io"
@@ -145,3 +146,43 @@ class NuminousSignalsClient:
                 response.raise_for_status()
                 data = await response.json()
                 return MarketGraphResponse.model_validate(data)
+
+    async def numinous1_chat_completion(
+        self,
+        messages: list[dict],
+        model: str,
+        temperature: float,
+        max_tokens: int,
+        top_p: float | None = None,
+        stop: str | list[str] | None = None,
+        seed: int | None = None,
+        logprobs: bool | None = None,
+        top_logprobs: int | None = None,
+        response_format: dict | None = None,
+        tools: list[dict] | None = None,
+        tool_choice: str | dict | None = None,
+    ) -> Numinous1Response:
+        body: dict = {
+            "messages": messages,
+            "model": model,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        optional = {
+            "top_p": top_p,
+            "stop": stop,
+            "seed": seed,
+            "logprobs": logprobs,
+            "top_logprobs": top_logprobs,
+            "response_format": response_format,
+            "tools": tools,
+            "tool_choice": tool_choice,
+        }
+        body.update({key: value for key, value in optional.items() if value is not None})
+
+        url = f"{self.__base_url}/api/v1/numinous-1/chat/completions"
+        async with aiohttp.ClientSession(timeout=self.__timeout, headers=self.__headers) as session:
+            async with session.post(url, json=body) as response:
+                response.raise_for_status()
+                data = await response.json()
+                return Numinous1Response.model_validate(data)

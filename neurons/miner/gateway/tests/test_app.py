@@ -10,9 +10,13 @@ from neurons.validator.models.numinous_signals import (
     CorpusSearchResponse,
     CorpusSearchResult,
     NewsFeedPage,
+    Numinous1Choice,
+    Numinous1Response,
+    Numinous1ResponseMessage,
+    Numinous1Usage,
 )
 from neurons.validator.models.openai import OpenAIResponse
-from neurons.validator.models.openrouter import OpenRouterCompletion
+from neurons.validator.models.openrouter import OpenRouterCompletion, OpenRouterDecision
 
 
 @pytest.fixture
@@ -27,6 +31,7 @@ class TestGatewayApp:
         assert "/api/health" in routes
         assert "/api/gateway/openai/responses/inference" in routes
         assert "/api/gateway/openrouter/chat/completions/inference" in routes
+        assert "/api/gateway/openrouter/decisions/inference" in routes
         assert "/api/gateway/lightning-rod/chat/completions" in routes
         assert "/api/gateway/numinous-indicia/x-osint" in routes
         assert "/api/gateway/numinous-indicia/liveuamap" in routes
@@ -504,3 +509,229 @@ class TestNuminousNewsFeedEndpoint:
         )
 
         assert response.status_code == 422
+
+
+class TestNuminous1Endpoint:
+    _PATH = "/api/gateway/numinous-signals/numinous-1/chat/completions"
+
+    def _completion(self, cost: float = 0.0013) -> Numinous1Response:
+        return Numinous1Response(
+            id="chatcmpl-test",
+            created=1758480000,
+            model="numinous/numinous-1",
+            choices=[
+                Numinous1Choice(
+                    index=0,
+                    message=Numinous1ResponseMessage(
+                        role="assistant", content='{"probability": 0.12}'
+                    ),
+                    finish_reason="stop",
+                )
+            ],
+            usage=Numinous1Usage(
+                prompt_tokens=1509, completion_tokens=605, total_tokens=2114, cost=cost
+            ),
+        )
+
+    @patch("neurons.miner.gateway.app.NuminousSignalsClient")
+    @patch.dict("os.environ", {"NUMINOUS_SIGNALS_API_KEY": "test-key"})
+    def test_reports_the_upstream_cost(self, mock_client_class, client: TestClient):
+        mock_instance = mock_client_class.return_value
+        mock_instance.numinous1_chat_completion = AsyncMock(return_value=self._completion())
+
+        response = client.post(
+            self._PATH,
+            json={
+                "run_id": str(uuid4()),
+                "messages": [{"role": "user", "content": "Will the strait reopen?"}],
+            },
+        )
+
+        assert response.status_code == 200
+        result = response.json()
+        assert result["cost"] == 0.0013
+        assert result["usage"]["cost"] == 0.0013
+        assert result["model"] == "numinous/numinous-1"
+
+    @patch("neurons.miner.gateway.app.NuminousSignalsClient")
+    @patch.dict("os.environ", {"NUMINOUS_SIGNALS_API_KEY": "test-key"})
+    def test_forwards_every_parameter_and_not_run_id(self, mock_client_class, client: TestClient):
+        mock_instance = mock_client_class.return_value
+        mock_instance.numinous1_chat_completion = AsyncMock(return_value=self._completion())
+
+        response = client.post(
+            self._PATH,
+            json={
+                "run_id": str(uuid4()),
+                "messages": [{"role": "user", "content": "Will the strait reopen?"}],
+                "max_tokens": 256,
+                "temperature": 0.0,
+                "top_p": 0.9,
+                "seed": 7,
+                "response_format": {"type": "json_object"},
+            },
+        )
+
+        assert response.status_code == 200
+        kwargs = mock_instance.numinous1_chat_completion.call_args.kwargs
+        assert "run_id" not in kwargs
+        assert kwargs["max_tokens"] == 256
+        assert kwargs["top_p"] == 0.9
+        assert kwargs["seed"] == 7
+        assert kwargs["response_format"] == {"type": "json_object"}
+        assert kwargs["messages"] == [{"role": "user", "content": "Will the strait reopen?"}]
+
+    @patch.dict("os.environ", {"NUMINOUS_SIGNALS_API_KEY": ""})
+    def test_missing_api_key(self, client: TestClient):
+        response = client.post(
+            self._PATH,
+            json={"run_id": str(uuid4()), "messages": [{"role": "user", "content": "hi"}]},
+        )
+
+        assert response.status_code == 401
+        assert "NUMINOUS_SIGNALS_API_KEY not configured" in response.json()["detail"]
+
+    def test_rejects_streaming(self, client: TestClient):
+        response = client.post(
+            self._PATH,
+            json={
+                "run_id": str(uuid4()),
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": True,
+            },
+        )
+
+        assert response.status_code == 422
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"messages": []},
+            {"temperature": 2.5},
+            {"max_tokens": 0},
+            {"max_tokens": 4097},
+            {"top_logprobs": 21},
+        ],
+    )
+    def test_rejects_out_of_range_params(self, overrides, client: TestClient):
+        base = {"run_id": str(uuid4()), "messages": [{"role": "user", "content": "hi"}]}
+
+        response = client.post(self._PATH, json={**base, **overrides})
+
+        assert response.status_code == 422
+
+
+class TestOpenRouterDecisionsEndpoint:
+    _DECISIONS_PATH = "/api/gateway/openrouter/decisions/inference"
+
+    @staticmethod
+    def _mock_decision() -> OpenRouterDecision:
+        return OpenRouterDecision(
+            id="gen-dec-abc123",
+            model="typesafe/jev-1.13-20260917",
+            provider="TypeSafe",
+            answers={
+                "will_happen": {"type": "noul", "noul": 0.24},
+                "direction": {
+                    "type": "choice",
+                    "choice": "toward_no",
+                    "probabilities": {"toward_yes": 0.05, "toward_no": 0.95},
+                    "confidence": 0.9,
+                },
+            },
+            usage={"input_tokens": 1675, "output_tokens": 79, "cost": "0.00007"},
+        )
+
+    @staticmethod
+    def _body(**overrides) -> dict:
+        body = {
+            "run_id": str(uuid4()),
+            "model": "typesafe/jev-1.13",
+            "state": {"question": "Will the Fed cut?"},
+            "questions": {
+                "will_happen": {"type": "noul", "instructions": "Will this resolve YES?"}
+            },
+        }
+        body.update(overrides)
+        return body
+
+    @patch("neurons.miner.gateway.app.OpenRouterClient")
+    @patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"})
+    def test_decisions_success(self, mock_client_class, client: TestClient):
+        mock_instance = mock_client_class.return_value
+        mock_instance.decisions = AsyncMock(return_value=self._mock_decision())
+
+        response = client.post(self._DECISIONS_PATH, json=self._body())
+
+        assert response.status_code == 200
+        result = response.json()
+        assert result["id"] == "gen-dec-abc123"
+        assert result["provider"] == "TypeSafe"
+        assert result["answers"]["will_happen"]["noul"] == 0.24
+        assert result["cost"] == pytest.approx(0.00007)
+
+    @patch("neurons.miner.gateway.app.OpenRouterClient")
+    @patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"})
+    def test_decisions_forwards_parsed_questions(self, mock_client_class, client: TestClient):
+        mock_instance = mock_client_class.return_value
+        mock_instance.decisions = AsyncMock(return_value=self._mock_decision())
+
+        client.post(
+            self._DECISIONS_PATH,
+            json=self._body(
+                questions={
+                    "direction": {
+                        "type": "choice",
+                        "instructions": "Which way?",
+                        "criteria": {"up": "More likely", "down": "Less likely"},
+                    },
+                    "strength": {
+                        "type": "score",
+                        "instructions": "How strong?",
+                        "criteria": ["weak", "strong"],
+                    },
+                }
+            ),
+        )
+
+        kwargs = mock_instance.decisions.await_args.kwargs
+        assert kwargs["model"] == "typesafe/jev-1.13"
+        assert kwargs["questions"]["direction"].criteria == {
+            "up": "More likely",
+            "down": "Less likely",
+        }
+        assert kwargs["questions"]["strength"].criteria == ["weak", "strong"]
+
+    @pytest.mark.parametrize(
+        "questions",
+        [
+            {"q": {"type": "essay", "instructions": "Write"}},
+            {"q": {"type": "noul"}},
+            {"q": {"type": "choice", "instructions": "Pick"}},
+            {},
+        ],
+    )
+    @patch("neurons.miner.gateway.app.OpenRouterClient")
+    @patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"})
+    def test_decisions_rejects_invalid_questions(
+        self, mock_client_class, client: TestClient, questions: dict
+    ):
+        mock_instance = mock_client_class.return_value
+        mock_instance.decisions = AsyncMock()
+
+        response = client.post(self._DECISIONS_PATH, json=self._body(questions=questions))
+
+        assert response.status_code == 422
+        mock_instance.decisions.assert_not_called()
+
+    @patch.dict("os.environ", {}, clear=True)
+    def test_decisions_without_api_key_returns_401(self, client: TestClient):
+        # the payload must differ from every other test: cached_gateway_call keys on the
+        # body with run_id excluded, so a repeat would be served from cache as a 200
+        response = client.post(
+            self._DECISIONS_PATH,
+            json=self._body(state={"question": "unique-no-api-key-probe"}),
+        )
+
+        assert response.status_code == 401
+        assert "OPENROUTER_API_KEY not configured" in response.json()["detail"]

@@ -10,9 +10,10 @@ The Gateway API provides miner agents with access to external services during sa
 |---|---|---|
 | `/api/gateway/openai/responses/inference` | [OpenAI](#openai-endpoints) — GPT-5 series, inference only | $1.00 per run, linked account required |
 | `/api/gateway/openrouter/chat/completions/inference` | [OpenRouter](#openrouter-endpoints) — hundreds of models, inference only | $0.10 per run, linked account required |
+| `/api/gateway/openrouter/decisions/inference` | [Jev](#post-apigatewayopenrouterdecisionsinference) — typed decisions with calibrated probabilities, no text | Input $0.042/MTok, output free, linked account required |
 | `/api/gateway/lightning-rod/` | [Lightning Rod](#lightning-rod-endpoints) — OpenAI-compatible chat completions | Metered per token, linked account required |
 | `/api/gateway/numinous-indicia/` | [Numinous Indicia](#numinous-indicia-endpoints) — geopolitical/OSINT signals | Free, no linking |
-| `/api/gateway/numinous-signals/` | [Numinous Signals](#numinous-signals-endpoints) — causal drivers, deep research, corpus search, low-latency news feed, market graphs | $0.10 per run, linked account required |
+| `/api/gateway/numinous-signals/` | [Numinous Signals](#numinous-signals-endpoints) — causal drivers, deep research, corpus search, low-latency news feed, market graphs, Numinous-1 forecasting model | $0.10 per run, linked account required |
 
 Note that the **inference-only** routes are the ones served: the web-search variants (`/openai/responses`, `/openrouter/chat/completions`) have been removed. Bring your own search via the signals endpoints instead.
 
@@ -202,6 +203,113 @@ The response is a standard OpenAI-compatible chat completion object (`choices[0]
 | 500 | Internal server error | Retry with fallback model |
 
 > **Note:** Link your OpenRouter API key via `numi services link openrouter`. There is no free tier.
+
+### POST /api/gateway/openrouter/decisions/inference
+
+Ask [Jev](https://typesafe.ai) — TypeSafe's System One model — for **typed decisions instead of text**. You declare the shape of the answer up front and it returns those fields filled in, each with a calibrated probability, in a single call.
+
+It does not generate prose. That is the point: the answer space is closed, so a malformed or off-schema answer is not representable. If you need a written rationale, assemble one from the typed answers (see `jev_example.py`).
+
+**URL:** `{SANDBOX_PROXY_URL}/api/gateway/openrouter/decisions/inference`
+
+**Request Body:**
+
+```json
+{
+  "run_id": "your-run-id",
+  "model": "typesafe/jev-1.13",
+  "state": {
+    "question": "Will the Fed cut rates in December 2026?",
+    "evidence": ["Core CPI 3.8% YoY vs 3.5% consensus"]
+  },
+  "questions": {
+    "will_happen": {
+      "type": "noul",
+      "instructions": "Will this resolve YES by the deadline?"
+    },
+    "direction": {
+      "type": "choice",
+      "instructions": "Which way does the evidence point?",
+      "criteria": {"toward_yes": "More likely", "toward_no": "Less likely"}
+    },
+    "strength": {
+      "type": "score",
+      "instructions": "How strong is the evidence?",
+      "criteria": ["weak", "moderate", "strong"]
+    }
+  }
+}
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `model` | string | Yes | `typesafe/jev-1.13`, or `~typesafe/jev-latest` to track the newest release |
+| `state` | string, object or array | Yes | The situation to decide about. Not a prompt — just the facts, in whatever shape suits you |
+| `questions` | object | Yes | At least one question, keyed by a name you choose. The same keys come back in `answers` |
+
+**Question types:**
+
+| `type` | `criteria` you send | What comes back |
+|---|---|---|
+| `noul` | optional `{"true": ..., "false": ...}` labels | `noul` — one probability from 0 to 1. The number *is* the answer and the certainty |
+| `choice` | object of `option_key → description`, max 255 | `choice` (the key picked), `probabilities` over all keys, `confidence` |
+| `score` | ordered array of level labels, lowest first | `score` (a float on the index scale), `legend`, `probabilities`, `confidence` |
+
+**Response:**
+
+```json
+{
+  "id": "gen-dec-...",
+  "model": "typesafe/jev-1.13-20260917",
+  "provider": "TypeSafe",
+  "answers": {
+    "will_happen": {"type": "noul", "noul": 0.24},
+    "direction": {
+      "type": "choice", "choice": "toward_no",
+      "probabilities": {"toward_yes": 0.05, "toward_no": 0.95}, "confidence": 0.9
+    },
+    "strength": {
+      "type": "score", "score": 0.67,
+      "legend": {"0": "weak", "1": "moderate", "2": "strong"},
+      "probabilities": {"0": 0.45, "1": 0.43, "2": 0.12}, "confidence": 0.0
+    }
+  },
+  "usage": {"input_tokens": 1675, "output_tokens": 79, "cost": 0.00007},
+  "cost": 0.00007
+}
+```
+
+**Choosing between `choice` and `score`:** `score` treats your list as a number line and returns the *expected value*, so it can land between two labels — which is what you want for a magnitude. `choice` always returns one of your keys. Never use `score` for unordered categories: with mass split between the first and last option it will return the middle one, which may be an option it actually ruled out.
+
+**Example:**
+
+```python
+response = await client.post(
+    f"{PROXY_URL}/api/gateway/openrouter/decisions/inference",
+    json={
+        "run_id": RUN_ID,
+        "model": "typesafe/jev-1.13",
+        "state": {"question": event_title, "evidence": evidence_lines},
+        "questions": {
+            "will_happen": {"type": "noul", "instructions": "Will this resolve YES?"}
+        },
+    },
+)
+probability = response.json()["answers"]["will_happen"]["noul"]
+```
+
+**Error Handling:**
+
+| Status Code | Description | Recommended Action |
+|-------------|-------------|-------------------|
+| 422 | Schema rejected — unknown `type`, no questions, missing `criteria`, or more than 255 choice options | Fix the question schema; the error names the field path |
+| 400 | Model does not exist — only System One models serve this route, chat models do not | Use `typesafe/jev-1.13` |
+| 401 | Authentication failed | Link your OpenRouter key |
+| 429 | Rate limit exceeded | Retry with exponential backoff |
+
+> **Notes:** Context window is 32k. Output tokens are free, so cost scales with how much `state` you send. Answers are not deterministic — the same input can drift by about 0.01, so assert on ranges, not exact values. Uses the same linked OpenRouter credential as the chat completions route.
 
 ---
 
@@ -1081,6 +1189,138 @@ What you do with the graph is up to your agent — the nodes, edges and asset li
 
 ---
 
+### POST /api/gateway/numinous-signals/numinous-1/chat/completions
+
+Numinous-1, our own forecasting model, served through the gateway.
+
+Numinous-1 is purpose-built for forecasting. It is trained specifically to read a forecasting question, weigh the evidence around it, and commit to a calibrated probability — the kind of judgement general-purpose models are not tuned to make. It learned from belief-update traces, where a forecaster saw evidence, revised, and ended closer to the truth, so it updates a prior only as far as the evidence warrants.
+
+Hand it a question and an evidence pack. Pair it with a general-purpose model for open-ended work — drafting, tool use, long chains of reasoning — and give Numinous-1 the decision.
+
+**Request body**
+
+```json
+{
+  "run_id": "550e8400-e29b-41d4-a716-446655440000",
+  "messages": [
+    {"role": "user", "content": "QUESTION: ...\nRESOLVES YES IF: ...\nEVIDENCE:\n- 2026-09-18: ..."}
+  ],
+  "max_tokens": 400,
+  "temperature": 0.0,
+  "response_format": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "forecast",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "probability": {"type": "number"},
+          "reasoning": {"type": "string"}
+        },
+        "required": ["probability", "reasoning"],
+        "additionalProperties": false
+      }
+    }
+  }
+}
+```
+
+**Parameters**
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `run_id` | string (uuid) | required | Your agent's run id |
+| `messages` | array | required | At least one message; roles `system`, `user`, `assistant`, `tool` |
+| `model` | string | `numinous/numinous-1` | The only served model |
+| `max_tokens` | integer | `1024` | 1–4096 |
+| `temperature` | number | `0.0` | 0.0–2.0 |
+| `top_p` | number | unset | 0.0–1.0 |
+| `stop` | string or array | unset | Stop sequences |
+| `seed` | integer | unset | For reproducible sampling |
+| `logprobs` | boolean | unset | Return token logprobs |
+| `top_logprobs` | integer | unset | 0–20, requires `logprobs` |
+| `response_format` | object | unset | `json_object` or `json_schema` — **use this for structured output** |
+| `tools` / `tool_choice` | array / string | unset | OpenAI-style function tools |
+
+Any field not in this table is rejected with a **422** — including `stream`. The gateway does not stream: the validator's signing proxy buffers whole responses, so a streamed body cannot reach your agent. One POST, one JSON response.
+
+**Response**
+
+```json
+{
+  "id": "chatcmpl-a657981663dac4aa",
+  "object": "chat.completion",
+  "created": 1790024296,
+  "model": "numinous/numinous-1",
+  "choices": [
+    {
+      "index": 0,
+      "message": {"role": "assistant", "content": "{\"probability\": 0.12, \"reasoning\": \"...\"}"},
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {"prompt_tokens": 943, "completion_tokens": 65, "total_tokens": 1008, "cost": 0.0004},
+  "cost": 0.0004
+}
+```
+
+| Field | Notes |
+|---|---|
+| `choices[].message.content` | The model's answer |
+| `usage.prompt_tokens` / `usage.completion_tokens` | Token counts actually used |
+| `usage.cost` / `cost` | The same figure — metered per token, not a flat per-call price |
+
+**Ask for structured output with `response_format`.** Prompt-level formatting instructions are ignored — telling the model "reply with raw JSON" does not stop it wrapping the answer in a fenced markdown block. `response_format` does. Treat the probability as the product and the reasoning as a short note.
+
+**Tell it the date.** Like any analyst, it has no clock. Put today's date and the deadline in the prompt.
+
+**Example**
+
+```python
+import httpx
+
+payload = {
+    "run_id": RUN_ID,
+    "messages": [{"role": "user", "content": prompt}],
+    "max_tokens": 400,
+    "temperature": 0.0,
+    "response_format": {"type": "json_object"},
+}
+
+async with httpx.AsyncClient(timeout=120.0) as client:
+    response = await client.post(
+        f"{PROXY_URL}/api/gateway/numinous-signals/numinous-1/chat/completions",
+        json=payload,
+    )
+    response.raise_for_status()
+    data = response.json()
+
+forecast = json.loads(data["choices"][0]["message"]["content"])
+```
+
+**Errors**
+
+| Status | Meaning |
+|---|---|
+| `422` | Unknown field (including `stream`) or a parameter out of range |
+| `402` | The linked Numinous Signals account is out of credit |
+| `403` | No linked Numinous Signals credential |
+| `503` | Upstream rate limit or outage — retry later |
+
+**Prerequisite:** you must have linked a Numinous Signals credential — `numi services link numinous-signals`. This is the same provider as `news`, `corpus/search`, `corpus/fetch`, `deep-research/report`, `causal-drivers/drivers` and `market-graphs/graph`; one key covers all of them, and there is no new service to link.
+
+**Authentication and billing:** like every gateway endpoint, the request is signed by the validator through the sandbox proxy — your agent never handles an API key. The call is metered per token and charged to your run's gateway budget.
+
+**Latency:** a forecast is normally 1–2 s. The first call after the model has been idle takes longer while it comes back up — usually 10–30 s, occasionally a few minutes. Keep client retries on and use a timeout of at least 120 s.
+
+**Performance:** see the [Numinous-1 leaderboard](https://leaderboard.numinouslabs.io/leaderboard/numinous-1).
+
+See `neurons/miner/agents/numinous1_example.py` for a complete agent that builds an evidence pack from the news feed and corpus search, then asks Numinous-1 for a structured forecast.
+
+Full guidelines, including measured examples of how it updates on evidence, are at [eversight.numinouslabs.io/docs/signals/numinous-1](https://eversight.numinouslabs.io/docs/signals/numinous-1).
+
+---
+
 ## Caching
 
 The gateway implements request-level caching to increase consensus stabilit among validators, optimize performance, reduce API costs.
@@ -1269,3 +1509,5 @@ Logs include:
 - **Architecture Overview:** [architecture.md](./architecture.md)
 - **Track allowlist (authoritative):** [`track_config.py`](../neurons/validator/sandbox/signing_proxy/track_config.py)
 - **Numinous Signals API reference:** [eversight.numinouslabs.io/docs/signals/endpoints](https://eversight.numinouslabs.io/docs/signals/endpoints) — upstream field-level docs for every signals endpoint
+- **Numinous-1 guidelines:** [eversight.numinouslabs.io/docs/signals/numinous-1](https://eversight.numinouslabs.io/docs/signals/numinous-1) — what the model is for, how to prompt it, and how it updates on evidence
+- **Jev / System One models:** [docs.typesafe.ai](https://docs.typesafe.ai) — upstream reference for the `noul`, `choice` and `score` primitives
