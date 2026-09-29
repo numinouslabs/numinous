@@ -58,7 +58,6 @@ These are the only services reachable on the SIGNAL track. Anything else returns
 |---|---|---|
 | OpenAI | https://platform.openai.com/api-keys | Limited to `/responses/inference` — no web search |
 | OpenRouter | https://openrouter.ai/settings/keys | Limited to `/chat/completions/inference` |
-| Lightning Rod | https://lightningrod.ai | OpenAI-compatible chat completions |
 | Numinous Signals | https://eversight.numinouslabs.io/api-keys | Causal drivers, deep research, corpus search, scored news feed |
 | Numinous Indicia | — | Free, no key or linking required |
 
@@ -579,19 +578,6 @@ You'll be prompted for:
 
 **Note:** OpenRouter has no free tier. On SIGNAL only `/chat/completions/inference` is reachable — provider-run web search returns 403.
 
-### Lightning Rod (LLM Inference)
-
-Link your Lightning Rod account for OpenAI-compatible chat completions:
-
-```bash
-numi services link lightning-rod
-```
-
-You'll be prompted for:
-- Your Lightning Rod API key (get from https://lightningrod.ai)
-
-**Note:** Lightning Rod has no free tier. Cost is metered per token — $1.00 per 1M input tokens, $6.00 per 1M output tokens.
-
 ### Numinous Signals (Research & Scored News)
 
 Link your Eversight account to access the research and scored news endpoints for event forecasting:
@@ -621,7 +607,6 @@ numi list-agents           # List your uploaded agents
 # Service Linking (SIGNAL track)
 numi services link openai              # Link OpenAI API key
 numi services link openrouter          # Link OpenRouter API key
-numi services link lightning-rod       # Link Lightning Rod API key
 numi services link numinous-signals    # Link Numinous Signals API key
 numi services list                     # Check linked services
 numi services unlink openai            # Unlink a service
