@@ -1,42 +1,87 @@
 import asyncio
 import time
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from typing import NamedTuple
 
 import numpy as np
-import pandas as pd
-from bittensor import ErrorCode
+from bittensor import ErrorCode, Metagraph
 from bittensor import SetWeights as SetWeightsIntent
 from bittensor import Subtensor, Wallet
 
-from neurons.validator.db.operations import DatabaseOperations
-from neurons.validator.models.numinous_client import GetWeightsResponse
-from neurons.validator.models.weights import WeightsModel
-from neurons.validator.numinous_client.client import NuminousClient
+from neurons.validator.db.dkg_operations import DkgDatabaseOperations
+from neurons.validator.models.dkg import DkgScoreModel
 from neurons.validator.scheduler.task import AbstractTask
-from neurons.validator.utils.common.converters import pydantic_models_to_dataframe
 from neurons.validator.utils.common.interval import BLOCK_DURATION
 from neurons.validator.utils.common.weights import U16_MAX, process_weights
 from neurons.validator.utils.logger.logger import NuminousLogger
 from neurons.validator.version import __spec_version__ as spec_version
 
+SCORES_IN_EFFECT_AFTER = timedelta(hours=1)
+TOP_MINERS = 25
+WEIGHT_EXPONENT = 2
+ORDERING_SHARE = 0.02
 
-# this is just for avoiding typos in column names
-@dataclass
-class SWNames:
-    miner_uid: str = "miner_uid"
-    miner_hotkey: str = "miner_hotkey"
-    event_score: str = "event_score"
-    metagraph_score: str = "metagraph_score"
-    event_id: str = "event_id"
-    spec_version_name: str = "spec_version"
-    created_at: str = "created_at"
-    raw_weights: str = "raw_weights"
+
+class _RegisteredMiner(NamedTuple):
+    uid: int
+    hotkey: str
+    block_at_registration: int
+
+
+def _registered_miners(metagraph: Metagraph) -> list[_RegisteredMiner]:
+    return [
+        _RegisteredMiner(neuron.uid, neuron.hotkey, neuron.block_at_registration)
+        for neuron in metagraph.neurons
+    ]
+
+
+def _top_weights(uids: np.ndarray, weights: np.ndarray) -> list[tuple[int, float]]:
+    order = np.argsort(-weights, kind="stable")[:5]
+    return [(int(uids[index]), round(float(weights[index]), 5)) for index in order]
+
+
+def _owner_uid(metagraph: Metagraph) -> int:
+    for neuron in metagraph.neurons:
+        if neuron.hotkey == metagraph.owner_hotkey:
+            return neuron.uid
+
+    raise ValueError("The subnet owner is not registered in the metagraph.")
+
+
+def _weights_from_scores(
+    miners: list[_RegisteredMiner], scores: list[DkgScoreModel], owner_uid: int
+) -> dict[int, float]:
+    score_of = {(score.miner_uid, score.miner_hotkey): score.score for score in scores}
+    scored = [miner for miner in miners if score_of.get((miner.uid, miner.hotkey), 0.0) > 0]
+    ranked = sorted(
+        scored,
+        key=lambda miner: (
+            -score_of[(miner.uid, miner.hotkey)],
+            -miner.block_at_registration,
+            miner.uid,
+        ),
+    )
+
+    if not ranked:
+        return {owner_uid: 1.0}
+
+    powered = {
+        miner.uid: score_of[(miner.uid, miner.hotkey)] ** WEIGHT_EXPONENT
+        for miner in ranked[:TOP_MINERS]
+    }
+    powered_total = sum(powered.values())
+    rank_total = sum(1 / rank for rank in range(1, len(ranked) + 1))
+    weights = {
+        miner.uid: ORDERING_SHARE / rank / rank_total
+        + (1 - ORDERING_SHARE) * powered.get(miner.uid, 0.0) / powered_total
+        for rank, miner in enumerate(ranked, start=1)
+    }
+    return dict(sorted(weights.items()))
 
 
 class SetWeights(AbstractTask):
     interval: float
-    db_operations: DatabaseOperations
+    dkg_operations: DkgDatabaseOperations
     logger: NuminousLogger
     netuid: int
     network: str
@@ -46,22 +91,18 @@ class SetWeights(AbstractTask):
     def __init__(
         self,
         interval_seconds: float,
-        db_operations: DatabaseOperations,
+        dkg_operations: DkgDatabaseOperations,
         logger: NuminousLogger,
         netuid: int,
         network: str,
         wallet: Wallet,
-        api_client: NuminousClient,
         timeout_seconds: float = 60.0 * 15,
     ):
         if not isinstance(interval_seconds, float) or interval_seconds <= 0:
             raise ValueError("interval_seconds must be a positive number (float).")
 
-        if not isinstance(db_operations, DatabaseOperations):
-            raise TypeError("db_operations must be an instance of DatabaseOperations.")
-
-        if not isinstance(api_client, NuminousClient):
-            raise TypeError("api_client must be an instance of NuminousClient.")
+        if not isinstance(dkg_operations, DkgDatabaseOperations):
+            raise TypeError("dkg_operations must be an instance of DkgDatabaseOperations.")
 
         if not isinstance(timeout_seconds, float) or timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be a positive number (float).")
@@ -73,19 +114,13 @@ class SetWeights(AbstractTask):
             raise ValueError("network must be a non-empty string.")
 
         self.interval = interval_seconds
-        self.db_operations = db_operations
+        self.dkg_operations = dkg_operations
         self.logger = logger
 
         self.netuid = netuid
         self.network = network
         self.wallet = wallet
-        self.api_client = api_client
         self.timeout_seconds = timeout_seconds
-
-        self.current_hotkeys = None
-        self.n_hotkeys = None
-        self.current_uids = None
-        self.current_miners_df = None
 
         self.last_set_weights_at = round(time.time())
         self.spec_version = spec_version
@@ -97,17 +132,6 @@ class SetWeights(AbstractTask):
     @property
     def interval_seconds(self):
         return self.interval
-
-    def copy_metagraph_state(self):
-        self.current_hotkeys = list(self.metagraph.hotkeys)
-        self.n_hotkeys = len(self.current_hotkeys)
-        self.current_uids = [neuron.uid for neuron in self.metagraph.neurons]
-        self.current_miners_df = pd.DataFrame(
-            {
-                "miner_hotkey": self.current_hotkeys,
-                "miner_uid": self.current_uids,
-            }
-        )
 
     async def time_to_set_weights(self):
         self.logger.debug("Weights rate limit", extra={"step": "fetching"})
@@ -152,96 +176,11 @@ class SetWeights(AbstractTask):
 
             return True
 
-    def merge_weights_with_metagraph(self, weights_from_api) -> pd.DataFrame:
-        merged_weights = pydantic_models_to_dataframe(weights_from_api)
-        merged_weights = pd.merge(
-            self.current_miners_df,
-            merged_weights,
-            on=[SWNames.miner_uid, SWNames.miner_hotkey],
-            how="left",
-        )
-
-        stats = {
-            "len_weights_from_api": len(weights_from_api),
-            "len_merged_weights": len(merged_weights),
-            "len_current_miners": len(self.current_miners_df),
-            "len_non_zero_weights": int((merged_weights[SWNames.metagraph_score].notna()).sum()),
-        }
-        self.logger.debug("Merged API weights with current metagraph", extra=stats)
-
-        merged_weights = merged_weights[
-            [SWNames.miner_uid, SWNames.miner_hotkey, SWNames.metagraph_score]
-        ]
-        data_types = {
-            SWNames.miner_uid: "int",
-            SWNames.miner_hotkey: "str",
-            SWNames.metagraph_score: "float",
-        }
-        merged_weights = merged_weights.astype(data_types)
-        merged_weights[SWNames.metagraph_score] = merged_weights[SWNames.metagraph_score].fillna(
-            0.0
-        )
-
-        return merged_weights
-
-    def check_scores_sanity(self, filtered_scores: pd.DataFrame) -> bool:
-        # Do some sanity checks before and throw assert exceptions if there are issues
-
-        # we should have unique miner_uids
-        assert filtered_scores[
-            SWNames.miner_uid
-        ].is_unique, (
-            f"miner_uids are not unique: {filtered_scores[SWNames.miner_uid].value_counts()[:5]}"
-        )
-        # we should have the same miner_uids as the current metagraph
-        assert set(filtered_scores[SWNames.miner_uid]) == set(
-            self.current_miners_df[SWNames.miner_uid]
-        ), "The miner_uids are not the same as the current metagraph"
-
-        # metagraph scores should not be all 0.0
-        assert (
-            not filtered_scores[SWNames.metagraph_score].eq(0.0).all()
-        ), "All metagraph_scores are 0.0. This is not expected."
-
-        # metagraph scores should not sum up to 0.0
-        # redundant, they are positive and not all 0.0
-        assert (
-            not filtered_scores[SWNames.metagraph_score].sum() == 0.0
-        ), "The sum of metagraph_scores is 0.0."
-
-        # no NaNs/nulls in filtered_scores in any column
-        assert not filtered_scores.isnull().values.any(), "There are NaNs in filtered_scores."
-
-        return True
-
-    def renormalize_weights(self, filtered_scores: pd.DataFrame) -> pd.DataFrame:
-        # this is re-normalizing the weights for the current miners
-        normalized_scores = filtered_scores.copy()
-
-        # normalize the metagraph scores - guaranteed that sum is strictly positive
-        normalized_scores[SWNames.raw_weights] = normalized_scores[SWNames.metagraph_score].div(
-            normalized_scores[SWNames.metagraph_score].sum()
-        )
-
-        # for debug, log top 5 and bottom 5 miners by raw_weights
-        top_5 = normalized_scores.nlargest(5, SWNames.raw_weights)
-        bottom_5 = normalized_scores.nsmallest(5, SWNames.raw_weights)
-        self.logger.debug(
-            "Top 5 and bottom 5 miners by raw_weights",
-            extra={
-                "top_5": top_5.to_dict(),
-                "bottom_5": bottom_5.to_dict(),
-                "sum_scores": normalized_scores[SWNames.metagraph_score].sum(),
-            },
-        )
-
-        return normalized_scores
-
     async def preprocess_weights(
-        self, normalized_scores: pd.DataFrame
+        self, weights: dict[int, float], num_uids: int
     ) -> tuple[np.ndarray, np.ndarray]:
-        miner_uids = np.array(normalized_scores[SWNames.miner_uid].values, dtype=np.int64)
-        raw_weights = np.array(normalized_scores[SWNames.raw_weights].values, dtype=np.float32)
+        miner_uids = np.array(list(weights), dtype=np.int64)
+        raw_weights = np.array(list(weights.values()), dtype=np.float32)
 
         min_allowed_weights = await self.chain_client.hyperparameters.min_allowed_weights(
             self.netuid
@@ -252,7 +191,7 @@ class SetWeights(AbstractTask):
         processed_uids, processed_weights = process_weights(
             uids=miner_uids,
             weights=raw_weights,
-            num_neurons=self.metagraph.num_uids,
+            num_neurons=num_uids,
             min_allowed_weights=min_allowed_weights,
             max_weight_limit=max_weight_limit,
         )
@@ -298,6 +237,18 @@ class SetWeights(AbstractTask):
                     "original_weights[:10]": [round(w, 5) for w in raw_weights.tolist()[:10]],
                 },
             )
+
+        self.logger.debug(
+            "Weights processed for the chain",
+            extra={
+                "min_allowed_weights": min_allowed_weights,
+                "max_weight_limit": max_weight_limit,
+                "uids": len(miner_uids),
+                "uids_with_a_weight": len(processed_uids),
+                "top_before": _top_weights(miner_uids, raw_weights),
+                "top_after": _top_weights(processed_uids, processed_weights),
+            },
+        )
 
         return processed_uids, processed_weights
 
@@ -346,79 +297,42 @@ class SetWeights(AbstractTask):
                 },
             )
 
-    def get_owner_neuron(self):
-        owner_uid = None
-        owner_hotkey = self.metagraph.owner_hotkey
-
-        for neuron in self.metagraph.neurons:
-            if neuron.hotkey == owner_hotkey:
-                owner_uid = neuron.uid
-                break
-
-        assert owner_uid is not None, "Owner uid not found in metagraph uids"
-
-        return {"uid": owner_uid, "hotkey": owner_hotkey}
-
-    def _convert_api_weights_to_weights(
-        self, api_response: GetWeightsResponse
-    ) -> list[WeightsModel]:
-        weights = []
-        for weight in api_response.weights:
-            weights.append(
-                WeightsModel(
-                    miner_uid=weight.miner_uid,
-                    miner_hotkey=weight.miner_hotkey,
-                    metagraph_score=weight.aggregated_weight,
-                    aggregated_at=api_response.aggregated_at,
-                )
-            )
-
-        self.logger.debug(
-            "Converted API response to weights",
-            extra={
-                "num_weights": len(weights),
-                "aggregated_at": api_response.aggregated_at.isoformat(),
-            },
-        )
-
-        return weights
-
     async def run(self):
         async with asyncio.timeout(delay=self.timeout_seconds):
             async with Subtensor(self.network) as chain_client:
                 self.chain_client = chain_client
 
-                self.metagraph = await chain_client.subnets.metagraph(self.netuid)
-
-                self.copy_metagraph_state()
-
-                can_set_weights = await self.time_to_set_weights()
-
-                if not can_set_weights:
+                if not await self.time_to_set_weights():
                     return
 
-                api_response = await self.api_client.get_weights()
+                scores = await self.dkg_operations.get_latest_scores(
+                    scored_until=datetime.now(timezone.utc) - SCORES_IN_EFFECT_AFTER
+                )
 
-                self.logger.debug(
-                    "Fetched centralized weights from API",
+                if not scores:
+                    self.logger.warning("No DKG scores in effect yet, weights not set.")
+                    return
+
+                metagraph = await chain_client.subnets.metagraph(self.netuid)
+                owner_uid = _owner_uid(metagraph)
+                weights = _weights_from_scores(_registered_miners(metagraph), scores, owner_uid)
+
+                self.logger.info(
+                    "Weights from DKG scores",
                     extra={
-                        "aggregated_at": api_response.aggregated_at.isoformat(),
-                        "num_weights": len(api_response.weights),
-                        "count": api_response.count,
+                        "scored_at": scores[0].scored_at.isoformat(),
+                        "miners_with_a_weight": len(weights),
+                        "all_to_owner": set(weights) == {owner_uid},
                     },
                 )
 
-                weights_from_api = self._convert_api_weights_to_weights(api_response)
+                weight_of_every_uid = {
+                    neuron.uid: weights.get(neuron.uid, 0.0) for neuron in metagraph.neurons
+                }
+                uids, processed_weights = await self.preprocess_weights(
+                    weight_of_every_uid, metagraph.num_uids
+                )
 
-                if not weights_from_api:
-                    raise ValueError("Failed to get weights from API (empty response).")
-
-                merged_weights = self.merge_weights_with_metagraph(weights_from_api)
-
-                self.check_scores_sanity(merged_weights)
-
-                normalized_scores = self.renormalize_weights(merged_weights)
-
-                uids, weights = await self.preprocess_weights(normalized_scores)
-
-                await self.subtensor_set_weights(processed_uids=uids, processed_weights=weights)
+                await self.subtensor_set_weights(
+                    processed_uids=uids, processed_weights=processed_weights
+                )

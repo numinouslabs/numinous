@@ -1,33 +1,23 @@
 import asyncio
 import sqlite3
 import sys
-from pathlib import Path
 
 from bittensor import Subtensor, Wallet
 
 from neurons.validator.db.client import DatabaseClient
-from neurons.validator.db.operations import DatabaseOperations
-from neurons.validator.numinous_client.client import NuminousClient
-from neurons.validator.sandbox import SandboxManager
+from neurons.validator.db.dkg_operations import DkgDatabaseOperations
+from neurons.validator.numinous_client.dkg_client import DkgClient
 from neurons.validator.scheduler.tasks_scheduler import TasksScheduler
 from neurons.validator.tasks.db_cleaner import DbCleaner
 from neurons.validator.tasks.db_vacuum import DbVacuum
-from neurons.validator.tasks.delete_events import DeleteEvents
-from neurons.validator.tasks.export_agent_run_logs import ExportAgentRunLogs
-from neurons.validator.tasks.export_agent_runs import ExportAgentRuns
-from neurons.validator.tasks.export_memory import ExportMemory
-from neurons.validator.tasks.export_predictions import ExportPredictions
-from neurons.validator.tasks.export_reasonings import ExportReasonings
-from neurons.validator.tasks.export_sources import ExportSources
-from neurons.validator.tasks.pull_agents import PullAgents
-from neurons.validator.tasks.pull_events import PullEvents
-from neurons.validator.tasks.resolve_events import ResolveEvents
-from neurons.validator.tasks.run_agents import RunAgents
+from neurons.validator.tasks.post_dkg_scores import PostDkgScores
+from neurons.validator.tasks.pull_dkg_results import PullDkgResults
+from neurons.validator.tasks.pull_dkg_rounds import PullDkgRounds
+from neurons.validator.tasks.score_dkg_miners import ScoreDkgMiners
 from neurons.validator.tasks.set_weights import SetWeights
 from neurons.validator.tasks.sync_miners_metadata import SyncMinersMetadata
 from neurons.validator.utils.common.event_loop import measure_event_loop_lag
 from neurons.validator.utils.config import get_config
-from neurons.validator.utils.env import assert_requirements
 from neurons.validator.utils.logger.logger import (
     logger,
     override_loggers_level,
@@ -36,9 +26,6 @@ from neurons.validator.utils.logger.logger import (
 
 
 async def main():
-    # Assert system requirements
-    assert_requirements()
-
     # Start session id
     logger.start_session()
 
@@ -63,154 +50,67 @@ async def main():
 
     # Components
     db_client = DatabaseClient(db_path=settings.db_path, logger=logger)
-    db_operations = DatabaseOperations(db_client=db_client, logger=logger)
-    numinous_api_client = NuminousClient(
-        env=settings.numinous_env, logger=logger, bt_wallet=bt_wallet
-    )
+    dkg_operations = DkgDatabaseOperations(db_client=db_client)
+    dkg_client = DkgClient(env=settings.numinous_env, logger=logger, bt_wallet=bt_wallet)
 
     # Migrate db
     await db_client.migrate()
 
     # Tasks
-    pull_events_task = PullEvents(
-        interval_seconds=50.0,
-        page_size=50,
-        db_operations=db_operations,
-        api_client=numinous_api_client,
-    )
-
-    resolve_events_task = ResolveEvents(
-        interval_seconds=900.0,
-        db_operations=db_operations,
-        api_client=numinous_api_client,
-        page_size=100,
-        logger=logger,
-    )
-
-    delete_events_task = DeleteEvents(
-        interval_seconds=1800.0,
-        db_operations=db_operations,
-        api_client=numinous_api_client,
-        page_size=100,
-        logger=logger,
-    )
-
-    pull_agents_task = PullAgents(
-        interval_seconds=300.0,
-        api_client=numinous_api_client,
-        db_operations=db_operations,
-        agents_base_dir=Path(__file__).parent.parent.parent / "data" / "agents",
-        page_size=50,
-        logger=logger,
-    )
-
     sync_miners_task = SyncMinersMetadata(
         interval_seconds=300.0,
-        db_operations=db_operations,
+        dkg_operations=dkg_operations,
         netuid=bt_netuid,
         network=settings.subtensor_connection,
         logger=logger,
     )
 
-    sandbox_temp_dir = Path("/tmp") / "ig_validator_sandboxes"
-    sandbox_temp_dir.mkdir(parents=True, exist_ok=True)
-
-    sandbox_manager = SandboxManager(
-        bt_wallet=bt_wallet,
-        gateway_url=settings.gateway_url,
-        logger=logger,
-        temp_base_dir=sandbox_temp_dir,
-        force_rebuild=True,
-    )
-
-    run_agents_task = RunAgents(
+    pull_dkg_rounds_task = PullDkgRounds(
         interval_seconds=600.0,
-        db_operations=db_operations,
-        api_client=numinous_api_client,
-        sandbox_manager=sandbox_manager,
-        netuid=bt_netuid,
-        network=settings.subtensor_connection,
-        logger=logger,
-        max_concurrent_sandboxes=settings.sandbox_max_concurrent,
-        timeout_seconds=settings.sandbox_timeout_seconds,
-        sync_hour=settings.validator_sync_hour,
-        validator_uid=validator_uid,
-        validator_hotkey=validator_hotkey,
-    )
-
-    export_predictions_task = ExportPredictions(
-        interval_seconds=180.0,
-        db_operations=db_operations,
-        api_client=numinous_api_client,
-        batch_size=300,
-        validator_uid=validator_uid,
-        validator_hotkey=validator_hotkey,
+        dkg_operations=dkg_operations,
+        dkg_client=dkg_client,
         logger=logger,
     )
 
-    export_agent_runs_task = ExportAgentRuns(
+    pull_dkg_results_task = PullDkgResults(
+        interval_seconds=900.0,
+        dkg_operations=dkg_operations,
+        dkg_client=dkg_client,
+        logger=logger,
+    )
+
+    score_dkg_miners_task = ScoreDkgMiners(
         interval_seconds=300.0,
-        batch_size=500,
-        db_operations=db_operations,
-        api_client=numinous_api_client,
-        logger=logger,
-        validator_uid=validator_uid,
-        validator_hotkey=validator_hotkey,
-    )
-
-    export_agent_run_logs_task = ExportAgentRunLogs(
-        interval_seconds=600.0,
-        batch_size=500,
-        db_operations=db_operations,
-        api_client=numinous_api_client,
+        dkg_operations=dkg_operations,
         logger=logger,
     )
 
-    export_reasonings_task = ExportReasonings(
+    post_dkg_scores_task = PostDkgScores(
         interval_seconds=300.0,
-        batch_size=500,
-        db_operations=db_operations,
-        api_client=numinous_api_client,
-        logger=logger,
-        validator_uid=validator_uid,
-        validator_hotkey=validator_hotkey,
-    )
-
-    export_sources_task = ExportSources(
-        interval_seconds=300.0,
-        batch_size=500,
-        db_operations=db_operations,
-        api_client=numinous_api_client,
-        logger=logger,
-        validator_uid=validator_uid,
-        validator_hotkey=validator_hotkey,
-    )
-
-    export_memory_task = ExportMemory(
-        interval_seconds=300.0,
-        batch_size=500,
-        db_operations=db_operations,
-        api_client=numinous_api_client,
+        dkg_operations=dkg_operations,
+        dkg_client=dkg_client,
         logger=logger,
     )
 
     set_weights_task = SetWeights(
         interval_seconds=379.0,
-        db_operations=db_operations,
+        dkg_operations=dkg_operations,
         logger=logger,
         netuid=bt_netuid,
         network=settings.subtensor_connection,
         wallet=bt_wallet,
-        api_client=numinous_api_client,
     )
 
     db_cleaner_task = DbCleaner(
-        interval_seconds=53.0, db_operations=db_operations, batch_size=4000, logger=logger
+        interval_seconds=3600.0,
+        dkg_operations=dkg_operations,
+        batch_size=4000,
+        logger=logger,
     )
 
     vacuum_task = DbVacuum(
         interval_seconds=300.0,
-        db_operations=db_operations,
+        dkg_operations=dkg_operations,
         logger=logger,
         pages=500,
     )
@@ -218,18 +118,11 @@ async def main():
     # Add tasks to scheduler
     scheduler = TasksScheduler(logger=logger)
 
-    scheduler.add(task=pull_events_task)
-    scheduler.add(task=pull_agents_task)
     scheduler.add(task=sync_miners_task)
-    scheduler.add(task=resolve_events_task)
-    scheduler.add(task=delete_events_task)
-    scheduler.add(task=run_agents_task)
-    scheduler.add(task=export_predictions_task)
-    scheduler.add(task=export_agent_runs_task)
-    scheduler.add(task=export_agent_run_logs_task)
-    scheduler.add(task=export_reasonings_task)
-    scheduler.add(task=export_sources_task)
-    scheduler.add(task=export_memory_task)
+    scheduler.add(task=pull_dkg_rounds_task)
+    scheduler.add(task=pull_dkg_results_task)
+    scheduler.add(task=score_dkg_miners_task)
+    scheduler.add(task=post_dkg_scores_task)
     scheduler.add(task=set_weights_task)
     scheduler.add(task=db_cleaner_task)
     scheduler.add(task=vacuum_task)

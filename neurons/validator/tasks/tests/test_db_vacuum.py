@@ -2,26 +2,26 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from neurons.validator.db.operations import DatabaseOperations
+from neurons.validator.db.dkg_operations import DkgDatabaseOperations
 from neurons.validator.tasks.db_vacuum import DbVacuum
 from neurons.validator.utils.logger.logger import NuminousLogger
 
 
 class TestDbVacuumTask:
     @pytest.fixture
-    def db_operations_mock(self):
-        db_operations = AsyncMock(spec=DatabaseOperations)
+    def dkg_operations_mock(self):
+        dkg_operations = AsyncMock(spec=DkgDatabaseOperations)
 
-        return db_operations
+        return dkg_operations
 
-    def test_vacuum_task_properties(self, db_operations_mock: AsyncMock):
+    def test_vacuum_task_properties(self, dkg_operations_mock: AsyncMock):
         logger_mock = MagicMock(spec=NuminousLogger)
         interval = 300.0
         pages = 500
 
         vacuum_task = DbVacuum(
             interval_seconds=interval,
-            db_operations=db_operations_mock,
+            dkg_operations=dkg_operations_mock,
             logger=logger_mock,
             pages=pages,
         )
@@ -31,14 +31,14 @@ class TestDbVacuumTask:
         assert vacuum_task.pages == pages
         assert vacuum_task._first_run is True
 
-    async def test_db_vacuum_run(self, db_operations_mock: AsyncMock):
-        db_operations_mock.vacuum_database = AsyncMock(return_value=None)
+    async def test_db_vacuum_run(self, dkg_operations_mock: AsyncMock):
+        dkg_operations_mock.vacuum_database = AsyncMock(return_value=None)
         logger_mock = MagicMock(spec=NuminousLogger)
         pages = 500
 
         vacuum_task = DbVacuum(
             interval_seconds=300.0,
-            db_operations=db_operations_mock,
+            dkg_operations=dkg_operations_mock,
             logger=logger_mock,
             pages=pages,
         )
@@ -46,9 +46,9 @@ class TestDbVacuumTask:
         await vacuum_task.run()
 
         # Assert - first run should be skipped
-        db_operations_mock.vacuum_database.assert_not_awaited()
+        dkg_operations_mock.vacuum_database.assert_not_awaited()
 
         await vacuum_task.run()
 
         # Assert - second run should execute vacuum
-        db_operations_mock.vacuum_database.assert_awaited_once_with(pages)
+        dkg_operations_mock.vacuum_database.assert_awaited_once_with(pages)

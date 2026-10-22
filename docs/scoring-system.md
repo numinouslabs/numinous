@@ -1,346 +1,107 @@
 # Scoring System
 
-This document explains the scoring and payout system shown on the [Numinous leaderboard](https://leaderboard.numinouslabs.io/miner-console/setup?step=-1&coldkey=&hotkey=&browse=false).
-
-## Only one active pool and track
-
-**At launch there is exactly one pool: the re-forecasting pool on the SIGNAL track.** The entire daily emission is distributed against it.
-
-Everything else described further down this document — the global pool, the `(topic, metric)` domain pools, PNL, the geopolitical and finance pools, the Reasoning pool, and Hawkes source scoring — is **not currently scored and earns nothing.** The code still accepts a MAIN-track agent submission, and the endpoints still exist, but no emissions are allocated to them.
-
-The Reasoning pool is expected to be re-introduced in the near future. Agents may already return `reasoning` alongside their forecast, and it is stored, so returning it now costs nothing and prepares you for that.
-
-If you are here to mine, the re-forecasting pool is the only thing that matters.
-
-## Re-Forecasting Pool
-
-Every live event is re-forecast by every agent, every interval. Each forecast is scored against the market's own price at the moment it was made:
-
-```text
-S = (prediction - target)^2 - (market_price - target)^2
-```
-
-where `target` is the market price 7 days later, or the realized outcome if the market resolved before then.
-
-- **Lower is better; negative means you beat the market.**
-- Matching the market scores exactly `0` — it is the baseline, not the goal.
-- A forecast becomes scoreable 7 days after it is made, once the price it is measured against exists. Scores are then averaged over a rolling 7-day window.
-- Your average is taken over **events**, one score per event, and its denominator is the set of events **you** actually forecast — skipping events does not dilute it. Absence is punished by coverage instead.
-- A miner must cover at least **85%** of its available `(event, interval)` cells over a rolling 14-day window, or it earns zero regardless of score.
-- A new miner must also accumulate three scored days before it can rank, so first earnings land around `T+10`.
-
-### Confidence penalty for new miners
-
-A miner is ranked and paid on a pessimistic bound of its mean, not the raw mean. The bound adds a penalty that depends only on how many scored forecast days the miner has accumulated, and it decays to zero within about two weeks:
-
-```text
-ucb    = mean + pen(T)
-pen(T) = z * lambda * sqrt(corr_sum[T] / T) * exp(-max(0, T - H0) / tau)
-```
-
-- `T` is the number of scored forecast days for this `(uid, hotkey)`. It resets on re-registration.
-- `z = 1.6449`, the one-sided 95% normal quantile.
-- `lambda` is the field's day-to-day volatility of the mean score, re-estimated every scoring run (see below).
-- `corr_sum[T]` accounts for consecutive forecast days sharing most of their 7-day scoring window, so `T` days are worth fewer than `T` independent samples. It is derived from the lag correlation `rho(l) = 0.95 * max(0, 7 - l) / 7`, which is fitted once field-wide and decays linearly to zero at the horizon:
-
-```text
-corr_sum[T] = 1 + 2 * sum_{l=1}^{T-1} (1 - l/T) * rho(l)
-```
-
-- `H0 = 3` days of full protection: through the first three scored days the penalty is essentially the full day-one gate.
-- `tau = 2.5` days sets the release: after `H0` the penalty decays exponentially, so a newcomer with real skill passes a weaker incumbent within about seven scored days.
-
-The penalty is a fixed handicap schedule: no per-miner statistic enters, so two miners with the same tenure carry the same penalty regardless of how their own scores look. Because lower is better, the penalty holds a debut miner below the ranks its raw mean would earn until its standing rests on enough days.
-
-**How `lambda` is estimated.** Each scoring run builds, per `(uid, hotkey)`, the series of daily mean point scores, keeping only days with at least 50 scored events. The variance of that series is bias-corrected for the same day-to-day correlation, since the sample mean of a correlated series absorbs `corr_sum` days of noise rather than one:
-
-```text
-g = var(m_1..m_T, ddof=1) * (T - 1) / max(T - corr_sum[T], 1)
-```
-
-Every miner with `T >= 4` scored days is included, and `lambda` is the 95th percentile of `sqrt(g)` across them. The tail, not the median, is what prices an unknown newcomer's risk; including short-history miners keeps the newcomers who matter inside that tail.
-
-Illustrative schedule with `lambda = 0.024`, so the day-one gate `z * lambda` is about `0.039`:
-
-| Scored days `T` | 1 | 3 | 5 | 7 | 10 | 14 |
-|---|---|---|---|---|---|---|
-| `pen(T)` | 0.039 | 0.036 | 0.015 | 0.006 | 0.002 | < 0.001 |
-
-### Splitting the pool
-
-Unlike the inactive pools below, the re-forecasting pool is **not winner-takes-all**. Among miners who clear coverage, each miner's take is the squared distance between its bound (`ucb` above) and the 21st-best bound, and weights are proportional to those takes:
-
-```text
-take   = max(baseline - ucb, 0)^2        baseline = 21st-best ucb
-weight = take / sum(takes)
-```
-
-So roughly the top 20 earn, and what pays is the size of your margin rather than your rank. A decisive leader is rewarded for its margin; a field separated by rounding error splits close to evenly. If fewer than 21 miners qualify the baseline becomes the worst qualifying score, which means the last-placed miner always takes exactly zero — worth knowing during ramp-up. If nobody clears the gate at all, the whole emission burns.
-
-For the full rules, the selection criteria, and the memory contract, see [subnet-rules.md](./subnet-rules.md). For the system-level mechanics, see [architecture.md](./architecture.md#scoring). For the reasoning behind the design, see [The Belief Curve That Front-Runs the Price](https://numinouslabs.io/blog).
+Every validator scores every miner once a day, with a fixed formula and no model, so all validators compute the same scores from the same data. Your **credits** measure how much of what you forecast came true; your weight is computed from your credits.
 
 ---
 
-# Inactive Pools
+# Credits
 
-> **Not currently scored.** Everything below this line describes the previous multi-pool payout system. It is retained for reference and does not currently allocate any emissions.
+## How a statement is judged
 
-## One Global Contest Plus K Domain Contests
+After the deadline the backend opens every forecast. The judge then checks each statement against the news reported since the deadline: first on its next daily run, then regularly, and a last time at the horizon end. Each statement ends up:
 
-The network can be viewed as one global contest plus `K` smaller contests defined by `(topic, metric)` pairs.
+- **correct** (`right` in `numi forecasts`), with the news event that made it correct and the day it was reported;
+- **not correct** (`wrong`), with the judge's reason;
+- or still **waiting** (`waiting`) until it is judged for good.
 
-Each day, the subnet emits a total reward pool `E`.
+**Not correct at once:**
+- the statement does not contain the company the question asks about (and its counterparty, when the question has one): the topological condition;
+- a party is not named;
+- the graph already held this relationship at the deadline;
+- it repeats what the graph already held and states nothing new.
 
-- Global pool: `alpha_0 * E`
-- `(topic, metric)` pools: `alpha_(t,r) * E` for each topic `t` and metric `r`
+**Correct** when a news event reported after the deadline shows the development happened:
+- With one of the relation types and both parties known to the graph, the check is direct: an event must report exactly that relationship between the two, in that direction unless the relation is symmetric, as more than talks or a rumour. Reported only as talks or a rumour, the statement keeps waiting.
+- With free text, or a party the graph does not know, a model reads the news and decides whether what the statement says happened.
+- When the article says what day the development happened, that day must be on or after the deadline's day. News that was public before the deadline does not count, even if the graph collected it later.
 
-These pool weights satisfy:
+**Not correct at the horizon end:** a statement that is still waiting when the horizon ends.
 
-```text
-alpha_0 + sum_(t,r) alpha_(t,r) = 1
-```
+`numi forecasts` shows how each of your statements was judged, and `numi graph` shows what the graph already held. A statement judged not correct, or never judged correct before the horizon ends, earns nothing. **Nothing ever subtracts.**
 
-This means the full daily emission is split across:
+## The formula
 
-- one global leaderboard
-- multiple domain-specific leaderboards
-
-## Winner-Takes-All Per Pool
-
-Each pool is winner-takes-all.
-
-For a given pool, the miner with the best ranking receives the full allocation for that pool. Using the ranking notation `r`, the final payout for miner `m` is:
-
-```text
-R(m) =
-  alpha_0 * E * 1[m = argmin r_(m,global)]
-  + sum_(t,r)^K alpha_(t,r) * E * 1[m = argmin r_(m,t,r)]
-```
-
-In plain terms:
-
-- the best miner on the global leaderboard wins the global pool
-- the best miner inside each `(topic, metric)` leaderboard wins that pool
-- a miner can win multiple pools in the same day
-
-## Metrics
-
-The main metrics currently used for ranking are:
-
-- `PNL`
-- `Brier Score`
-- `Reasoning` — a separate quality+calibration score on miner-submitted reasoning. When this pool was active it took 25% of emissions on the Information track and 20% on the Signals track. Reasoning is graded against a hindsight ledger of what moved the market over the following 14 days. See [reasoning_trajectories_scoring.md](./reasoning_trajectories_scoring.md).
-
-## PNL Metric
-
-The `PNL` metric is used in the `Sport x PNL` pool.
-
-The intuition is simple: we simulate a `$1` trade based on the miner's forecast relative to the Polymarket price at the time the forecast is made.
-
-Let:
-
-- `p_t` be the Polymarket price at forecast time
-- `p_i` be the miner forecast
-
-### Case 1: Market Price Above Miner Forecast
-
-If `p_t > p_i`, the market is pricing the event above the miner forecast, so the simulated position is on the `NO` side.
-
-- If the event does **not** happen, the score is:
+For each question `q` you answer, you send a **bundle** `Q_q` of statements (what `numi submit` calls a forecast). Your credits are:
 
 ```text
-1 / (1 - p_i) - 1
+credits = Σ_q  Σ_(p ∈ Q_q)  s(P_p) × 1(t − l_p < 30 days) × a(P_p)
 ```
 
-- If the event **does** happen, the score is:
-
-```text
--1
-```
-
-### Case 2: Market Price Below Miner Forecast
-
-If `p_t < p_i`, the market is pricing the event below the miner forecast, so the simulated position is on the `YES` side.
-
-- If the event **does** happen, the score is:
-
-```text
-1 / p_i - 1
-```
-
-- If the event does **not** happen, the score is:
-
-```text
--1
-```
-
-### Interpretation
-
-This metric rewards miners when their forecast identifies a profitable directional disagreement with the market.
-
-- a correct position generates positive `PNL`
-- an incorrect position loses the full simulated `$1`
-
-## Geopolitical Pool
-
-In the geopolitical pool, some events are resolved against the Polymarket price rather than against the final binary outcome.
-
-These events are evaluated at a time `T`. If the Polymarket price at that time is `p_T`, then the miner score is:
-
-```text
-(p_i - p_T)^2
-```
-
-This is a squared error metric:
-
-- lower is better
-- miners are rewarded for matching the market-implied probability at the evaluation time `T` which is assumed to be the true probability
-
-## Reference LLM
-
-The finance pool includes long-term events where a reference agent is used instead of directly resolving against the market price (to prevent manipulation in thin markets).
-
-At time `T`:
-
-- the reference agent receives `p_T` as input
-- the reference agent also performs its own web search
-- the reference agent outputs an updated forecast `p_T'`
-
-The miner score is then:
-
-```text
-(p_i - p_T')^2
-```
-
-This lets the system score long-duration finance events against a standardized reference forecast that combines:
-
-- the market state at time `T`
-- fresh external information gathered by the reference agent
-
-## Hawkes Source Scoring
-
-> The Information track this describes is **not active** and allocates no emissions.
-
-The goal of the Hawkes scoring on the **Information track**  is to incentivise miners to surface high impact and relevant sources for a given future event. The idea is to use the maths of the Hawkes processes to translate a set of sources into a probability.
-
-### 1. What you submit
-
-For each forecast, your agent submits up to **20 sources** per event. Each source has:
-
-| Field | Notes |
+| Symbol | Meaning |
 |---|---|
-| `url` | Must be reachable. URLs that 4xx/5xx or never resolve are dropped |
-| `source_timestamp` | When the source event happened in the world. **Must not be older than 36 hours.** Anything older is dropped before scoring. Future timestamps are also dropped. |
-| `impact_bucket` | One of `LOW`, `MEDIUM`, `HIGH`, `EXTREME` — see coefficient table below. |
-| `persistence_bucket` | One of `FLASH`, `SHORT`, `MEDIUM`, `LONG` — see coefficient table below. |
-| `direction` | `UP` / `DOWN` / `NEUTRAL` (informational). |
-| `reasoning` | ≤ 2500 chars, why this source is informative. |
+| `s(P_p)` | 1 if the statement `P_p` is judged correct, 0 otherwise (in particular if it is never judged correct) |
+| `l_p` | When `P_p` was judged correct (`judged_at`) |
+| `t` | The moment of scoring: `1(t − l_p < 30 days)` is 1 while the correct statement is less than 30 days old, 0 after. **A correct statement counts for 30 days.** |
+| `a(P_p)` | `1 / √#Q_q`, where `#Q_q` is the number of statements in the bundle |
 
-#### Submission format
+In words, each bundle earns:
 
-Each source your agent emits must conform to this schema (the validator will batch your sources into a `POST /v1/sources` request to the backend):
-
-```json
-{
-  "url": "https://www.reuters.com/world/...",
-  "source_type": "news_article",
-  "direction": "up",
-  "source_timestamp": "2026-04-29T08:42:00+00:00",
-  "impact_bucket": "high",
-  "persistence_bucket": "medium",
-  "reasoning": "Why this source moves the YES probability for this event. Reference the specific claim, the publication time, and how the magnitude of the move maps to your impact bucket. ≤ 2500 chars."
-}
+```text
+(statements judged correct in the last 30 days) / √(statements in the bundle)
 ```
 
-**Field constraints**
+For example:
 
-| Field | Type | Constraint |
-|---|---|---|
-| `url` | string | required, ≤ 2048 chars, must be publicly reachable |
-| `source_type` | string | required, free‑form (e.g. `"news_article"`, `"press_release"`, `"social_post"`, `"market_data"`, `"government_filing"`) |
-| `direction` | enum | required, one of `"up"` / `"down"` / `"neutral"` |
-| `source_timestamp` | ISO‑8601 datetime | required, timezone‑aware UTC, **must be ≤ 36 h old and not in the future** |
-| `impact_bucket` | enum | required, one of `"low"` / `"medium"` / `"high"` / `"extreme"` |
-| `persistence_bucket` | enum | required, one of `"flash"` / `"short"` / `"medium"` / `"long"` |
-| `reasoning` | string | required, ≤ 2500 chars |
+| Bundle | Credits |
+|---|---|
+| 1 statement, judged correct | 1 / √1 = **1.00** |
+| 2 statements, 1 judged correct | 1 / √2 = **0.71** |
+| 2 statements, both judged correct | 2 / √2 = **1.41** |
 
-**Per‑event submission**
+A second statement pays only when it is judged correct too, so add one only when you believe in it. A correct statement that leaves the 30-day window stops counting but stays one of the bundle's statements: a 2-statement bundle with one correct statement left in the window earns 0.71.
 
-Your agent's full per‑event output is a list of these source objects. The list:
+## Topological condition
 
-- must contain **effectively at least 3** to be scored — see §4,
-- is capped at **20 sources** per event,
-- has no required ordering — the scorer sorts by `source_timestamp` internally.
+Every statement must contain the entity the question asks about (and its counterparty, when the question has one). A statement that does not is judged not correct. This keeps a bundle about the question, not about the whole graph.
 
-Sketch of what a complete agent return for one event looks like:
+## De-duplication: a news event pays you once
 
-```json
-{
-  "event_id": "1f8a…",
-  "prediction": 0.74,
-  "reasoning": "Top-level rationale tying the sources together.",
-  "sources": [
-    { "url": "...", "source_type": "news_article", "direction": "up",   "source_timestamp": "...", "impact_bucket": "high",    "persistence_bucket": "medium", "reasoning": "..." },
-    { "url": "...", "source_type": "press_release", "direction": "up",   "source_timestamp": "...", "impact_bucket": "extreme", "persistence_bucket": "short",  "reasoning": "..." },
-    { "url": "...", "source_type": "social_post",   "direction": "down", "source_timestamp": "...", "impact_bucket": "low",     "persistence_bucket": "flash",  "reasoning": "..." }
-  ]
-}
+If several of your statements are judged correct through the **same news event**, only one counts: the one in the bundle you sent first. The others are **voided**, whether they are in the same bundle, another question's bundle or another round's, and however they are worded. A voided statement is left out of both the correct statements and the statement count of its bundle, so repeating a call is exactly like sending it once.
+
+The event stays paid after its statement leaves the 30-day window: a later repeat is still voided.
+
+## What never counts
+
+- An **invalid** bundle: it did not open, or did not follow the schema
+- A bundle that **fails a validator check**: the sealed bytes do not match the hash received before the deadline, or the signature is not the miner's
+
+## When credits are computed
+
+Validators compute credits at **15:00 UTC** every day, counting only the statements judged correct before 15:00. A validator computes them only after a results pull that started after 15:00, so all validators score the same data.
+
+---
+
+# Weights
+
+Validators set weights from the latest credits that are at least an hour old, so they all switch to a new day's credits together at 16:00 UTC.
+
+Weights **extremise quadratically among the top 25**, plus a small share spread by rank:
+
+```text
+w_i = 0.98 × credits_i² / Σ_(j ∈ top 25) credits_j²   +   0.02 × (1 / r_i) / Σ_(r = 1..n) (1 / r)
 ```
 
-**Validation rules enforced on the backend**
+- The first term only counts for the top 25 miners by credits.
+- In the second term, `r_i` is miner `i`'s rank and `n` the number of miners with credits above 0.
+- A miner with 0 credits gets no weight.
+- **Ties** are broken by the newer registration, then by the lower uid.
+- If **no miner** has credits, all weight goes to the subnet owner's uid.
 
-- A source which is outside the 36 h window is removed
-- A source with an unreachable URL is removed
-- A source with `relevance < 0.2` from the LLM judge is removed
-- Re‑submitting the same source overwrites the previous row
-- A miner needs at least 3 sources passing the above filters
+The 2% keeps every miner with credits above every idle one: the chain deregisters the lowest-emission miners first, so without it a good miner just outside the top 25 would be deregistered before an idle one. And since both terms only decrease down the ranking, the 26th never gets more than the 25th.
 
+**Example.** Two miners, with 3 and 1 credits:
 
-### 2. From your buckets to a Hawkes model
-
-The two bucket labels map deterministically to coefficients of a self‑exciting (Hawkes) point process according to a conversion table which is kept hidden in order to prevent overfitting:
-
-**Impact bucket → α (excitation amplitude)**
-
-**Persistence bucket → β (decay time constant, in hours)**
-
-
-So when you choose `(impact, persistence)`, you are literally writing one term of a Hawkes kernel:
-
-```
-φ_i(t) = α_i · exp(-(t - t_i) / β_i)     for t ≥ t_i
-```
-
-Higher impact = bigger jump in implied probability when the source fires. Higher persistence = the bump decays over a longer horizon.
-
-### 3. Relevance check (LLM gate)
-
-Each `(scraped url, reasoning)` is scored 0–1 by an LLM judge for how relevant the source is to the event. Your **effective alpha** is:
-
-```
-α_effective_i = relevance_i · α(impact_bucket_i)
-```
-
-Sources with `relevance < 0.2` are dropped. 
-
-### 4. The Hawkes curve
-
-Sort surviving sources by `source_timestamp`. For each prefix of `k = 3, 4, …, n` sources the system evaluates the model at `t = source_timestamp` of source #k:
-
-```
-Compensator(t)  = μ · t  +  Σ_{i=1..k} α_effective_i · β_i · (1 − exp(-(t − t_i)/β_i))
-Probability(t)  = 1 − exp(-Compensator(t))
-```
-
-`μ = 0.001` is the baseline intensity. `Probability(t)` is your model's implied YES probability *after seeing the first k sources*. Each `k` produces one curve point.
-
-### 5. The curve point is scored against Polymarket
-
-For each curve point at time `t`, the system looks up the Polymarket YES price on the event's `condition_id` at `t` and at `t + 72 h` (Δ = 72 hours), and computes a **value‑added Brier**:
-
-```
-score_per_point = ( price(t)         − price(t + 72h) )²    
-                − ( probability(t)   − price(t + 72h) )²    
-```
-
-Miners have to beat the trivial "Polymarket price stays where it is" baseline at the 72h horizon. The curve points are averaged into a per‑submission score.
+| | First term (98%) | Second term (2%) | Weight |
+|---|---|---|---|
+| 3 credits (rank 1) | 9/10 × 98% = 88.2% | (1/1) / 1.5 × 2% = 1.33% | **89.5%** |
+| 1 credit (rank 2) | 1/10 × 98% = 9.8% | (1/2) / 1.5 × 2% = 0.67% | **10.5%** |

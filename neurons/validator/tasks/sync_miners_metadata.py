@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from bittensor import Metagraph, Subtensor
 
-from neurons.validator.db.operations import DatabaseOperations
+from neurons.validator.db.dkg_operations import DkgDatabaseOperations
 from neurons.validator.scheduler.task import AbstractTask
 from neurons.validator.utils.logger.logger import NuminousLogger
 
@@ -20,7 +20,7 @@ class SyncMinersMetadata(AbstractTask):
     """Sync miners' metadata from metagraph to database."""
 
     interval: float
-    db_operations: DatabaseOperations
+    dkg_operations: DkgDatabaseOperations
     network: str
     netuid: int
     logger: NuminousLogger
@@ -28,7 +28,7 @@ class SyncMinersMetadata(AbstractTask):
     def __init__(
         self,
         interval_seconds: float,
-        db_operations: DatabaseOperations,
+        dkg_operations: DkgDatabaseOperations,
         netuid: int,
         network: str,
         logger: NuminousLogger,
@@ -36,8 +36,8 @@ class SyncMinersMetadata(AbstractTask):
         if not isinstance(interval_seconds, float) or interval_seconds <= 0:
             raise ValueError("interval_seconds must be a positive float")
 
-        if not isinstance(db_operations, DatabaseOperations):
-            raise TypeError("db_operations must be an instance of DatabaseOperations.")
+        if not isinstance(dkg_operations, DkgDatabaseOperations):
+            raise TypeError("dkg_operations must be an instance of DkgDatabaseOperations.")
 
         if not isinstance(netuid, int) or netuid < 0:
             raise ValueError("netuid must be a non-negative integer.")
@@ -49,7 +49,7 @@ class SyncMinersMetadata(AbstractTask):
             raise TypeError("logger must be an instance of NuminousLogger.")
 
         self.interval = interval_seconds
-        self.db_operations = db_operations
+        self.dkg_operations = dkg_operations
         self.netuid = netuid
         self.network = network
         self.logger = logger
@@ -67,7 +67,7 @@ class SyncMinersMetadata(AbstractTask):
             metagraph: Metagraph = await chain_client.subnets.metagraph(self.netuid)
 
         block = metagraph.block
-        miners_count = await self.db_operations.get_miners_count()
+        miners_count = await self.dkg_operations.get_miners_count()
 
         registered_date = (
             datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
@@ -92,7 +92,7 @@ class SyncMinersMetadata(AbstractTask):
             )
 
         if miners:
-            await self.db_operations.upsert_miners(miners=miners)
+            await self.dkg_operations.upsert_miners(miners=miners)
 
             self.logger.debug(
                 "Miners metadata synced",

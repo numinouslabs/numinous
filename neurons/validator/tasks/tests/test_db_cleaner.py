@@ -1,111 +1,80 @@
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from freezegun import freeze_time
 
-from neurons.validator.db.operations import DatabaseOperations
+from neurons.validator.db.dkg_operations import DKG_HISTORY, DkgDatabaseOperations
 from neurons.validator.tasks.db_cleaner import DbCleaner
 from neurons.validator.utils.logger.logger import NuminousLogger
+
+NOW = datetime(2026, 10, 19, 16, 30, tzinfo=timezone.utc)
 
 
 class TestDbCleanerTask:
     @pytest.fixture
-    def db_operations_mock(self):
-        db_operations = AsyncMock(spec=DatabaseOperations)
+    def dkg_operations(self) -> AsyncMock:
+        return AsyncMock(spec=DkgDatabaseOperations)
 
-        return db_operations
+    @pytest.fixture
+    def logger(self) -> MagicMock:
+        return MagicMock(spec=NuminousLogger)
 
-    async def test_db_cleaner_run(self, db_operations_mock: AsyncMock):
-        # Prepare mocks
-        with patch("asyncio.sleep", new_callable=AsyncMock) as sleep_mock:
-            db_operations_mock.delete_predictions = AsyncMock(return_value=[1, 2])
-            db_operations_mock.delete_reasonings = AsyncMock(return_value=[5, 6, 7])
-            db_operations_mock.delete_sources = AsyncMock(return_value=[13, 14])
-            db_operations_mock.delete_reforecast_memories = AsyncMock(return_value=[20, 21])
-            db_operations_mock.delete_agent_run_logs = AsyncMock(return_value=[8, 9])
-            db_operations_mock.delete_agent_runs = AsyncMock(return_value=[10, 11, 12])
-            db_operations_mock.delete_events_hard_delete = AsyncMock(return_value=(3, 4, 5, 7, 8))
-            logger_mock = MagicMock(spec=NuminousLogger)
-            batch_size = 100
+    @pytest.mark.parametrize(
+        "changed, error",
+        [
+            ({"interval_seconds": 3600}, ValueError),
+            ({"interval_seconds": 0.0}, ValueError),
+            ({"dkg_operations": "not operations"}, TypeError),
+            ({"batch_size": 0}, ValueError),
+            ({"batch_size": 4001}, ValueError),
+            ({"logger": "not a logger"}, TypeError),
+        ],
+    )
+    def test_init_rejects_bad_arguments(
+        self, dkg_operations: AsyncMock, logger: MagicMock, changed: dict, error: type[Exception]
+    ):
+        arguments = {
+            "interval_seconds": 3600.0,
+            "dkg_operations": dkg_operations,
+            "batch_size": 4000,
+            "logger": logger,
+        }
 
-            db_cleaner_task = DbCleaner(
-                interval_seconds=1.0,
-                db_operations=db_operations_mock,
-                batch_size=batch_size,
-                logger=logger_mock,
-            )
+        with pytest.raises(error):
+            DbCleaner(**(arguments | changed))
 
-            # Act
-            await db_cleaner_task.run()
+    def test_name_and_interval(self, dkg_operations: AsyncMock, logger: MagicMock):
+        task = DbCleaner(
+            interval_seconds=3600.0, dkg_operations=dkg_operations, batch_size=4000, logger=logger
+        )
 
-            # Assert
-            db_operations_mock.delete_predictions.assert_awaited_once_with(batch_size)
-            db_operations_mock.delete_reasonings.assert_awaited_once_with(batch_size)
-            db_operations_mock.delete_sources.assert_awaited_once_with(batch_size)
-            db_operations_mock.delete_reforecast_memories.assert_awaited_once_with(batch_size)
-            db_operations_mock.delete_agent_run_logs.assert_awaited_once_with(batch_size)
-            db_operations_mock.delete_agent_runs.assert_awaited_once_with(batch_size)
-            db_operations_mock.delete_events_hard_delete.assert_not_awaited()
+        assert task.name == "db-cleaner"
+        assert task.interval_seconds == 3600.0
 
-            logger_mock.debug.assert_has_calls(
-                [
-                    call("Predictions deleted", extra={"deleted_count": 2}),
-                    call("Reasonings deleted", extra={"deleted_count": 3}),
-                    call("Sources deleted", extra={"deleted_count": 2}),
-                    call("Reforecast memories deleted", extra={"deleted_count": 2}),
-                    call("Agent run logs deleted", extra={"deleted_count": 2}),
-                    call("Agent runs deleted", extra={"deleted_count": 3}),
-                    # call("Events hard deleted", extra={"deleted_count": 5}),
-                ]
-            )
+    @freeze_time(NOW)
+    async def test_deletes_what_is_older_than_the_history_and_logs_it(
+        self, dkg_operations: AsyncMock, logger: MagicMock
+    ):
+        dkg_operations.delete_expired.return_value = 33
+        task = DbCleaner(
+            interval_seconds=3600.0, dkg_operations=dkg_operations, batch_size=100, logger=logger
+        )
 
-            assert sleep_mock.call_args_list == [
-                call(1),
-                call(1),
-                call(1),
-                call(1),
-                call(1),
-                call(1),
-            ]
+        await task.run()
 
-    async def test_db_cleaner_run_no_deletions(self, db_operations_mock: AsyncMock):
-        # Prepare mocks
-        with patch("asyncio.sleep", new_callable=AsyncMock) as sleep_mock:
-            db_operations_mock.delete_predictions = AsyncMock(return_value=[])
-            db_operations_mock.delete_reasonings = AsyncMock(return_value=[])
-            db_operations_mock.delete_sources = AsyncMock(return_value=[])
-            db_operations_mock.delete_reforecast_memories = AsyncMock(return_value=[])
-            db_operations_mock.delete_agent_run_logs = AsyncMock(return_value=[])
-            db_operations_mock.delete_agent_runs = AsyncMock(return_value=[])
-            db_operations_mock.delete_events_hard_delete = AsyncMock(return_value=[])
-            logger_mock = MagicMock(spec=NuminousLogger)
-            batch_size = 100
+        dkg_operations.delete_expired.assert_awaited_once_with(
+            expired_until=NOW - DKG_HISTORY, batch_size=100
+        )
+        logger.debug.assert_called_once_with("DKG history deleted", extra={"deleted_count": 33})
 
-            db_cleaner_task = DbCleaner(
-                interval_seconds=1.0,
-                db_operations=db_operations_mock,
-                batch_size=batch_size,
-                logger=logger_mock,
-            )
+    async def test_nothing_expired_logs_nothing(self, dkg_operations: AsyncMock, logger: MagicMock):
+        dkg_operations.delete_expired.return_value = 0
+        task = DbCleaner(
+            interval_seconds=3600.0, dkg_operations=dkg_operations, batch_size=100, logger=logger
+        )
 
-            # Act
-            await db_cleaner_task.run()
+        await task.run()
 
-            # Assert
-            db_operations_mock.delete_predictions.assert_awaited_once_with(batch_size)
-            db_operations_mock.delete_reasonings.assert_awaited_once_with(batch_size)
-            db_operations_mock.delete_sources.assert_awaited_once_with(batch_size)
-            db_operations_mock.delete_reforecast_memories.assert_awaited_once_with(batch_size)
-            db_operations_mock.delete_agent_run_logs.assert_awaited_once_with(batch_size)
-            db_operations_mock.delete_agent_runs.assert_awaited_once_with(batch_size)
-            db_operations_mock.delete_events_hard_delete.assert_not_awaited()
-            logger_mock.debug.assert_not_called()
-
-            # Sleep called between each delete
-            assert sleep_mock.call_args_list == [
-                call(1),
-                call(1),
-                call(1),
-                call(1),
-                call(1),
-                call(1),
-            ]
+        dkg_operations.delete_expired.assert_awaited_once()
+        logger.debug.assert_not_called()

@@ -25,4 +25,4 @@ ENV GIT_COMMIT_HASH=${GIT_COMMIT_HASH}
 
 COPY . /root/infinite_games
 
-RUN mkdir -p /root/infinite_games/database /tmp/ig_validator_sandbox
+RUN mkdir -p /root/infinite_games/database

@@ -1,31 +1,29 @@
-import asyncio
+from datetime import datetime, timezone
 
-from neurons.validator.db.operations import DatabaseOperations
+from neurons.validator.db.dkg_operations import DKG_HISTORY, DkgDatabaseOperations
 from neurons.validator.scheduler.task import AbstractTask
 from neurons.validator.utils.logger.logger import NuminousLogger
 
 
 class DbCleaner(AbstractTask):
     interval: float
-    db_operations: DatabaseOperations
+    dkg_operations: DkgDatabaseOperations
     batch_size: int
     logger: NuminousLogger
 
     def __init__(
         self,
         interval_seconds: float,
-        db_operations: DatabaseOperations,
+        dkg_operations: DkgDatabaseOperations,
         batch_size: int,
         logger: NuminousLogger,
     ):
         if not isinstance(interval_seconds, float) or interval_seconds <= 0:
             raise ValueError("interval_seconds must be a positive number (float).")
 
-        # Validate db_operations
-        if not isinstance(db_operations, DatabaseOperations):
-            raise TypeError("db_operations must be an instance of DatabaseOperations.")
+        if not isinstance(dkg_operations, DkgDatabaseOperations):
+            raise TypeError("dkg_operations must be an instance of DkgDatabaseOperations.")
 
-        # Validate batch_size
         max_batch_size = 4000
 
         if not isinstance(batch_size, int) or batch_size <= 0 or batch_size > max_batch_size:
@@ -33,12 +31,11 @@ class DbCleaner(AbstractTask):
                 f"batch_size must be a positive integer equal or less than {max_batch_size}."
             )
 
-        # Validate logger
         if not isinstance(logger, NuminousLogger):
             raise TypeError("logger must be an instance of NuminousLogger.")
 
         self.interval = interval_seconds
-        self.db_operations = db_operations
+        self.dkg_operations = dkg_operations
         self.batch_size = batch_size
         self.logger = logger
 
@@ -51,69 +48,9 @@ class DbCleaner(AbstractTask):
         return self.interval
 
     async def run(self):
-        # Delete predictions
-        deleted_predictions = await self.db_operations.delete_predictions(self.batch_size)
+        deleted_dkg_rows = await self.dkg_operations.delete_expired(
+            expired_until=datetime.now(timezone.utc) - DKG_HISTORY, batch_size=self.batch_size
+        )
 
-        if len(deleted_predictions) > 0:
-            self.logger.debug(
-                "Predictions deleted", extra={"deleted_count": len(deleted_predictions)}
-            )
-
-        await asyncio.sleep(1)
-
-        # Delete reasonings
-        deleted_reasonings = await self.db_operations.delete_reasonings(self.batch_size)
-
-        if len(deleted_reasonings) > 0:
-            self.logger.debug(
-                "Reasonings deleted", extra={"deleted_count": len(deleted_reasonings)}
-            )
-
-        await asyncio.sleep(1)
-
-        # Delete sources
-        deleted_sources = await self.db_operations.delete_sources(self.batch_size)
-
-        if len(deleted_sources) > 0:
-            self.logger.debug("Sources deleted", extra={"deleted_count": len(deleted_sources)})
-
-        await asyncio.sleep(1)
-
-        # Delete reforecast memories
-        deleted_memories = await self.db_operations.delete_reforecast_memories(self.batch_size)
-
-        if len(deleted_memories) > 0:
-            self.logger.debug(
-                "Reforecast memories deleted", extra={"deleted_count": len(deleted_memories)}
-            )
-
-        await asyncio.sleep(1)
-
-        # Delete agent run logs
-        deleted_agent_run_logs = await self.db_operations.delete_agent_run_logs(self.batch_size)
-
-        if len(deleted_agent_run_logs) > 0:
-            self.logger.debug(
-                "Agent run logs deleted", extra={"deleted_count": len(deleted_agent_run_logs)}
-            )
-
-        await asyncio.sleep(1)
-
-        # Delete agent runs
-        deleted_agent_runs = await self.db_operations.delete_agent_runs(self.batch_size)
-
-        if len(deleted_agent_runs) > 0:
-            self.logger.debug(
-                "Agent runs deleted", extra={"deleted_count": len(deleted_agent_runs)}
-            )
-
-        await asyncio.sleep(1)
-
-        if 2 > 1:
-            return  # Temporarily disable event hard deletion
-
-        # Delete events
-        deleted_events = await self.db_operations.delete_events_hard_delete(self.batch_size)
-
-        if len(deleted_events) > 0:
-            self.logger.debug("Events hard deleted", extra={"deleted_count": len(deleted_events)})
+        if deleted_dkg_rows > 0:
+            self.logger.debug("DKG history deleted", extra={"deleted_count": deleted_dkg_rows})

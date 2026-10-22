@@ -1,650 +1,261 @@
 # Miner Setup Guide
 
-**Start here.** This is the entry point to the Numinous documentation — it walks you end to end, and links out to everything else.
+**Start here.** This is the entry point to the Numinous documentation: it walks you end to end and links out to everything else. It is written so that a person or an AI agent can follow it step by step.
 
-## One track, one pool
+## What mining is
 
-There is currently **one track and one pool**: the re-forecasting pool on the **SIGNAL** track. It receives the entire daily emission.
+Numinous is an **open-ended forecasting** subnet where miners forecast the future state of a dynamic knowledge graph. Every day the network asks questions about entities in the graph e.g a company if the graph is about company to company interations. You answer a question with a **forecast**: a bundle of one or more **statements** about a relationship that will appear in the news, for example *"Paramount acquires Warner Bros"*. A statement is **judged correct** when a news event reported **after the round's deadline** shows it happened. You earn credits for correct statements. 
 
-The MAIN (information) track still accepts an agent upload, but no events are broadcast to it — an agent uploaded there never runs and earns nothing. Everything in this guide therefore assumes SIGNAL. The **Reasoning pool is expected to return in the near future** — your agent can already return a `reasoning` string alongside its forecast, and it is stored, so adding one now costs nothing and prepares you for that.
+Everything you do goes through the `numi` command line tool. It prints JSON, never prompts, and reports every outcome with an exit code, so it can be driven by a script or an agent.
 
-## Overview
+## The daily cycle
 
-This guide walks you through:
-1. Setting up your development environment
-2. Creating and registering a Bittensor wallet
-3. Writing your forecasting agent code
-4. Testing your agent locally
-5. Submitting your agent to the network
+| Step | What happens |
+|---|---|
+| Publish | A new round of questions is published every day |
+| Send | The round accepts forecasts until its deadline (`deadline_at` in `numi round`): at most one per question per miner, the first one sent counts |
+| Sealed | Until the deadline nobody can read your forecast, the backend included |
+| Open | After the deadline, forecasts are opened and checked against the schema |
+| Judge | Every day the judge checks open statements against the news reported since the deadline, until the round's horizon ends (`horizon_end_at`) |
+| Horizon end | A statement not judged correct by then is not correct for good |
+| Score | Every day at 15:00 UTC every validator computes every miner's credits from the statements judged correct in the last 30 days, and sets weights from 16:00 UTC |
+
+## System components
+
+```
+┌─────────────────────────────────────────┐
+│                                         │
+│  Miners (numi CLI)                      │
+│  - Read the open round and the graph    │
+│  - Seal, sign and send forecasts        │
+│                                         │
+└──────────────┬──────────────────────────┘
+               │ signed HTTPS
+               ↓
+┌─────────────────────────────────────────┐
+│                                         │
+│  Numinous backend                       │
+│  - Knowledge graph built from the news  │
+│  - Rounds and questions                 │
+│  - Sealed forecasts and receipts        │
+│  - Opening after the deadline           │
+│  - Judge                                │
+│                                         │
+└──────────────┬──────────────────────────┘
+               │ signed HTTPS
+               ↓
+┌─────────────────────────────────────────┐
+│                                         │
+│  Validators (Bittensor subnet)          │
+│  - Pull rounds, hashes and results      │
+│  - Check every forecast                 │
+│  - Score miners, post the scores        │
+│  - Set weights                          │
+│                                         │
+└──────────────┬──────────────────────────┘
+               │ Subtensor
+               ↓
+┌─────────────────────────────────────────┐
+│                                         │
+│  Bittensor Chain                        │
+│                                         │
+└─────────────────────────────────────────┘
+```
+
+**How data moves through the system:**
+
+1. A forecast is timelock-encrypted to the round's drand `reveal_round`. The miner signs the question ID and sealed bytes, then sends them to the backend.
+2. The backend stores the sealed bytes and their SHA-256 hash. It returns a receipt signed over the miner's hotkey, question ID, hash and receipt time.
+3. Validators store the hashes first. After forecasts open, they receive the results and verify that the sealed bytes match the stored hash and that the miner's signature is valid.
+4. Results are scored only after a pull beginning after 15:00 UTC. Validators switch to scores at least one hour old around 16:00 UTC.
+
+Requests are signed throughout, and scoring is reproducible.
 
 **The rest of the documentation:**
 
 | Document | What it covers |
 |---|---|
-| [subnet-rules.md](./subnet-rules.md) | Competition rules: execution limits, memory, event selection, penalties, deregistration |
-| [scoring-system.md](./scoring-system.md) | How you are scored and paid — the formula, coverage, and how the pool is split |
-| [gateway-guide.md](./gateway-guide.md) | Every API endpoint your agent can call, with request/response reference |
-| [architecture.md](./architecture.md) | How the subnet works end to end: sandboxes, validators, scoring mechanics |
+| [scoring-system.md](./scoring-system.md) | How statements are judged and how scores and weights are computed |
 | [wallet-setup.md](./wallet-setup.md) | Creating and registering a Bittensor wallet |
-| [reasoning_trajectories_scoring.md](./reasoning_trajectories_scoring.md) | How reasoning is graded against a hindsight ledger |
-| [validator-setup.md](./validator-setup.md) | For validators, not miners |
+| [validator-setup.md](./validator-setup.md) | For validators|
 
-The key rules to follow as a miner are the following:
-- **Your agent re-forecasts every live event, every interval** — and carries [memory](./subnet-rules.md#memory) between runs
-- **You are scored against the market price, not the outcome alone.** Matching the market scores exactly 0; beating it scores negative
-- **Missing forecasts are never imputed or retried** — they cost you coverage, and falling below 85% zeroes your rewards
-- **The sandbox times out after 240s**
-- **The total cost limit on API calls depends on each service and its paid by the miner**
-- **DO NOT include dynamic timestamps or random data in prompts to make sure our caching system is hit across different validator executions**.
-- **A forecasting agent can only be updated at most once every 3 days**
+The key rules:
+- **One forecast per question.** The first one sent counts; a second one is refused.
+- **Send before the deadline.** After it, the round no longer accepts forecasts.
+- **Every statement must name the entity (e.g company) the question asks about**, and a forecast holds as many statements as the schema allows (`numi schema`).
+- **Forecast something new.** A statement that repeats what the graph already held at the deadline is judged not correct. Read the graph first (`numi graph`).
+- **A news event pays you once.** If several of your statements are judged correct through the same news, only the one in the forecast you sent first counts; the others are voided.
 
-Events have no fixed length — each one runs until the underlying market resolves. A newly registered miner is immune from deregistration until it enters the ranking, which takes until roughly `T+10` from registration — the 7-day scoring horizon, then three scored days before you can rank.
+
 
 ---
 
-# System Requirements
+# Setup
 
-**For Local Development & Testing:**
+## Requirements
+
 - Python 3.11+
-- Text editor or IDE
-- `numi` CLI tool (installed via this repo)
-- An API key for whichever gateway services your agent uses (see below)
+- A Bittensor wallet with a hotkey registered on the subnet (netuid 6 on mainnet, 155 on testnet)
+- Whatever research tools you like: the network only sees the forecasts you send
 
-**Get API Keys**
-
-These are the only services reachable on the SIGNAL track. Anything else returns **403** — the authoritative allowlist is [`track_config.py`](../neurons/validator/sandbox/signing_proxy/track_config.py).
-
-| Service | Key | Notes |
-|---|---|---|
-| OpenAI | https://platform.openai.com/api-keys | Limited to `/responses/inference` — no web search |
-| OpenRouter | https://openrouter.ai/settings/keys | Limited to `/chat/completions/inference` |
-| Lightning Rod | https://lightningrod.ai | OpenAI-compatible chat completions |
-| Numinous Signals | https://eversight.numinouslabs.io/api-keys | Causal drivers, deep research, corpus search, scored news feed |
-| Numinous Indicia | — | Free, no key or linking required |
-
-Full request/response reference for each: [gateway-guide.md](./gateway-guide.md).
-
-**⚠️ OpenAI Security Recommendation:**
-
-For compliance and security, use **project-specific service accounts** instead of personal API keys:
-
-1. **Create a dedicated project** (e.g., "Numinous") in your [OpenAI Dashboard](https://platform.openai.com/)
-2. **Create a service account API key** (not a personal key) for that project
-3. **Set appropriate permissions** (restrict to only what's needed)
-
-**Why?**
-- ✅ Compliant with [OpenAI's Terms](https://openai.com/policies/services-agreement/) (Section 3.1 forbids sharing personal credentials)
-- ✅ Project isolation (key only accesses this specific project)
-- ✅ Budget control (set project-specific spending limits)
-- ✅ Easy revocation (delete project to instantly invalidate key)
-
-**Learn more:**
-- [Managing Projects](https://help.openai.com/en/articles/9186755-managing-your-work-in-the-api-platform-with-projects)
-- [Project Service Accounts](https://platform.openai.com/docs/api-reference/project-service-accounts)
-- [API Key Best Practices](https://help.openai.com/en/articles/5112595-best-practices-for-api-key-safety)
-
----
-
-# Setup Steps
-
-## 1. Clone Repository & Install CLI
+## 1. Clone the repository and install `numi`
 
 ```bash
 git clone https://github.com/numinouslabs/numinous.git
 cd numinous
-```
-
-Install the `numi` CLI tool:
-
-```bash
 pip install -e .
 ```
 
-Verify installation:
+Verify the installation:
 
 ```bash
 numi --version
-# Should output: numi, version 2.0.0
+# numi, version 4.0.0
 ```
 
-## 2. Create & Register Wallet
+## 2. Create and register a wallet
 
-See [wallet-setup.md](./wallet-setup.md) for complete wallet creation and registration instructions.
-
-**Quick summary:**
-1. Create coldkey and hotkey with `btcli`
+See [wallet-setup.md](./wallet-setup.md) for the full instructions. In short:
+1. Create a coldkey and a hotkey with `btcli`
 2. Get testnet TAO from https://taoswap.org/testnet-faucet
-3. Register on subnet (netuid 155 testnet, 6 mainnet)
-4. Verify registration with `btcli wallet overview`
+3. Register on the subnet (netuid 155 testnet, 6 mainnet)
+4. Check the registration with `btcli wallet overview`
+
+## 3. Point `numi` at your wallet
+
+Every command takes `--wallet`, `--hotkey`, `--wallet-path` and `--env`. Setting them once as environment variables keeps the commands short:
+
+```bash
+export NUMINOUS_WALLET=my_wallet         # wallet name (required)
+export NUMINOUS_HOTKEY=my_hotkey         # hotkey name (default: default)
+export NUMINOUS_WALLET_PATH=~/.bittensor/wallets
+export NUMINOUS_ENV=prod                 # prod for mainnet, test for testnet (default: prod)
+```
+
+Every request is signed with your hotkey, so only a registered hotkey is served.
 
 ---
 
-# Writing Your Agent
+# The forecasting loop
 
-## Agent Code Requirements
+## 1. Read the open round
 
-Your agent must implement a single function:
-
-```python
-from typing import Dict, Any
-
-def agent_main(event_data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Forecast binary event probability.
-
-    Called once per event, per interval — the same event reaches your agent
-    again every interval until its cutoff.
-
-    Args:
-        event_data: {
-            "event_id": str,        # Unique event identifier
-            "title": str,           # Short event title
-            "description": str,     # Full event description
-            "cutoff": str,          # ISO 8601 datetime (prediction deadline)
-            "metadata": dict,       # Event-specific data
-            "memory": str | None    # What you returned last interval, None on the first run
-        }
-
-    Returns:
-        {
-            "event_id": str,        # Echo back from input
-            "prediction": float,    # Probability in [0.0, 1.0]
-            "memory": str | None,   # Optional, <= 32768 chars, handed back next interval
-            "reasoning": str | None,      # Optional
-            "sources": list[str] | None   # Optional
-        }
-    """
-    previous_memory = event_data.get("memory")
-
-    prediction = 0.5  # Your logic here
-
-    return {
-        "event_id": event_data["event_id"],
-        "prediction": prediction,
-        "memory": f"last forecast: {prediction}"
-    }
+```bash
+numi round
 ```
 
-**Memory:** `memory` is the only channel that carries state between intervals. It is scoped per `(miner, event)` — it never crosses events and never crosses miners — and values over 32,768 characters are truncated rather than rejected. Omit the key and you receive `None` every interval. See [`memory_example.py`](../neurons/miner/agents/memory_example.py) for a worked belief-updating agent.
+Prints the round accepting forecasts: its `id`, `deadline_at` (the last moment to send), `horizon_end_at` (the last day a statement can come true), `reveal_round` and its `questions`. Each question has an `id`, the entity (e.g company) it asks about (`entity_id`, `entity`) and, for some questions, a `counterparty` and the relationship already known between them. Exits 3 when no round is accepting forecasts.
 
-**Constraints:** See [subnet-rules.md](./subnet-rules.md) for execution timeouts, code size limits, and available libraries.
+## 2. Research what the graph already knows
 
-**Gateway API:** For complete gateway endpoint documentation, see [gateway-guide.md](./gateway-guide.md).
+A statement that repeats a relationship the graph already held at the deadline is judged not correct, so check before forecasting:
 
-## Example Agents
-
-### Simple Baseline
-
-```python
-from typing import Dict, Any
-
-def agent_main(event_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Returns 0.5 for all events."""
-    return {
-        "event_id": event_data["event_id"],
-        "prediction": 0.5
-    }
+```bash
+numi entities --name nvidia                      # find an entity's id by name or alias
+numi graph --entity <entity_id>                  # its relationships and its neighbours'
+numi graph --entity <entity_id> --relation SUPPLIES --relation INVESTS_IN
+numi graph --entity <entity_id> --with-observations --limit 50   # with the articles behind each edge
 ```
 
-### Using OpenAI (LLM Inference)
+Each edge has a `standing` (stated, disputed, denied) and a `support` (news, ongoing, recalled, denied), but neither tells you whether the act already happened. An edge is **already held**, so forecasting it again is judged not correct, only when at least one of its reports is announced, completed or ongoing. An edge backed only by rumoured reports is not held yet, and forecasting the act itself can still count. Each report's status comes with `--with-observations`.
 
-The SIGNAL track allows the **inference** route only — `web_search` and other built-in tools return 400. Gather evidence through the signals endpoints and pass it in as context.
+## 3. Write the forecast
 
-```python
-import os
-import httpx
-from typing import Dict, Any
+A forecast is JSON:
 
-# Required: Get proxy URL and run ID
-PROXY_URL = os.getenv("SANDBOX_PROXY_URL", "http://sandbox_proxy")
-RUN_ID = os.getenv("RUN_ID")
-
-if not RUN_ID:
-    raise ValueError("RUN_ID environment variable is required but not set")
-
-OPENAI_URL = f"{PROXY_URL}/api/gateway/openai"
-
-def agent_main(event_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Uses OpenAI inference for forecasting."""
-
-    # Build forecast prompt
-    prompt = f"""Forecast the probability (0.0-1.0) of this event occurring:
-
-Event: {event_data['title']}
-Description: {event_data['description']}
-Deadline: {event_data['cutoff']}
-
-Weigh the base rate, the time remaining, and any evidence provided above.
-
-Return only:
-PREDICTION: [number 0.0-1.0]
-REASONING: [2-4 sentences]"""
-
-    response = httpx.post(
-        f"{OPENAI_URL}/responses/inference",
-        json={
-            "model": "gpt-5-mini",
-            "input": [
-                {"role": "developer", "content": "You are an expert forecaster."},
-                {"role": "user", "content": prompt}
-            ],
-            "run_id": RUN_ID,
-        },
-        timeout=120.0,
-    )
-
-    result = response.json()
-
-    # Extract response text from output
-    text = extract_response_text(result)
-    prediction = parse_prediction(text)
-
-    return {
-        "event_id": event_data["event_id"],
-        "prediction": prediction
+```json
+{
+  "version": 2,
+  "statements": [
+    {
+      "head": "Paramount",
+      "relation": "ACQUIRES",
+      "tail": "Warner Bros.",
+      "probability": 0.3,
+      "rationale": "Optional: why you expect it.",
+      "sources": [
+        {"url": "https://example.com/article", "title": "Article title", "note": "What it says"}
+      ]
     }
-
-def extract_response_text(data: dict) -> str:
-    """Extract text from OpenAI response."""
-    for item in data.get("output", []):
-        if item.get("type") == "message":
-            for content in item.get("content", []):
-                if content.get("text"):
-                    return content["text"]
-    return ""
-
-def parse_prediction(text: str) -> float:
-    """Parse PREDICTION: value from response."""
-    for line in text.split("\n"):
-        if line.startswith("PREDICTION:"):
-            pred = float(line.replace("PREDICTION:", "").strip())
-            return max(0.0, min(1.0, pred))
-    return 0.5
+  ]
+}
 ```
 
-### Using Numinous Indicia (Geopolitical Signals)
+| Field | Rule |
+|---|---|
+| `version` | The schema's version (`2` today) |
+| `statements` | At least one, up to the schema's limit |
+| `head`, `tail` | The two parties. One of them must be the company the question asks about, and the counterparty too when the question has one |
+| `relation` | Either one of the relation types below, or free text describing the relationship |
+| `probability` | A number from 0 to 1. Collected, not scored for now |
+| `rationale` | Optional: why you expect it |
+| `sources` | Optional: each with a `url`, a `title` and a `note` |
 
-Indicia provides OSINT signals from X/Twitter and LiveUAMap -- useful as extra context for geopolitical events when combined with an LLM. Free to use, no API key linking required.
+No other field is allowed. The exact limits (how many statements, how long each field, how many sources, the sealed size) are in the schema. They can change: always check against `numi schema`, or with `numi validate`.
 
-```python
-import os
-import httpx
-from typing import Dict, Any
+**The relation types** (listed in `numi schema`): `SUPPLIES`, `COMPETES_WITH`, `INVESTS_IN`, `ACQUIRES`, `MERGES_WITH`, `PARTNERS_WITH`, `LAUNCHES`, `EXPANDS_CAPACITY`, `SELLS`.
+- With one of these types and both parties known to the graph, the statement is checked directly: it is judged correct when a news event after the deadline reports exactly that relationship between the two.
+- **Direction matters** (`A SUPPLIES B` is not `B SUPPLIES A`), except for `PARTNERS_WITH`, `COMPETES_WITH` and `MERGES_WITH`.
+- With free text, a model reads the news and decides whether what you stated happened.
 
-PROXY_URL = os.getenv("SANDBOX_PROXY_URL", "http://sandbox_proxy")
-RUN_ID = os.getenv("RUN_ID")
+The exact schema the backend opens forecasts with:
 
-if not RUN_ID:
-    raise ValueError("RUN_ID environment variable is required but not set")
-
-INDICIA_URL = f"{PROXY_URL}/api/gateway/numinous-indicia"
-
-def fetch_signals() -> list[dict]:
-    signals = []
-    with httpx.Client(timeout=30.0) as client:
-        for endpoint in ["/x-osint", "/liveuamap"]:
-            response = client.post(
-                f"{INDICIA_URL}{endpoint}",
-                json={"run_id": RUN_ID, "limit": 20},
-            )
-            response.raise_for_status()
-            signals.extend(response.json().get("signals", []))
-    return signals
-
-def agent_main(event_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Fetches Indicia signals and uses them as LLM context."""
-
-    signals = fetch_signals()
-
-    # Use signals as context for your LLM forecast
-    # See neurons/miner/agents/indicia_openai_example.py for a complete example
-
-    return {
-        "event_id": event_data["event_id"],
-        "prediction": 0.5
-    }
+```bash
+numi schema
 ```
 
-A complete working agent combining Indicia signals with an LLM is available at [`indicia_openai_example.py`](../neurons/miner/agents/indicia_openai_example.py), and the equivalent for Numinous Signals at [`signals_openai_example.py`](../neurons/miner/agents/signals_openai_example.py). Both call the SIGNAL-reachable `/responses/inference` route.
+## 4. Check it
 
-## Example Agents in This Repo
+```bash
+numi validate forecast.json        # or pipe the JSON on stdin
+```
 
-| File | What it shows | SIGNAL-ready |
+Prints `{"valid": true}`, or `{"valid": false, "errors": [{"path", "message"}]}` and exits 4.
+
+## 5. Send it
+
+```bash
+numi submit --question <question_id> forecast.json
+```
+
+`numi submit` checks the forecast and the question, seals the forecast so it can only be opened after the deadline, signs it with your hotkey, sends it and verifies the receipt the backend signs. The forecast, the sealed bytes and the receipt are saved under `~/.numinous/receipts/<hotkey>/<round>/<question>.json`.
+
+## 6. Follow how it was judged
+
+```bash
+numi forecasts                                   # every forecast you sent, oldest first
+numi forecasts --round <round_id>
+numi forecasts --changed-since 2026-10-20T00:00:00Z
+```
+
+Each forecast has a state: `sealed` (before the deadline), `opened` (valid) or `invalid` (with `invalid_reason`). Each statement has a status: `right` (judged correct, with the news event and its date), `wrong` (judged not correct for good, with the judge's reason) or `waiting` (not judged for good yet).
+
+---
+
+# Exit codes
+
+Every command prints JSON. On failure it prints `{"error": ..., "message": ...}` and exits with one of `numi`'s own codes, which start at 3 so they never clash with the two generic ones:
+
+| Code | Meaning | What to do |
 |---|---|---|
-| `memory_example.py` | Belief updating across intervals via `memory` | Yes |
-| `lightning_rod_example.py` | Lightning Rod chat completions with retry/backoff | Yes |
-| `signals_openai_example.py` | Numinous Signals + OpenAI inference | Yes |
-| `indicia_openai_example.py` | Indicia OSINT signals + OpenAI inference | Yes |
-| `openrouter_example.py` | OpenRouter chat completions | Switch to the `/inference` route |
-
-Anything else in that directory targets a MAIN-only service and will return 403 on SIGNAL.
-
-## Important Notes
-
-1. **Always use `SANDBOX_PROXY_URL`** - Never hardcode API URLs
-2. **Always include `RUN_ID`** - Required for tracking and authentication
-3. **Stay on the allowlist** - Only the five SIGNAL prefixes resolve; anything else returns 403
-4. **Implement retry logic** - Handle API errors with proper fallback strategies
-5. **Never raise** - Return a fallback forecast instead, so the coverage cell stays filled
-
-## Best Practices
-
-### Error Handling
-
-Always implement robust error handling for API calls. Providers commonly return:
-
-- **503 Service Unavailable** - Provider temporarily unavailable, implement exponential backoff
-- **404 Not Found** - Model doesn't exist, verify the identifier with the provider
-- **429 Too Many Requests** - Rate limit exceeded, implement exponential backoff
-- **403 Forbidden** - Endpoint is not on the SIGNAL allowlist
-
-**Example retry logic:**
-
-```python
-import time
-from typing import Dict, Any
-
-def agent_main(event_data: Dict[str, Any]) -> Dict[str, Any]:
-    max_retries = 3
-    base_delay = 2  # seconds
-
-    for attempt in range(max_retries):
-        try:
-            response = llm.invoke(prompt)
-            prediction = parse_response(response)
-
-            return {
-                "event_id": event_data["event_id"],
-                "prediction": prediction
-            }
-        except Exception as e:
-            error_str = str(e)
-
-            # Check for specific errors
-            if "503" in error_str or "429" in error_str:
-                if attempt < max_retries - 1:
-                    delay = base_delay ** (attempt + 1)  # 2s, 4s, 8s
-                    time.sleep(delay)
-                    continue
-
-            # If all retries fail or other error, return fallback
-            break
-
-    # Fallback prediction
-    return {
-        "event_id": event_data["event_id"],
-        "prediction": 0.5
-    }
-```
-
-### Prompt Optimization
-
-**Don't include dynamic timestamps in prompts** - This interferes with caching and wastes API calls:
-
-```python
-# BAD - Breaks caching
-prompt = f"""Current date: {datetime.now()}
-Analyze this event: {event_data['description']}"""
-```
-
-### Timeout Management
-
-**Leave buffer time for retries** - With a 240-second timeout, plan your execution:
-
-- Multiple retries: Account for exponential backoff delays
-- Fallback logic: Always have a quick fallback (return 0.5) if time runs out
-
-**Example timing strategy:**
-
-```python
-import time
-
-start_time = time.time()
-timeout = 230  # Leave 10s buffer before hard 240s limit
-
-def check_time_remaining():
-    elapsed = time.time() - start_time
-    return timeout - elapsed
-
-# In your retry loop
-if check_time_remaining() < 20:  # Need at least 20s for retry
-    return fallback_prediction()
-```
+| 0 | Done | |
+| 1 | Unexpected error (a crash, printed as a Python traceback rather than JSON) | Read the traceback; report it if it persists |
+| 2 | Wrong usage: a missing, unknown or invalid option | Check `numi <command> --help` |
+| 3 | No round is accepting forecasts | Wait for the next round |
+| 4 | The forecast is not valid; nothing was sent | Fix it using the errors printed |
+| 5 | The backend refused the request | Read the message |
+| 6 | The backend could not be reached | Retry later |
+| 7 | The hotkey was not found in the wallet folder | Check `--wallet`, `--hotkey` and `--wallet-path` |
+| 8 | A forecast for this question was already sent | Nothing: the first one counts |
+| 9 | The round's deadline has passed | Wait for the next round |
+| 10 | The question is not in the open round | Use a question id from `numi round` |
+| 11 | The backend's receipt does not verify | Do not resend; report it |
 
 ---
 
-# Testing Your Agent
-
-## Using numi CLI
-
-The CLI provides an intuitive testing workflow and will guide you through:
-
-```bash
-# Start local gateway (one-time setup)
-numi gateway configure  # Set your API keys
-numi gateway start      # Start local proxy
-
-# Test your agent
-numi test-agent
-
-# Or test specific file
-numi test-agent --agent-file my_agent.py
-
-# Test with a specific track (applies endpoint filtering like production)
-numi test-agent -f my_agent.py -t SIGNAL
-```
-
-When testing with a non-MAIN track, the local sandbox enforces the same endpoint restrictions as production — your agent will get 403 for any disallowed endpoint.
-
-**Example output:**
-
-```
-🧪 Numinous - Agent Testing Tool
-
-✓ All checks passed!
-✓ Found agent: my_agent.py
-✓ Selected 5 event(s)
-
-Running tests...
-
-Event evt_123: 0.650 (12.4s) ✓
-Event evt_124: 0.420 (18.2s) ✓
-Event evt_125: ERROR - Missing prediction field
-Event evt_126: 0.890 (15.1s) ✓
-Event evt_127: 0.510 (9.8s) ✓
-
-Results: 4/5 successful
-Average execution time: 13.9s
-```
-
-## Gateway Commands
-
-```bash
-numi gateway start       # Start gateway
-numi gateway stop        # Stop gateway
-numi gateway status      # Check status
-numi gateway logs        # View logs (local gateway only)
-numi gateway configure   # Update API keys
-```
-
-## Viewing Logs
-
-**Local Testing:**
-- Use `numi test-agent` to see real-time execution output
-- Use `numi gateway logs` to view local gateway logs
-
-**Production (Sandbox Execution Logs):**
-
-Fetch logs from validator sandbox executions using your `run_id`:
-
-```bash
-numi fetch-logs
-```
-
-The CLI will prompt you for:
-1. **Run ID** - Get this from the [analytics dashboard](https://app.hex.tech/1644b22a-abe5-4113-9d5f-3ad05e4a8de7/app/Numinous-031erYRYSssIrH3W3KcyHg/latest)
-2. **Environment** - `test` or `prod`
-3. **Wallet** - Authenticates you (you can only access your own logs)
-
-**Note:** Production log fetching requires wallet authentication. You can only view logs for your own agent executions.
-
----
-
-# Tracks
-
-The subnet supports multiple **tracks**, but only **SIGNAL** is scored — it receives the entire daily emission through the re-forecasting pool. MAIN still runs your agent but earns nothing, so upload to SIGNAL.
-
-**Key points:**
-- You can have **one active agent per track** — uploading to a track replaces only that track's agent
-- Each track has its own **sandbox rules**. SIGNAL is restricted to five endpoint prefixes; anything else returns 403
-- If you don't submit an agent for a track, you simply don't participate in it — no penalty
-
-Available tracks are defined in [`neurons/validator/models/track.py`](../neurons/validator/models/track.py). Per-track endpoint allowlists are in [`neurons/validator/sandbox/signing_proxy/track_config.py`](../neurons/validator/sandbox/signing_proxy/track_config.py).
-
-When uploading, testing, or linking services, the CLI will prompt you to select a track. You can also pass `--track` explicitly to any command — use `-t SIGNAL`.
-
----
-
-# Submitting Your Agent
-
-Place your agent in the expected directory:
-
-```bash
-mkdir -p neurons/miner/agents
-cp my_agent.py neurons/miner/agents/
-```
-
-Submit using the CLI:
-
-```bash
-# Interactive mode (recommended — prompts for track, wallet, etc.)
-numi upload-agent
-
-# Or specify all options
-numi upload-agent \
-  --agent-file my_agent.py \
-  --env test \
-  --wallet miner \
-  --hotkey default \
-  --name "My Forecaster v1"
-
-# Upload to a specific track
-numi upload-agent -f my_agent.py -t SIGNAL
-```
-
-The CLI will guide you through the process — including track selection — just follow the prompts!
-
-**Upload confirmation:**
-
-```
-✓ Upload successful!
-Agent ID: [generated_id]
-Network: TEST
-
-⚠️  Remember to link services for this new code!
-Run: numi services link
-```
-
-## Linking Services
-
-After uploading your agent, link your API accounts to cover API costs. Only the services below are reachable on SIGNAL — Numinous Indicia is free and needs no linking.
-
-⚠️ **Re-link after every agent upload** — each code version needs its own link.
-
-**Security:** API keys are securely stored using external secret management and never exposed to validators.
-
-### OpenAI (LLM Inference)
-
-Link your OpenAI account for GPT-5 series models:
-
-```bash
-numi services link openai
-```
-
-You'll be prompted for:
-- Your OpenAI API key (get from https://platform.openai.com/api-keys)
-
-**Note:** OpenAI requires linking your own API key. There is no free tier. On SIGNAL only `/responses/inference` is reachable — the web-search route returns 403.
-
-### OpenRouter (Multi-Provider LLMs)
-
-Link your OpenRouter account for access to hundreds of LLM models (Claude, Gemini, Llama, etc.):
-
-```bash
-numi services link openrouter
-```
-
-You'll be prompted for:
-- Your OpenRouter API key (get from https://openrouter.ai/settings/keys)
-
-**Note:** OpenRouter has no free tier. On SIGNAL only `/chat/completions/inference` is reachable — provider-run web search returns 403.
-
-### Lightning Rod (LLM Inference)
-
-Link your Lightning Rod account for OpenAI-compatible chat completions:
-
-```bash
-numi services link lightning-rod
-```
-
-You'll be prompted for:
-- Your Lightning Rod API key (get from https://lightningrod.ai)
-
-**Note:** Lightning Rod has no free tier. Cost is metered per token — $1.00 per 1M input tokens, $6.00 per 1M output tokens.
-
-### Numinous Signals (Research & Scored News)
-
-Link your Eversight account to access the research and scored news endpoints for event forecasting:
-
-```bash
-numi services link numinous-signals
-```
-
-You'll be prompted for:
-- Your Numinous Signals API key (get from https://eversight.numinouslabs.io/api-keys)
-
-**Note:** Numinous Signals has no free tier — you must link your Eversight account, and without the link these endpoints return 403. One link covers the causal-drivers, deep-research, corpus search/fetch and news feed endpoints; their per-call cost is charged to your run's gateway budget. See the [gateway guide](./gateway-guide.md#numinous-signals-endpoints) for the full endpoint list.
-
-## Activation Schedule
-
-⚠️ **Important:** Submitted code activates at **next 00:00 UTC**.
-
-You can submit anytime, but activation happens once daily at midnight UTC.
-
-## Complete CLI Command Reference
-
-```bash
-# Agent Management
-numi upload-agent          # Submit agent to network
-numi list-agents           # List your uploaded agents
-
-# Service Linking (SIGNAL track)
-numi services link openai              # Link OpenAI API key
-numi services link openrouter          # Link OpenRouter API key
-numi services link lightning-rod       # Link Lightning Rod API key
-numi services link numinous-signals    # Link Numinous Signals API key
-numi services list                     # Check linked services
-numi services unlink openai            # Unlink a service
-
-# Local Testing
-numi test-agent            # Test agent with real events
-
-# Gateway (local testing only)
-numi gateway configure     # Set API keys (one-time setup)
-numi gateway start         # Start gateway
-numi gateway stop          # Stop gateway
-numi gateway status        # Check health
-numi gateway logs          # View logs
-
-# Production Logs
-numi fetch-logs            # Fetch validator execution logs
-```
-
----
-
-**Next Steps:**
-1. Read [subnet-rules.md](./subnet-rules.md) for competition rules and constraints
-2. Read [scoring-system.md](./scoring-system.md) to understand how you are scored and paid
-3. Use [gateway-guide.md](./gateway-guide.md) as the endpoint reference while writing your agent
-4. Review [architecture.md](./architecture.md) for system details
-5. Check example agents in `neurons/miner/agents/`
+# Tips
+
+- **Use testnet first:** register on netuid 155 and run every command with `--env test`.
+- **Aim at new developments:** deals, investments, supply agreements, launches, capacity expansions, acquisitions that are likely to be reported before the round's horizon ends.
+- **One strong statement can beat two:** your credits for a forecast are the number of correct statements divided by the square root of the number of statements (see [scoring-system.md](./scoring-system.md)).
+- **Do not repeat yourself across questions:** the same news only pays you once, in the forecast you sent first.

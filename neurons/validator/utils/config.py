@@ -1,7 +1,6 @@
 import argparse
 import logging
 import os
-import platform
 from pathlib import Path
 from typing import Literal
 from unittest.mock import ANY
@@ -30,10 +29,6 @@ class ValidatorSettings(BaseModel):
     numinous_env: NuminousEnvType
     db_path: str
     logging_level: int
-    gateway_url: str
-    validator_sync_hour: int
-    sandbox_max_concurrent: int
-    sandbox_timeout_seconds: int
 
     @property
     def subtensor_connection(self) -> str:
@@ -58,30 +53,6 @@ def _build_parser() -> argparse.ArgumentParser:
         type=str,
         help="Directory where the database file is located (default: ./). This must be an absolute directory path that exists",
         required=False,
-    )
-    parser.add_argument(
-        "--backend.gateway_url",
-        type=str,
-        help="Backend gateway URL for sandbox API access (optional, defaults to numinous backend based on env)",
-        required=False,
-    )
-    parser.add_argument(
-        "--sandbox.max_concurrent",
-        type=int,
-        default=50,
-        help="Maximum concurrent sandbox executions (default: 50)",
-    )
-    parser.add_argument(
-        "--sandbox.timeout_seconds",
-        type=int,
-        default=240,
-        help="Timeout for agent execution in seconds (default: 240)",
-    )
-    parser.add_argument(
-        "--validator.sync_hour",
-        type=int,
-        default=1,
-        help="Hour for validator synchronization (default: 1)",
     )
     parser.add_argument(
         "--subtensor.network",
@@ -164,20 +135,6 @@ def _resolve_db_path(db_directory_argument: str | None, numinous_env: NuminousEn
     return str(Path(db_directory) / db_filename)
 
 
-def _resolve_gateway_url(gateway_url_argument: str | None, numinous_env: NuminousEnvType) -> str:
-    if gateway_url_argument:
-        return gateway_url_argument
-
-    if numinous_env == "prod":
-        return "https://numinous.earth"
-
-    return (
-        "http://172.17.0.1:8000"
-        if platform.system() == "Linux"
-        else "http://host.docker.internal:8000"
-    )
-
-
 def _resolve_logging_level(args: argparse.Namespace) -> int:
     if getattr(args, "logging.trace") or getattr(args, "logging.debug"):
         return logging.DEBUG
@@ -211,8 +168,4 @@ def get_config() -> ValidatorSettings:
         numinous_env=numinous_env,
         db_path=_resolve_db_path(getattr(args, "db.directory"), numinous_env),
         logging_level=_resolve_logging_level(args),
-        gateway_url=_resolve_gateway_url(getattr(args, "backend.gateway_url"), numinous_env),
-        validator_sync_hour=getattr(args, "validator.sync_hour"),
-        sandbox_max_concurrent=getattr(args, "sandbox.max_concurrent"),
-        sandbox_timeout_seconds=getattr(args, "sandbox.timeout_seconds"),
     )

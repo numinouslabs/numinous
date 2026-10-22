@@ -10,58 +10,50 @@
 
 </div>
 
-### 👉 New here? Start with the **[Miner Setup Guide](docs/miner-setup.md)** — it is the entry point to all the documentation.
+### 👉 New here? Start with the **[Miner Setup Guide](docs/miner-setup.md)**, the entry point to all the documentation.
 
 ## Introduction
 
-Numinous (Subnet 6) is a **forecasting protocol** whose goal is to aggregate agents into **superhuman LLM forecasters**. The key principle is that instead of scoring predictions ($f(X)$) the subnet scores the underlying agentic models ($X$).
+Numinous (Subnet 6) is a **graph forecasting** subnet. It forecasts how the network of companies and their relationships will change: who will invest in, supply, partner with, acquire or compete with whom.
 
-
-Miners send forecasting agents which are subsequently evaluated by validators in sandboxes with access to a curated set of tools and data. **Agent execution and code are entirely visible to the subnet protocol.**
-
-The sandbox corresponds to the environment where the agent operates. In a given environment, an agent has access to inference (e.g., reasoning models), a set of tools (e.g., news providers), and context (historical data, baseline reasoning).
-
+The Numinous backend builds a **knowledge graph** of companies and their relationships from the news. Every day the subnet asks questions about companies, and miners answer each question with a bundle of statements about relationships that will appear next. A statement is judged correct when the news shows it happened after the question's deadline.
 
 The key principles of the subnet are:
 
-  * **Discoverability:** Agents improve by learning from each other’s code. Every forecast traces back to its sources.
-  * **Composability:** The best agents become building blocks for meta-models, prediction market resolution, and high-frequency trading systems.
-
+  * **Verifiable:** every forecast is sealed before the deadline, judged against public news, and scored with a fixed formula that any validator can recompute.
+  * **Forward-looking:** only new developments count. A statement that repeats what the graph already knew earns nothing.
 
 -----
 
 ## 🏗 System Architecture
 
-The Numinous subnet operates on a strictly defined lifecycle: **Code Submission $\to$ Sandbox Execution $\to$ Resolution $\to$ Weight Setting.**
-
-Validators spin up parallel sandboxes where miners are evaluated on batches of events. Agents operate inside Docker containers with a secure proxy gateway to access external tools.
+Every day follows the same cycle: **Questions → Sealed forecasts → Opening → Judging → Scoring → Weight setting.**
 
 ### Key Components
 
-  * **The Sandbox:** Isolated execution environment with strict resource limits.
-  * **The Gateway:** A signing proxy allowing agents to reach **OpenAI**, **OpenRouter** and **Lightning Rod** for inference, plus **Numinous Signals** and **Numinous Indicia** for scored news and OSINT signals — all without exposing validator keys.
-  * **Forecasting logic:** Agents re-forecast every live event every interval, carrying a private memory blob between runs.
+  * **The knowledge graph:** companies and their relationships, built from the news by the Numinous backend.
+  * **`numi`:** the miners' command line tool to read the open round and the graph, and to seal, sign and send forecasts.
+  * **The judge:** checks every statement against the news reported after the deadline.
+  * **Validators:** check every forecast against its hash and signature, score every miner, and set weights.
 
-📖 **[Read the full system architecture](docs/architecture.md)**
+📖 **[Read how the system works](docs/miner-setup.md#system-components)**
 
 -----
 
 ## ⚠️ Rules & Scoring
 
-To survive in the Numinous arena, agents must adhere to strict constraints. Violating these constraints results in execution failure (or less consistency across validators in case of the caching).
+### Rules
 
-### Execution Rules
-
-1.  **Timeout:** Execution must complete within **240 seconds**.
-2.  **Cost:** API usage limits depend on each service and are paid by the miner.
-3.  **Caching:** Do not use dynamic timestamps or random seeds in prompts. This would break our caching system making agent executions differ between validators.
-4.  **Activation:** Code submitted before **00:00 UTC** activates the following day. You can update your code at most once every 3 days.
+1.  **Rounds:** a new round of questions is published every day and accepts forecasts until its deadline.
+2.  **One forecast per question:** the first one sent counts. Each of its statements names the company the question asks about.
+3.  **Sealed until the deadline:** nobody can read a forecast before the deadline, the backend included.
+4.  **New developments only:** a statement comes true through news reported after the deadline, until the round's horizon ends.
 
 ### Scoring
 
-Forecasts are scored against the **market's own price**, not the outcome alone: `S = (prediction − target)² − (market_price − target)²`, where the target is the market price 7 days later. Matching the market scores exactly 0 — it is the baseline you have to beat. Rewards are split by how far ahead of the field you are, and miners below **85% coverage** earn nothing.
+Each bundle earns `correct statements / √statements` in **credits**, counting statements judged correct in the last 30 days. A news event pays a miner once: repeats are voided. Validators compute credits daily at 15:00 UTC, and weights **extremise quadratically among the top 25** (98% by credits squared) with **2%** spread by rank over every miner with credits.
 
-⚠️ **[Read the full subnet rules](docs/subnet-rules.md)** • 📊 **[Read the scoring system](docs/scoring-system.md)**
+⚠️ **[Read the miner guide and rules](docs/miner-setup.md)** • 📊 **[Read the scoring system](docs/scoring-system.md)**
 
 
 -----
@@ -70,61 +62,19 @@ Forecasts are scored against the **market's own price**, not the outcome alone: 
 
 ### For Miners
 
-Develop and deploy forecasting agents that compete for the daily reward pool.
+Forecast the knowledge graph and compete for the daily reward pool.
 
-  * [**Miner Setup Guide**](docs/miner-setup.md) – **Start here.** Installation, wallet registration, writing an agent, and deployment.
-  * [**Subnet Rules**](docs/subnet-rules.md) – Execution limits, memory, event selection, penalties.
-  * [**Scoring System**](docs/scoring-system.md) – How you are scored and paid.
-  * [**Gateway Guide**](docs/gateway-guide.md) – Every API endpoint your agent can call.
+  * [**Miner Setup Guide**](docs/miner-setup.md): **start here.** Installation, wallet registration and the `numi` forecasting loop.
+  * [**Scoring System**](docs/scoring-system.md): how you are scored and how weights are set.
 
 ### For Validators
 
-Run the physical infrastructure that executes and scores the agents.
+Check every forecast, score every miner and set weights. No special hardware needed.
 
-  * [**Validator Setup Guide**](docs/validator-setup.md) – Hardware requirements and node configuration.
-
------
-
-## 🧠 Developing Agents
-
-In essence your agent is a Python function that takes an event context and returns a probability.
-
-### Code Interface
-
-Agents must adhere to the interface defined in the architecture. Code size is limited to **2MB**.
-
-```python
-def agent_main(event_data: dict) -> dict:
-    """
-    Called once per event, per interval — the same event comes back
-    every interval until its cutoff.
-
-    Args:
-        event_data: {
-            "event_id": str,
-            "title": str,
-            "description": str,
-            "cutoff": str,          # ISO 8601
-            "metadata": dict,
-            "memory": str | None,   # what you returned last interval
-        }
-
-    Returns:
-        {
-            "event_id": str,
-            "prediction": float,    # 0.0 to 1.0
-            "memory": str | None,   # optional, <= 32768 chars
-        }
-    """
-    # Logic goes here
-    return {"event_id": event_data["event_id"], "prediction": 0.75, "memory": None}
-```
-
-For details on available libraries and API access, refer to the [Gateway Guide](docs/gateway-guide.md).
+  * [**Validator Setup Guide**](docs/validator-setup.md): requirements and node configuration.
 
 -----
 
 ## 📄 License
 
 This repository is licensed under the MIT License.
-

@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from neurons.validator.db.client import DatabaseClient
-from neurons.validator.db.operations import DatabaseOperations
+from neurons.validator.db.dkg_operations import DkgDatabaseOperations
 from neurons.validator.tasks.sync_miners_metadata import SyncMinersMetadata
 from neurons.validator.utils.logger.logger import NuminousLogger
 
@@ -11,30 +11,30 @@ from neurons.validator.utils.logger.logger import NuminousLogger
 class TestSyncMinersMetadataInit:
     def test_valid_initialization(self):
         logger = MagicMock(spec=NuminousLogger)
-        db_operations = MagicMock(spec=DatabaseOperations)
+        dkg_operations = MagicMock(spec=DkgDatabaseOperations)
 
         task = SyncMinersMetadata(
             interval_seconds=300.0,
-            db_operations=db_operations,
+            dkg_operations=dkg_operations,
             netuid=99,
             network="test",
             logger=logger,
         )
 
         assert task.interval == 300.0
-        assert task.db_operations == db_operations
+        assert task.dkg_operations == dkg_operations
         assert task.netuid == 99
         assert task.network == "test"
         assert task.logger == logger
 
     def test_invalid_interval_negative(self):
         logger = MagicMock(spec=NuminousLogger)
-        db_operations = MagicMock(spec=DatabaseOperations)
+        dkg_operations = MagicMock(spec=DkgDatabaseOperations)
 
         with pytest.raises(ValueError, match="interval_seconds must be a positive"):
             SyncMinersMetadata(
                 interval_seconds=-1.0,
-                db_operations=db_operations,
+                dkg_operations=dkg_operations,
                 netuid=99,
                 network="test",
                 logger=logger,
@@ -42,12 +42,12 @@ class TestSyncMinersMetadataInit:
 
     def test_invalid_interval_zero(self):
         logger = MagicMock(spec=NuminousLogger)
-        db_operations = MagicMock(spec=DatabaseOperations)
+        dkg_operations = MagicMock(spec=DkgDatabaseOperations)
 
         with pytest.raises(ValueError, match="interval_seconds must be a positive"):
             SyncMinersMetadata(
                 interval_seconds=0.0,
-                db_operations=db_operations,
+                dkg_operations=dkg_operations,
                 netuid=99,
                 network="test",
                 logger=logger,
@@ -55,24 +55,24 @@ class TestSyncMinersMetadataInit:
 
     def test_invalid_interval_not_float(self):
         logger = MagicMock(spec=NuminousLogger)
-        db_operations = MagicMock(spec=DatabaseOperations)
+        dkg_operations = MagicMock(spec=DkgDatabaseOperations)
 
         with pytest.raises(ValueError, match="interval_seconds must be a positive"):
             SyncMinersMetadata(
                 interval_seconds=300,
-                db_operations=db_operations,
+                dkg_operations=dkg_operations,
                 netuid=99,
                 network="test",
                 logger=logger,
             )
 
-    def test_invalid_db_operations_type(self):
+    def test_invalid_dkg_operations_type(self):
         logger = MagicMock(spec=NuminousLogger)
 
-        with pytest.raises(TypeError, match="db_operations must be"):
+        with pytest.raises(TypeError, match="dkg_operations must be"):
             SyncMinersMetadata(
                 interval_seconds=300.0,
-                db_operations="not_db_ops",
+                dkg_operations="not_db_ops",
                 netuid=99,
                 network="test",
                 logger=logger,
@@ -80,12 +80,12 @@ class TestSyncMinersMetadataInit:
 
     def test_invalid_netuid(self):
         logger = MagicMock(spec=NuminousLogger)
-        db_operations = MagicMock(spec=DatabaseOperations)
+        dkg_operations = MagicMock(spec=DkgDatabaseOperations)
 
         with pytest.raises(ValueError, match="netuid must be"):
             SyncMinersMetadata(
                 interval_seconds=300.0,
-                db_operations=db_operations,
+                dkg_operations=dkg_operations,
                 netuid=-1,
                 network="test",
                 logger=logger,
@@ -93,24 +93,24 @@ class TestSyncMinersMetadataInit:
 
     def test_invalid_network(self):
         logger = MagicMock(spec=NuminousLogger)
-        db_operations = MagicMock(spec=DatabaseOperations)
+        dkg_operations = MagicMock(spec=DkgDatabaseOperations)
 
         with pytest.raises(ValueError, match="network must be"):
             SyncMinersMetadata(
                 interval_seconds=300.0,
-                db_operations=db_operations,
+                dkg_operations=dkg_operations,
                 netuid=99,
                 network="",
                 logger=logger,
             )
 
     def test_invalid_logger_type(self):
-        db_operations = MagicMock(spec=DatabaseOperations)
+        dkg_operations = MagicMock(spec=DkgDatabaseOperations)
 
         with pytest.raises(TypeError, match="logger must be"):
             SyncMinersMetadata(
                 interval_seconds=300.0,
-                db_operations=db_operations,
+                dkg_operations=dkg_operations,
                 netuid=99,
                 network="test",
                 logger="not_logger",
@@ -120,11 +120,11 @@ class TestSyncMinersMetadataInit:
 class TestSyncMinersMetadataProperties:
     def test_name_property(self):
         logger = MagicMock(spec=NuminousLogger)
-        db_operations = MagicMock(spec=DatabaseOperations)
+        dkg_operations = MagicMock(spec=DkgDatabaseOperations)
 
         task = SyncMinersMetadata(
             interval_seconds=300.0,
-            db_operations=db_operations,
+            dkg_operations=dkg_operations,
             netuid=99,
             network="test",
             logger=logger,
@@ -134,11 +134,11 @@ class TestSyncMinersMetadataProperties:
 
     def test_interval_seconds_property(self):
         logger = MagicMock(spec=NuminousLogger)
-        db_operations = MagicMock(spec=DatabaseOperations)
+        dkg_operations = MagicMock(spec=DkgDatabaseOperations)
 
         task = SyncMinersMetadata(
             interval_seconds=300.0,
-            db_operations=db_operations,
+            dkg_operations=dkg_operations,
             netuid=99,
             network="test",
             logger=logger,
@@ -167,7 +167,7 @@ class TestSyncMinersMetadataRun:
 
     async def test_run_first_sync(self, db_client: DatabaseClient):
         logger = MagicMock(spec=NuminousLogger)
-        db_operations = DatabaseOperations(db_client=db_client, logger=logger)
+        dkg_operations = DkgDatabaseOperations(db_client=db_client)
 
         metagraph = MagicMock()
         metagraph.block = 12345
@@ -181,7 +181,7 @@ class TestSyncMinersMetadataRun:
 
         task = SyncMinersMetadata(
             interval_seconds=300.0,
-            db_operations=db_operations,
+            dkg_operations=dkg_operations,
             netuid=99,
             network="test",
             logger=logger,
@@ -193,7 +193,7 @@ class TestSyncMinersMetadataRun:
         subtensor.assert_called_once_with("test")
         chain_client.subnets.metagraph.assert_awaited_once_with(99)
 
-        miners_count = await db_operations.get_miners_count()
+        miners_count = await dkg_operations.get_miners_count()
         assert miners_count == 3
 
         stored_ips = dict(
@@ -203,7 +203,7 @@ class TestSyncMinersMetadataRun:
 
     async def test_run_stores_unserved_axons_with_zero_ip(self, db_client: DatabaseClient):
         logger = MagicMock(spec=NuminousLogger)
-        db_operations = DatabaseOperations(db_client=db_client, logger=logger)
+        dkg_operations = DkgDatabaseOperations(db_client=db_client)
 
         metagraph = MagicMock()
         metagraph.block = 12345
@@ -217,7 +217,7 @@ class TestSyncMinersMetadataRun:
 
         task = SyncMinersMetadata(
             interval_seconds=300.0,
-            db_operations=db_operations,
+            dkg_operations=dkg_operations,
             netuid=99,
             network="test",
             logger=logger,
@@ -226,7 +226,7 @@ class TestSyncMinersMetadataRun:
         with patch("neurons.validator.tasks.sync_miners_metadata.Subtensor", subtensor):
             await task.run()
 
-        miners_count = await db_operations.get_miners_count()
+        miners_count = await dkg_operations.get_miners_count()
         assert miners_count == 3
 
         stored_ips = dict(
