@@ -14,23 +14,17 @@ services:
     networks:
       - validator_network
 
-    ports:
-      - "8000:8000"
-
     volumes:
       - ./validator-data/database:/root/infinite_games/database
       - ~/.bittensor:/root/.bittensor
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /tmp/ig_validator_sandboxes:/tmp/ig_validator_sandboxes
 
     restart: unless-stopped
 
     environment:
       - INLINE_LOGS=1
-      - HOST_WALLET_PATH=${HOST_WALLET_PATH:-${HOME}/.bittensor/wallets}
 
     command: >
-      bash -c "python neurons/validator.py --netuid 6 --subtensor.network finney --wallet.name ${WALLET_NAME} --wallet.hotkey ${WALLET_HOTKEY} --db.directory /root/infinite_games/database --numinous.env prod --sandbox.max_concurrent 50 --sandbox.timeout_seconds 240 --logging.debug"
+      bash -c "python neurons/validator.py --netuid 6 --subtensor.network finney --wallet.name ${WALLET_NAME} --wallet.hotkey ${WALLET_HOTKEY} --db.directory /root/infinite_games/database --numinous.env prod --logging.debug"
 
     logging:
       driver: "json-file"

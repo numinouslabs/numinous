@@ -21,8 +21,7 @@ class TestConfig:
             (
                 "--netuid 6 --subtensor.network finney"
                 " --wallet.name wallet_name --wallet.hotkey wallet_hotkey"
-                " --db.directory /root/infinite_games/database --numinous.env prod"
-                " --sandbox.max_concurrent 50 --sandbox.timeout_seconds 240 --logging.debug"
+                " --db.directory /root/infinite_games/database --numinous.env prod --logging.debug"
             ).split()
         )
 
@@ -35,10 +34,6 @@ class TestConfig:
         assert settings.numinous_env == "prod"
         assert settings.db_path == "/root/infinite_games/database/validator.db"
         assert settings.logging_level == logging.DEBUG
-        assert settings.gateway_url == "https://numinous.earth"
-        assert settings.validator_sync_hour == 1
-        assert settings.sandbox_max_concurrent == 50
-        assert settings.sandbox_timeout_seconds == 240
 
     def test_defaults(self):
         settings = run_get_config(["--netuid", "155", "--subtensor.network", "test"])
@@ -49,9 +44,6 @@ class TestConfig:
         assert settings.subtensor_chain_endpoint is None
         assert settings.db_path == str(Path(DEFAULT_DB_DIRECTORY) / "validator_test.db")
         assert settings.logging_level == logging.WARNING
-        assert settings.validator_sync_hour == 1
-        assert settings.sandbox_max_concurrent == 50
-        assert settings.sandbox_timeout_seconds == 240
 
     def test_environment_variable_defaults(self):
         settings = run_get_config(
@@ -92,27 +84,18 @@ class TestConfig:
         assert settings.subtensor_network == "test"
         assert settings.subtensor_connection == "ws://127.0.0.1:9944"
 
-    def test_test_env_gateway_url_defaults_to_local_backend(self):
-        settings = run_get_config(["--netuid", "155", "--subtensor.network", "test"])
-
-        assert settings.gateway_url in (
-            "http://172.17.0.1:8000",
-            "http://host.docker.internal:8000",
-        )
-
-    def test_gateway_url_argument_wins(self):
-        settings = run_get_config(
-            [
-                "--netuid",
-                "155",
-                "--subtensor.network",
-                "test",
-                "--backend.gateway_url",
-                "https://stg.numinous.earth",
-            ]
-        )
-
-        assert settings.gateway_url == "https://stg.numinous.earth"
+    @pytest.mark.parametrize(
+        "removed_flag",
+        [
+            ["--sandbox.max_concurrent", "50"],
+            ["--sandbox.timeout_seconds", "240"],
+            ["--backend.gateway_url", "https://stg.numinous.earth"],
+            ["--validator.sync_hour", "1"],
+        ],
+    )
+    def test_the_flags_of_the_old_forecasting_flow_are_rejected(self, removed_flag: list[str]):
+        with pytest.raises(SystemExit):
+            run_get_config(["--netuid", "155", "--subtensor.network", "test"] + removed_flag)
 
     def test_required_args_missing(self):
         with pytest.raises(ValueError):

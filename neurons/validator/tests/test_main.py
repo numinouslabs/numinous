@@ -7,12 +7,14 @@ from neurons.validator.main import main
 from neurons.validator.utils.config import ValidatorSettings
 
 
-@patch("neurons.validator.main.RunAgents", spec=True)
-@patch("neurons.validator.main.PullAgents", spec=True)
+@patch("neurons.validator.main.DbVacuum", spec=True)
+@patch("neurons.validator.main.DbCleaner", spec=True)
 @patch("neurons.validator.main.SetWeights", spec=True)
-@patch("neurons.validator.main.ExportAgentRunLogs", spec=True)
-@patch("neurons.validator.main.ExportAgentRuns", spec=True)
-@patch("neurons.validator.main.ExportPredictions", spec=True)
+@patch("neurons.validator.main.PostDkgScores", spec=True)
+@patch("neurons.validator.main.ScoreDkgMiners", spec=True)
+@patch("neurons.validator.main.PullDkgResults", spec=True)
+@patch("neurons.validator.main.PullDkgRounds", spec=True)
+@patch("neurons.validator.main.SyncMinersMetadata", spec=True)
 class TestValidatorMain:
     @pytest.mark.parametrize(
         "config_env,db_path",
@@ -23,25 +25,28 @@ class TestValidatorMain:
     )
     def test_main(
         self,
-        mock_export_predictions,
-        mock_export_agent_runs,
-        mock_export_agent_run_logs,
+        mock_sync_miners,
+        mock_pull_dkg_rounds,
+        mock_pull_dkg_results,
+        mock_score_dkg_miners,
+        mock_post_dkg_scores,
         mock_set_weights,
-        mock_pull_agents,
-        mock_run_agents,
+        mock_db_cleaner,
+        mock_db_vacuum,
         config_env,
         db_path,
     ):
         # Patch key dependencies inside the method
         with (
-            patch("neurons.validator.main.assert_requirements") as mock_assert_requirements,
             patch("neurons.validator.main.override_loggers_level") as mock_override_loggers_level,
             patch("neurons.validator.main.set_bittensor_logger") as mock_set_bittensor_logger,
             patch("neurons.validator.main.get_config", spec=True) as get_config,
             patch("neurons.validator.main.Wallet", spec=True) as MockWallet,
-            patch("neurons.validator.main.SandboxManager", spec=True),
             patch("neurons.validator.main.Subtensor", spec=True) as MockAsyncSubtensor,
-            patch("neurons.validator.main.NuminousClient", spec=True) as MockNuminousClient,
+            patch("neurons.validator.main.DkgClient", spec=True) as MockDkgClient,
+            patch(
+                "neurons.validator.main.DkgDatabaseOperations", spec=True
+            ) as MockDkgDatabaseOperations,
             patch("neurons.validator.main.DatabaseClient", spec=True) as MockDatabaseClient,
             patch("neurons.validator.main.TasksScheduler") as MockTasksScheduler,
             patch("neurons.validator.main.measure_event_loop_lag") as mock_measure_event_loop_lag,
@@ -49,8 +54,6 @@ class TestValidatorMain:
         ):
             # Mock get_config
             logger_level = 99
-            gateway_url = "https://test.numinous.earth"
-            validator_sync_hour = 1
             netuid = 1234
             network = "testnet"
 
@@ -64,10 +67,6 @@ class TestValidatorMain:
                 numinous_env=config_env,
                 db_path=db_path,
                 logging_level=logger_level,
-                gateway_url=gateway_url,
-                validator_sync_hour=validator_sync_hour,
-                sandbox_max_concurrent=50,
-                sandbox_timeout_seconds=240,
             )
 
             # Mock Wallet
@@ -101,9 +100,6 @@ class TestValidatorMain:
             # Run the validator
             asyncio.run(main())
 
-            # Verify assert_requirements() was called
-            mock_assert_requirements.assert_called_once()
-
             # Verify loggers set
             mock_override_loggers_level.assert_called_once_with(logger_level)
             mock_set_bittensor_logger.assert_called_once()
@@ -125,9 +121,63 @@ class TestValidatorMain:
             # Verify the boot Subtensor built from the network name
             MockAsyncSubtensor.assert_called_once_with(network)
 
-            # Verify NuminousClient args
-            MockNuminousClient.assert_called_once_with(
-                env=config_env, logger=mock_logger, bt_wallet=ANY
+            # Verify the graph forecasting client and db operations
+            MockDkgClient.assert_called_once_with(
+                env=config_env, logger=mock_logger, bt_wallet=mock_wallet
+            )
+            MockDkgDatabaseOperations.assert_called_once_with(db_client=mock_db_client)
+
+            # Verify the graph forecasting pull tasks
+            mock_pull_dkg_rounds.assert_called_once_with(
+                interval_seconds=600.0,
+                dkg_operations=MockDkgDatabaseOperations.return_value,
+                dkg_client=MockDkgClient.return_value,
+                logger=mock_logger,
+            )
+            mock_pull_dkg_results.assert_called_once_with(
+                interval_seconds=900.0,
+                dkg_operations=MockDkgDatabaseOperations.return_value,
+                dkg_client=MockDkgClient.return_value,
+                logger=mock_logger,
+            )
+            mock_score_dkg_miners.assert_called_once_with(
+                interval_seconds=300.0,
+                dkg_operations=MockDkgDatabaseOperations.return_value,
+                logger=mock_logger,
+            )
+            mock_post_dkg_scores.assert_called_once_with(
+                interval_seconds=300.0,
+                dkg_operations=MockDkgDatabaseOperations.return_value,
+                dkg_client=MockDkgClient.return_value,
+                logger=mock_logger,
+            )
+            mock_set_weights.assert_called_once_with(
+                interval_seconds=379.0,
+                dkg_operations=MockDkgDatabaseOperations.return_value,
+                logger=mock_logger,
+                netuid=netuid,
+                network=network,
+                wallet=mock_wallet,
+            )
+
+            mock_sync_miners.assert_called_once_with(
+                interval_seconds=300.0,
+                dkg_operations=MockDkgDatabaseOperations.return_value,
+                netuid=netuid,
+                network=network,
+                logger=mock_logger,
+            )
+            mock_db_vacuum.assert_called_once_with(
+                interval_seconds=300.0,
+                dkg_operations=MockDkgDatabaseOperations.return_value,
+                logger=mock_logger,
+                pages=500,
+            )
+            mock_db_cleaner.assert_called_once_with(
+                interval_seconds=3600.0,
+                dkg_operations=MockDkgDatabaseOperations.return_value,
+                batch_size=4000,
+                logger=mock_logger,
             )
 
             # Verify migrate() was called
@@ -143,8 +193,17 @@ class TestValidatorMain:
             # Verify event loop lag is measured
             mock_measure_event_loop_lag.assert_awaited_once()
 
-            # Verify tasks added count
-            assert mock_scheduler.add.call_count == 15
+            # Verify the tasks added
+            assert [call.kwargs["task"] for call in mock_scheduler.add.call_args_list] == [
+                mock_sync_miners.return_value,
+                mock_pull_dkg_rounds.return_value,
+                mock_pull_dkg_results.return_value,
+                mock_score_dkg_miners.return_value,
+                mock_post_dkg_scores.return_value,
+                mock_set_weights.return_value,
+                mock_db_cleaner.return_value,
+                mock_db_vacuum.return_value,
+            ]
 
             # Verify logging
             mock_logger.info.assert_called_with(

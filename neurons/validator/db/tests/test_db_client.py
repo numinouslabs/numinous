@@ -139,15 +139,27 @@ class TestDbClient:
         assert mocked_logger.debug.call_count == 1  # Only called for creating the table
         mocked_logger.exception.assert_called()
 
-    async def test_migrate(self, db_client: DatabaseClient):
+    async def test_migrate_leaves_only_the_graph_forecasting_tables(
+        self, db_client: DatabaseClient
+    ):
         await db_client.migrate()
 
-        for table_name in ["events", "miners", "predictions"]:
-            table = await db_client.one(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name = ?", (table_name,)
-            )
+        tables = await db_client.many(
+            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+        )
 
-            assert table is not None  # Check table was created
+        assert [table[0] for table in tables] == [
+            "alembic_version",
+            "dkg_forecast_hashes",
+            "dkg_forecasts",
+            "dkg_questions",
+            "dkg_results_pulls",
+            "dkg_rounds",
+            "dkg_scores",
+            "dkg_statement_results",
+            "miners",
+            "test_table",
+        ]
 
     async def test_journal_mode(self, db_client: DatabaseClient):
         await db_client.migrate()

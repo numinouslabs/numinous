@@ -15,14 +15,9 @@ services:
     networks:
       - validator_prod_network
 
-    ports:
-      - "8000:8000"
-
     volumes:
       - /root/validator-db-prod:/root/infinite_games/database
       - ./.bittensor:/root/.bittensor
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /tmp/ig_validator_sandboxes:/tmp/ig_validator_sandboxes
 
     restart: unless-stopped
 
@@ -31,7 +26,7 @@ services:
 
     # Production configuration
     command: >
-      bash -c "python neurons/validator.py --netuid 6 --subtensor.network finney --wallet.name ifkey --wallet.hotkey ifhkey --db.directory /root/infinite_games/database --numinous.env prod --sandbox.max_concurrent 50 --sandbox.timeout_seconds 240 --validator.sync_hour 0 --logging.debug"
+      bash -c "python neurons/validator.py --netuid 6 --subtensor.network finney --wallet.name ifkey --wallet.hotkey ifhkey --db.directory /root/infinite_games/database --numinous.env prod --logging.debug"
 
     logging:
       driver: "json-file"

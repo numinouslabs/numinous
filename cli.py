@@ -2,29 +2,32 @@
 
 import click
 
-from neurons.miner.scripts.fetch_agent_logs import fetch_logs
-from neurons.miner.scripts.gateway import gateway
-from neurons.miner.scripts.list_agents import list_agents
-from neurons.miner.scripts.services import services
-from neurons.miner.scripts.test_agent import test
-from neurons.miner.scripts.upload_agent import upload
+from neurons.miner.commands.entities import entities_command
+from neurons.miner.commands.forecasts import forecasts_command
+from neurons.miner.commands.graph import graph_command
+from neurons.miner.commands.round import round_command
+from neurons.miner.commands.schema import schema_command
+from neurons.miner.commands.submit import submit_command
+from neurons.miner.commands.validate import validate_command
+from neurons.validator.version import __version__
 
 
 @click.group()
-@click.version_option(version="2.0.0", prog_name="numi")
+@click.version_option(version=__version__, prog_name="numi")
 def numi():
     """✨ Numinous - Forecasting Subnet CLI
 
     A Bittensor subnet for decentralized forecasting of future events.
 
     \b
-    Available Commands:
-      numi gateway         # Manage your local miner gateway
-      numi test-agent      # Test your agent locally
-      numi upload-agent    # Submit your agent's code
-      numi list-agents     # List your uploaded agents
-      numi fetch-logs      # Fetch agent run logs
-      numi services        # Manage linked services (OpenAI, OpenRouter, Lightning Rod)
+    Graph forecasting (JSON output, no prompts):
+      numi round           # The round accepting forecasts and its questions
+      numi schema          # The JSON Schema a forecast must follow
+      numi validate        # Check a forecast file against that schema
+      numi submit          # Seal, sign and send a forecast for one question
+      numi forecasts       # Your own forecasts and how each statement was judged
+      numi graph           # What the graph already knows about a company
+      numi entities        # Find an entity's id by name or alias
 
     \b
     For detailed help on any command, run:
@@ -34,12 +37,13 @@ def numi():
 
 
 # Register commands
-numi.add_command(gateway)
-numi.add_command(test, name="test-agent")
-numi.add_command(upload, name="upload-agent")
-numi.add_command(list_agents, name="list-agents")
-numi.add_command(fetch_logs, name="fetch-logs")
-numi.add_command(services)
+numi.add_command(round_command)
+numi.add_command(schema_command)
+numi.add_command(validate_command)
+numi.add_command(submit_command)
+numi.add_command(forecasts_command)
+numi.add_command(graph_command)
+numi.add_command(entities_command)
 
 
 if __name__ == "__main__":

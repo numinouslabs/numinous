@@ -1,19 +1,35 @@
 # Validator Setup Guide
 
 > **DOCKER-BASED DEPLOYMENT**
-> This guide covers Docker Compose deployment - the recommended method for running validators.
-> Docker ensures consistent environments, simplified updates, and production-ready isolation.
+> This guide covers Docker Compose deployment, the recommended way to run a validator.
 
 ## Overview
 
 This guide walks you through:
-1. Installing Docker and system dependencies
+1. Installing Docker
 2. Creating and registering a Bittensor validator wallet
-3. Configuring your validator environment
-4. Starting and verifying your validator
-5. Monitoring and maintaining your validator
+3. Configuring and starting your validator
+4. Monitoring and updating it
 
-For system architecture details, see [architecture.md](./architecture.md).
+For how the subnet works end to end, see [the system components in the miner guide](./miner-setup.md#system-components).
+
+---
+
+# What a validator does
+
+A validator does not run anyone's code. It reads public data from the Numinous backend, checks it, scores every miner with a fixed formula and sets weights. Every validator computes the same scores from the same data, with no model involved.
+
+| Task | Every | What it does |
+|---|---|---|
+| Sync miners | 5 min | Reads the subnet's current miners (uid and hotkey) from the chain |
+| Pull rounds | 10 min | Stores every closed round, its questions and the hash of every forecast received before the deadline |
+| Pull results | 15 min | Stores every opened forecast with the result of each judged statement, and checks each one against its hash and the miner's signature |
+| Score miners | daily at 15:00 UTC | Computes every miner's credits from the statements judged correct in the last 30 days (see [scoring-system.md](./scoring-system.md)) |
+| Post scores | 5 min | Sends each day's scores to the backend once |
+| Set weights | ~6 min, within the chain's rate limit | Sets weights from the latest scores that are at least an hour old, so every validator switches at 16:00 UTC |
+| Clean up | hourly | Keeps the last 90 days of rounds and everything under them, the same rule on every validator |
+
+A forecast that does not match its hash or its miner's signature is stored with the reason and never counts.
 
 ---
 
@@ -21,34 +37,17 @@ For system architecture details, see [architecture.md](./architecture.md).
 
 **Recommended Specifications:**
 - **OS:** Ubuntu 22.04 LTS or Debian 11+
-- **RAM:** 16 GB minimum (32 GB recommended for concurrent sandbox execution)
-- **CPU:** 4 cores minimum (8+ recommended)
-- **Disk:** 100 GB SSD with good IOPS (database + agent storage + sandbox space)
-- **Network:** Stable internet connection with low latency
+- **CPU:** 2 cores
+- **RAM:** 4 GB
+- **Disk:** 20 GB SSD (the database holds 90 days of rounds and stays small)
+- **Network:** outbound HTTPS to the Numinous backend and a Subtensor endpoint. No inbound ports are needed.
 - **Docker:** Docker Engine 20.10+ and Docker Compose V2
 
 **Minimum Stake Requirements:**
 - **Testnet (netuid 155):** Minimal TAO (see [wallet-setup.md](./wallet-setup.md#for-testnet) for the faucet)
 - **Mainnet (netuid 6):** 10,000 TAO minimum stake
 
----
-
-# Architecture Overview
-
-**How Validators Work:**
-
-1. **Pull Events:** Fetch binary prediction events from Numinous API
-2. **Pull Agent Code:** Download Python agent code submitted by miners via API
-3. **Execute in Sandboxes:** Run each miner's agent in isolated Docker containers
-4. **Collect Predictions:** Store predictions with run_id (execution UUID) and version_id (agent version)
-5. **Report Forecasts:** Send forecasts and updated agent memory to the backend, which computes the scores
-6. **Set Weights:** Update Bittensor subnet weights based on scores
-
-**Sandbox Architecture:**
-- Validators run in a container but create **sibling** sandbox containers
-- Sandbox containers have NO internet access (isolated network)
-- Agents make API calls via signing proxy (validator authenticates on their behalf)
-- Each execution is isolated with unique temp directory and strict resource limits
+**Validator list:** the backend serves validator data only to the hotkeys on its validator list. Ask the Numinous team on [Discord](https://discord.gg/qKPeYPc3) to add your validator hotkey before you start.
 
 ---
 
@@ -106,90 +105,42 @@ btcli subnet register --netuid 6 --wallet validator --wallet-hotkey default --ne
 
 ## 4. Configure Environment Variables
 
-Create environment file from template:
+Create the environment file from the template:
 
 ```bash
 cp .env.validator.example .env.validator
 ```
 
-Edit the file with your wallet configuration:
+Edit it with your wallet names:
 
 ```bash
-vim .env.validator
-```
-
-**Required variables:**
-
-```bash
-# Wallet Configuration
-# Must match directory names under ~/.bittensor/wallets/
+# Must match the directory names under ~/.bittensor/wallets/
 WALLET_NAME=validator
 WALLET_HOTKEY=default
 ```
 
-**Save and exit**
+`docker-compose.validator.yaml` mounts `~/.bittensor` into the container. If your wallets live elsewhere, change the left side of that volume line to your wallet folder's parent.
 
-## 5. Understanding Wallet Paths (Important)
-
-The validator runs inside a Docker container but needs to access your wallet files from the **host machine**. The `HOST_WALLET_PATH` environment variable tells the validator where to find wallets on your host filesystem.
-
-### Default Configuration
-
-The `docker-compose.validator.yaml` file is pre-configured with:
-
-```yaml
-environment:
-  - HOST_WALLET_PATH=${HOME}/.bittensor/wallets
-```
-
-This works for **most users** who store wallets in the standard Bittensor location (`~/.bittensor/wallets`).
-
-When you run docker compose:
-- `${HOME}` automatically expands to your home directory
-- For user `bob`: `/home/bob/.bittensor/wallets`
-- For user `root`: `/root/.bittensor/wallets`
-
-### Custom Wallet Location
-
-If you store wallets in a non-standard location, edit your `.env.validator` file:
+Before starting, check the wallet files exist:
 
 ```bash
-# Add or change this line in .env.validator
-HOST_WALLET_PATH=/your/custom/path/to/wallets
-```
-
-Replace `/your/custom/path/to/wallets` with your actual wallet directory path on the host machine.
-
-### Verification
-
-Before starting, verify your wallet files exist at the expected location:
-
-```bash
-# Check wallet structure
-ls -la ~/.bittensor/wallets/${WALLET_NAME}/coldkey
+ls -la ~/.bittensor/wallets/${WALLET_NAME}/coldkeypub.txt
 ls -la ~/.bittensor/wallets/${WALLET_NAME}/hotkeys/${WALLET_HOTKEY}
-
-# If files exist, you're ready to start!
 ```
 
-### Troubleshooting
-
-If you see errors about wallet files not found:
-
-1. **Verify wallet path:** Check that `HOST_WALLET_PATH` matches where your wallets actually are
-2. **Check permissions:** Ensure wallet files are readable
-3. **Restart validator:** After changing `HOST_WALLET_PATH`, restart the validator
-
-## 6. Start Validator
+## 5. Start Validator
 
 ```bash
-# Pull and start validator
 docker compose -f docker-compose.validator.yaml --env-file .env.validator pull
 docker compose -f docker-compose.validator.yaml --env-file .env.validator up -d
 
 # View logs
 docker logs -f numinous_validator
 ```
+
+On its first start the validator pulls the last 90 days of rounds and results, which can take a few minutes. It scores at the next 15:00 UTC, or right away when it starts after 15:00.
+
+---
 
 # Monitoring & Management
 
@@ -205,32 +156,48 @@ docker ps | grep numinous_validator
 # Restart validator
 docker compose -f docker-compose.validator.yaml --env-file .env.validator restart
 
-# Update to new version
-docker compose -f docker-compose.validator.yaml --env-file .env.validator pull
-docker compose -f docker-compose.validator.yaml --env-file .env.validator up -d
-
 # Stop validator
 docker compose -f docker-compose.validator.yaml --env-file .env.validator down
 ```
+
+## Updating
+
+Always update the repository **before** pulling the new image: a new image can expect the command line of the new `docker-compose.validator.yaml`.
+
+```bash
+git pull
+docker compose -f docker-compose.validator.yaml --env-file .env.validator pull
+docker compose -f docker-compose.validator.yaml --env-file .env.validator up -d
+```
+
+## Healthy log lines
+
+| Log message | Meaning |
+|---|---|
+| `Validator started` | Migrations ran and every task is scheduled |
+| `DKG results pulled` | A results pull finished and was recorded |
+| `DKG results waiting for their round, pull not recorded` | Some results arrived before their round was pulled; the next pull catches up |
+| `DKG miners scored` | The daily scores were computed |
+| `DKG scores posted` | The daily scores reached the backend |
+| `Weights from DKG scores` / `Weights set successfully.` | Weights were set from the latest scores |
+| `No DKG scores in effect yet, weights not set.` | Normal right after the first start, until the first scores are an hour old |
 
 ---
 
 # Troubleshooting
 
-## Container Issues
-
 ```bash
 # Check Docker is running
 docker ps
 
-# Check wallet files exist
-ls -la ~/.bittensor/wallets/validator/
-
 # Check logs for errors
 docker logs numinous_validator 2>&1 | grep -i error
 
-# Verify wallet structure
-cat .env.validator | grep WALLET_NAME
-ls -la ~/.bittensor/wallets/validator/coldkey
+# Verify the wallet configuration
+cat .env.validator | grep WALLET
 ls -la ~/.bittensor/wallets/validator/hotkeys/default
 ```
+
+- **403 "this hotkey is not a validator of the subnet":** your hotkey is not on the backend's validator list yet; ask the team on Discord.
+- **"unrecognized arguments" at start:** your `docker-compose.validator.yaml` is older than the image; run `git pull`, then `up -d` again.
+- **The hotkey is not found:** check `WALLET_NAME`, `WALLET_HOTKEY` and the `~/.bittensor` volume line.

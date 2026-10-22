@@ -1,11 +1,11 @@
-from neurons.validator.db.operations import DatabaseOperations
+from neurons.validator.db.dkg_operations import DkgDatabaseOperations
 from neurons.validator.scheduler.task import AbstractTask
 from neurons.validator.utils.logger.logger import NuminousLogger
 
 
 class DbVacuum(AbstractTask):
     interval: float
-    db_operations: DatabaseOperations
+    dkg_operations: DkgDatabaseOperations
     logger: NuminousLogger
     pages: int
     _first_run: bool
@@ -13,16 +13,15 @@ class DbVacuum(AbstractTask):
     def __init__(
         self,
         interval_seconds: float,
-        db_operations: DatabaseOperations,
+        dkg_operations: DkgDatabaseOperations,
         logger: NuminousLogger,
         pages: int,
     ):
         if not isinstance(interval_seconds, float) or interval_seconds <= 0:
             raise ValueError("interval_seconds must be a positive number (float).")
 
-        # Validate db_operations
-        if not isinstance(db_operations, DatabaseOperations):
-            raise TypeError("db_operations must be an instance of DatabaseOperations.")
+        if not isinstance(dkg_operations, DkgDatabaseOperations):
+            raise TypeError("dkg_operations must be an instance of DkgDatabaseOperations.")
 
         # Validate logger
         if not isinstance(logger, NuminousLogger):
@@ -33,7 +32,7 @@ class DbVacuum(AbstractTask):
             raise ValueError("pages must be a positive integer.")
 
         self.interval = interval_seconds
-        self.db_operations = db_operations
+        self.dkg_operations = dkg_operations
         self.logger = logger
         self.pages = pages
         self._first_run = True
@@ -52,4 +51,4 @@ class DbVacuum(AbstractTask):
 
             return
 
-        await self.db_operations.vacuum_database(self.pages)
+        await self.dkg_operations.vacuum_database(self.pages)
