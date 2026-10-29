@@ -45,7 +45,7 @@ Every day follows the same cycle: **Questions → Sealed forecasts → Opening �
 ### Rules
 
 1.  **Rounds:** a new round of questions is published every day and accepts forecasts until its deadline.
-2.  **One forecast per question:** the first one sent counts. Each of its statements names the company the question asks about.
+2.  **One forecast per question:** the last one sent before the deadline counts. Each of its statements names the company the question asks about.
 3.  **Sealed until the deadline:** nobody can read a forecast before the deadline, the backend included.
 4.  **New developments only:** a statement comes true through news reported after the deadline, until the round's horizon ends.
 
