@@ -80,7 +80,7 @@ Requests are signed throughout, and scoring is reproducible.
 | [validator-setup.md](./validator-setup.md) | For validators|
 
 The key rules:
-- **One forecast per question.** The first one sent counts; a second one is refused.
+- **One forecast per question.** Sending another one before the deadline replaces it; the last one sent counts.
 - **Send before the deadline.** After it, the round no longer accepts forecasts.
 - **Every statement must name the entity (e.g company) the question asks about**, and a forecast holds as many statements as the schema allows (`numi schema`).
 - **Forecast something new.** A statement that repeats what the graph already held at the deadline is judged not correct. Read the graph first (`numi graph`).
