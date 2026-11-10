@@ -18,6 +18,11 @@ def validate_command(client: MinerClient, forecast_file: TextIO) -> None:
     "message"}]} and exits 4.
 
     \b
+    A statement can carry an optional "place", the town or city where the act
+    happens, e.g. {"head": "Israel", "relation": "ATTACKS", "tail": "Lebanon",
+    "place": "Mansouri", "probability": 0.4}. When given, it has to match.
+
+    \b
     Inline, no file:
       numi validate <<'EOF'
       {"version": 2, "statements": [{"head": "Apple", "relation": "INVESTS_IN",

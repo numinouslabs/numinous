@@ -1,6 +1,6 @@
 # Scoring System
 
-Every validator scores every miner once a day, with a fixed formula and no model, so all validators compute the same scores from the same data. Your **credits** measure how much of what you forecast came true; your weight is computed from your credits.
+Every validator scores every miner once a day, with a fixed formula and no model, so all validators compute the same scores from the same data. Your **credits** measure how much more you got right than what was likely anyway; your weight is computed from your credits.
 
 ---
 
@@ -27,38 +27,57 @@ After the deadline the backend opens every forecast. The judge then checks each 
 
 **Not correct at the horizon end:** a statement that is still waiting when the horizon ends.
 
-`numi forecasts` shows how each of your statements was judged, and `numi graph` shows what the graph already held. A statement judged not correct, or never judged correct before the horizon ends, earns nothing. **Nothing ever subtracts.**
+For questions about acts (a state or an armed group), the same holds with the act rules of [miner-setup.md](./miner-setup.md#acts): the act must be done after the deadline, by the asked actor, on the stated target, and in the stated `place` when one is given.
+
+`numi forecasts` shows how each of your statements was judged (with its reason, see [Reasons](#reasons)), and `numi graph` shows what the graph already held.
+
+## The baseline: how likely it was anyway
+
+Every judged statement is priced by **how likely it was to happen anyway**, its baseline `b`, between 0 and 1. Something that happens almost every day has a baseline close to 1; something rare has a baseline close to 0.
 
 ## The formula
 
-For each question `q` you answer, you send a **bundle** `Q_q` of statements (what `numi submit` calls a forecast). Your credits are:
+A statement judged **correct** earns what it beat the baseline by; a statement judged **not correct** costs its baseline:
 
 ```text
-credits = Σ_q  Σ_(p ∈ Q_q)  s(P_p) × 1(t − l_p < 30 days) × a(P_p)
+points(P) = 1 − b(P)   if P is judged correct
+points(P) = − b(P)     if P is judged not correct
+```
+
+For each question `q` you answer, you send a **bundle** `Q_q` of statements (what `numi submit` calls a forecast). Each bundle earns:
+
+```text
+credits(Q_q) = Σ_(P ∈ Q_q, judged in the last 30 days) points(P) / √n_q
+```
+
+and your credits are the sum over your bundles, **floored at 0**:
+
+```text
+credits = max(0, Σ_q credits(Q_q))
 ```
 
 | Symbol | Meaning |
 |---|---|
-| `s(P_p)` | 1 if the statement `P_p` is judged correct, 0 otherwise (in particular if it is never judged correct) |
-| `l_p` | When `P_p` was judged correct (`judged_at`) |
-| `t` | The moment of scoring: `1(t − l_p < 30 days)` is 1 while the correct statement is less than 30 days old, 0 after. **A correct statement counts for 30 days.** |
-| `a(P_p)` | `1 / √#Q_q`, where `#Q_q` is the number of statements in the bundle |
+| `b(P)` | The baseline of statement `P` |
+| judged in the last 30 days | **Every judged statement counts for 30 days from the day it was judged**, correct or not |
+| `n_q` | The number of statements in the bundle, still waiting ones included, minus the voided ones (see below) |
 
-In words, each bundle earns:
+For example, a bundle of 4 statements:
 
-```text
-(statements judged correct in the last 30 days) / √(statements in the bundle)
-```
+| Statement | `b` | Judged | Points |
+|---|---|---|---|
+| Israel ATTACKS Lebanon, place Mansouri | 0.40 | correct | +0.60 |
+| Israel ATTACKS Palestine, place Rafah | 0.30 | not correct | −0.30 |
+| Israel ATTACKS Syria, place Quneitra | 0.10 | correct | +0.90 |
+| Israel ATTACKS Lebanon (no place) | 0.95 | correct | +0.05 |
 
-For example:
+The bundle earns (0.60 − 0.30 + 0.90 + 0.05) / √4 = **0.625**.
 
-| Bundle | Credits |
-|---|---|
-| 1 statement, judged correct | 1 / √1 = **1.00** |
-| 2 statements, 1 judged correct | 1 / √2 = **0.71** |
-| 2 statements, both judged correct | 2 / √2 = **1.41** |
-
-A second statement pays only when it is judged correct too, so add one only when you believe in it. A correct statement that leaves the 30-day window stops counting but stays one of the bundle's statements: a 2-statement bundle with one correct statement left in the window earns 0.71.
+What this means for you:
+- **Forecasting the obvious earns almost nothing**: a correct statement with a baseline of 0.95 earns 0.05, and if it fails it costs 0.95.
+- **Forecasting something rare that happens earns almost 1.**
+- **A statement you cannot back up costs you**: send a statement only when you think it is more likely than its baseline.
+- A statement still waiting earns and costs nothing yet, but it is one of the bundle's `n_q`.
 
 ## Topological condition
 
@@ -66,9 +85,13 @@ Every statement must contain the entity the question asks about (and its counter
 
 ## De-duplication: a news event pays you once
 
-If several of your statements are judged correct through the **same news event**, only one counts: the one in the bundle you sent first. The others are **voided**, whether they are in the same bundle, another question's bundle or another round's, and however they are worded. A voided statement is left out of both the correct statements and the statement count of its bundle, so repeating a call is exactly like sending it once.
+If several of your statements are judged correct through the **same news event**, only one counts: the one in the bundle you sent first. The others are **voided**, whether they are in the same bundle, another question's bundle or another round's, and however they are worded. A voided statement earns nothing, costs nothing and is left out of `n_q`, so repeating a call is exactly like sending it once.
 
 The event stays paid after its statement leaves the 30-day window: a later repeat is still voided.
+
+## Neither correct nor not correct
+
+A statement judged `VOID` (see [Reasons](#reasons)) earns nothing, costs nothing and is left out of `n_q`, like a voided repeat.
 
 ## What never counts
 
@@ -77,7 +100,32 @@ The event stays paid after its statement leaves the 30-day window: a later repea
 
 ## When credits are computed
 
-Validators compute credits at **15:00 UTC** every day, counting only the statements judged correct before 15:00. A validator computes them only after a results pull that started after 15:00, so all validators score the same data.
+Validators compute credits at **15:00 UTC** every day, counting only the statements judged before 15:00. A validator computes them only after a results pull that started after 15:00, so all validators score the same data.
+
+## Reasons
+
+`numi forecasts` gives each judged statement its reason:
+
+| Reason | Judged | Meaning |
+|---|---|---|
+| `REPORTED` | correct | News after the deadline reported this relationship |
+| `MATCHED` | correct | A reported development is the act the statement states |
+| `ASKED_COMPANY_NOT_NAMED` | not correct, at once | The statement does not name the question's subject (company or actor) on either side |
+| `ALREADY_HELD` | not correct, at once | This relationship was already known before the deadline |
+| `NOT_NAMED` | not correct, at once | A party is not a named company, state or group |
+| `SEVERAL_PARTIES` | not correct, at once | A party is a list or alternatives |
+| `ACT_NOT_SPECIFIC` | not correct, at once | It leaves a choice between acts or names none (alternatives, hedges, "any attack", a place too wide or vague) |
+| `ADDRESSES_CHECKER` | not correct, at once | The forecast contains instructions to its checker |
+| `REPEATS_KNOWN` | not correct, at once | It restates what was already known and says nothing new |
+| `ALREADY_PUBLIC` | not correct, at once | The development was already public before the deadline |
+| `NOT_NEWS` | not correct, at once | A standing state or a routine occasion, never a development |
+| `NOT_REPORTED` | not correct, at the horizon end | No news in the window reported this relationship |
+| `ONLY_RUMOURED` | not correct, at the horizon end | News in the window reported it only as talks or a rumour |
+| `NOTHING_REPORTED` | not correct, at the horizon end | Nothing new about the parties was reported in the window |
+| `NO_MATCH` | not correct, at the horizon end | There was news about the parties, but none of it is the stated act |
+| `VOID` | neither | The only reports that fit are rumours or do not confirm who carried it out: 0 points and not counted |
+
+Until the horizon end, a statement that could still come true keeps waiting.
 
 ---
 

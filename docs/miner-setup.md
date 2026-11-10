@@ -4,7 +4,7 @@
 
 ## What mining is
 
-Numinous is an **open-ended forecasting** subnet where miners forecast the future state of a dynamic knowledge graph. Every day the network asks questions about entities in the graph e.g a company if the graph is about company to company interations. You answer a question with a **forecast**: a bundle of one or more **statements** about a relationship that will appear in the news, for example *"Paramount acquires Warner Bros"*. A statement is **judged correct** when a news event reported **after the round's deadline** shows it happened. You earn credits for correct statements. 
+Numinous is an **open-ended forecasting** subnet where miners forecast the future state of a dynamic knowledge graph. Every day the network asks questions about entities in the graph e.g a company if the graph is about company to company interations. You answer a question with a **forecast**: a bundle of one or more **statements** about a relationship that will appear in the news, for example *"Paramount acquires Warner Bros"*. A statement is **judged correct** when a news event reported **after the round's deadline** shows it happened. A correct statement earns credits by how unlikely it was; a statement that is not correct costs you by how likely it was.
 
 Everything you do goes through the `numi` command line tool. It prints JSON, never prompts, and reports every outcome with an exit code, so it can be driven by a script or an agent.
 
@@ -13,12 +13,12 @@ Everything you do goes through the `numi` command line tool. It prints JSON, nev
 | Step | What happens |
 |---|---|
 | Publish | A new round of questions is published every day |
-| Send | The round accepts forecasts until its deadline (`deadline_at` in `numi round`): at most one per question per miner, the first one sent counts |
+| Send | The round accepts forecasts until its deadline (`deadline_at` in `numi round`): one per question per miner, the last one sent counts |
 | Sealed | Until the deadline nobody can read your forecast, the backend included |
 | Open | After the deadline, forecasts are opened and checked against the schema |
-| Judge | Every day the judge checks open statements against the news reported since the deadline, until the round's horizon ends (`horizon_end_at`) |
+| Judge | Every day the judge checks open statements against the news reported since the deadline, until the question's horizon ends (each question's `horizon_end_at`) |
 | Horizon end | A statement not judged correct by then is not correct for good |
-| Score | Every day at 15:00 UTC every validator computes every miner's credits from the statements judged correct in the last 30 days, and sets weights from 16:00 UTC |
+| Score | Every day at 15:00 UTC every validator computes every miner's credits from the statements judged in the last 30 days, and sets weights from 16:00 UTC |
 
 ## System components
 
@@ -85,6 +85,7 @@ The key rules:
 - **Every statement must name the entity (e.g company) the question asks about**, and a forecast holds as many statements as the schema allows (`numi schema`).
 - **Forecast something new.** A statement that repeats what the graph already held at the deadline is judged not correct. Read the graph first (`numi graph`).
 - **A news event pays you once.** If several of your statements are judged correct through the same news, only the one in the forecast you sent first counts; the others are voided.
+- **Not correct costs you.** Every statement is priced by how likely it was anyway: a correct one earns `1 − b`, one that is not correct costs `b` (see [scoring-system.md](./scoring-system.md)). Obvious statements earn almost nothing.
 
 
 
@@ -110,7 +111,7 @@ Verify the installation:
 
 ```bash
 numi --version
-# numi, version 4.0.0
+# numi, version 4.1.0
 ```
 
 ## 2. Create and register a wallet
@@ -144,7 +145,7 @@ Every request is signed with your hotkey, so only a registered hotkey is served.
 numi round
 ```
 
-Prints the round accepting forecasts: its `id`, `deadline_at` (the last moment to send), `horizon_end_at` (the last day a statement can come true), `reveal_round` and its `questions`. Each question has an `id`, the entity (e.g company) it asks about (`entity_id`, `entity`) and, for some questions, a `counterparty` and the relationship already known between them. Exits 3 when no round is accepting forecasts.
+Prints the round accepting forecasts: its `id`, `deadline_at` (the last moment to send), `horizon_end_at` (the latest horizon end of its questions), `reveal_round` and its `questions`. Each question has an `id`, the entity it asks about (`entity_id`, `entity`), for some questions a `counterparty` and the relationship already known between them, and its own `horizon_end_at`: the last day a statement about it can come true. Questions about companies and questions about acts have different horizons. Exits 3 when no round is accepting forecasts.
 
 ## 2. Research what the graph already knows
 
@@ -187,6 +188,7 @@ A forecast is JSON:
 | `statements` | At least one, up to the schema's limit |
 | `head`, `tail` | The two parties. One of them must be the company the question asks about, and the counterparty too when the question has one |
 | `relation` | Either one of the relation types below, or free text describing the relationship |
+| `place` | Optional: the town or city where it happens (see [Acts](#acts)). When given, it has to match |
 | `probability` | A number from 0 to 1. Collected, not scored for now |
 | `rationale` | Optional: why you expect it |
 | `sources` | Optional: each with a `url`, a `title` and a `note` |
@@ -197,6 +199,17 @@ No other field is allowed. The exact limits (how many statements, how long each 
 - With one of these types and both parties known to the graph, the statement is checked directly: it is judged correct when a news event after the deadline reports exactly that relationship between the two.
 - **Direction matters** (`A SUPPLIES B` is not `B SUPPLIES A`), except for `PARTNERS_WITH`, `COMPETES_WITH` and `MERGES_WITH`.
 - With free text, a model reads the news and decides whether what you stated happened.
+
+### Acts
+
+Some questions ask about an **actor** (a state or an armed group, e.g. *Israel*) instead of a company, with a shorter horizon: read each question's `horizon_end_at`.
+
+- **Name the asked actor** as it is known (e.g. *Israel*), as `head` or `tail`.
+- **The relation types for acts** (listed in `numi schema`): `AGREES_WITH`, `ATTACKS`, `BLOCKADES`, `COERCES`, `DE_ESCALATES`, `INSURES`, `MEDIATES`, `NEGOTIATES_WITH`, `OPERATES`, `PROTECTS`, `REJECTS`, `REROUTES`, `SUPPORTS`, `THREATENS`. **Direction matters** (the actor acts on the target), except for `NEGOTIATES_WITH` and `AGREES_WITH`.
+- **Only an act done after the deadline counts**, not a state that goes on. A threat is not an attack.
+- **One act per statement:** no alternatives, lists or hedges.
+
+**`place`** is optional. When given, the act must have landed in that place, however it is spelled; near it does not count.
 
 The exact schema the backend opens forecasts with:
 
@@ -246,7 +259,7 @@ Every command prints JSON. On failure it prints `{"error": ..., "message": ...}`
 | 5 | The backend refused the request | Read the message |
 | 6 | The backend could not be reached | Retry later |
 | 7 | The hotkey was not found in the wallet folder | Check `--wallet`, `--hotkey` and `--wallet-path` |
-| 8 | A forecast for this question was already sent | Nothing: the first one counts |
+| 8 | A forecast for this question was already sent | Nothing to do: sending again before the deadline replaces it |
 | 9 | The round's deadline has passed | Wait for the next round |
 | 10 | The question is not in the open round | Use a question id from `numi round` |
 | 11 | The backend's receipt does not verify | Do not resend; report it |
@@ -257,5 +270,6 @@ Every command prints JSON. On failure it prints `{"error": ..., "message": ...}`
 
 - **Use testnet first:** register on netuid 155 and run every command with `--env test`.
 - **Aim at new developments:** deals, investments, supply agreements, launches, capacity expansions, acquisitions that are likely to be reported before the round's horizon ends.
-- **One strong statement can beat two:** your credits for a forecast are the number of correct statements divided by the square root of the number of statements (see [scoring-system.md](./scoring-system.md)).
+- **Beat the baseline, not the news:** a statement only pays when it is more likely than its baseline, so the obvious calls (a pair that clashes every day, a company that announces deals every week) are not worth sending.
+- **Add a statement only when you believe in it:** a bundle earns its points divided by the square root of its number of statements, and a statement that is not correct costs its baseline (see [scoring-system.md](./scoring-system.md)).
 - **Do not repeat yourself across questions:** the same news only pays you once, in the forecast you sent first.

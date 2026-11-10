@@ -79,6 +79,7 @@ def make_result(
         event_id="event-1" if outcome else None,
         reported_at=datetime(2026, 10, 20, 9, 0, tzinfo=timezone.utc) if outcome else None,
         judged_at=datetime(2026, 10, 21, 7, 30, tzinfo=timezone.utc),
+        baseline=None,
     )
 
 
@@ -201,6 +202,24 @@ class TestDkgDatabaseOperations:
         assert await count(db_client, "dkg_forecasts") == 1
         assert forecast[0] == "the miner signature does not verify"
         assert [tuple(row) for row in results] == [(0, 1, "event-1"), (1, 0, None)]
+
+    async def test_save_forecasts_keeps_each_baseline(
+        self, dkg_operations: DkgDatabaseOperations, db_client: DatabaseClient, pulled_round: None
+    ):
+        await dkg_operations.save_forecasts(
+            [make_opened_forecast(MINER, "question-1")],
+            [
+                make_result(MINER, "question-1", 0, outcome=True).model_copy(
+                    update={"baseline": 0.37}
+                ),
+                make_result(MINER, "question-1", 1, outcome=False),
+            ],
+        )
+
+        results = await db_client.many(
+            "SELECT statement_position, baseline FROM dkg_statement_results ORDER BY statement_position"
+        )
+        assert [tuple(row) for row in results] == [(0, 0.37), (1, None)]
 
     async def test_an_invalid_forecast_is_stored_with_its_reason(
         self, dkg_operations: DkgDatabaseOperations, db_client: DatabaseClient, pulled_round: None

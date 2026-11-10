@@ -196,3 +196,7 @@ data/agents/
 neurons/miner/test-results/
 
 tmp/
+.claude/
+.env.validator
+neurons/miner/agents/
+.agents/

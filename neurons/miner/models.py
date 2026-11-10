@@ -20,6 +20,7 @@ class QuestionResponse(BaseModel):
     counterparty_id: str | None
     counterparty: str | None
     relationship: KnownRelationship | None
+    horizon_end_at: datetime
 
 
 class RoundResponse(BaseModel):

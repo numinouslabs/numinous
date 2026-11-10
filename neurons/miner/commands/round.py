@@ -10,10 +10,13 @@ def round_command(client: MinerClient) -> None:
     """Print the round accepting forecasts now, as JSON.
 
     \b
-    Fields: id, deadline_at (last moment to submit), horizon_end_at (last day a
-    statement can come true), reveal_round (the timelock round every forecast of
-    this round is sealed to) and questions (id, entity, optional counterparty and
-    known relationship). Exits 3 when no round is accepting forecasts.
+    Fields: id, deadline_at (last moment to submit), horizon_end_at (the latest
+    horizon end of its questions), reveal_round (the timelock round every
+    forecast of this round is sealed to) and questions. Each question has an id,
+    the entity it asks about, an optional counterparty and known relationship,
+    and its own horizon_end_at: the last day a statement about it can come true
+    (questions about companies have a longer horizon than questions about acts).
+    Exits 3 when no round is accepting forecasts.
 
     \b
     Example:

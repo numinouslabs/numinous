@@ -6,10 +6,16 @@ function changed_files {
 }
 
 
+python_with_formatters=python3
+repo_python="$(git rev-parse --show-toplevel)/.venv/bin/python"
+if "$repo_python" -c "import black, isort" 2>/dev/null; then
+    python_with_formatters="$repo_python"
+fi
+
 printf "Applying isort and black formatting to the following python files:\n"
 changed_files "*.py" | xargs -I{} ls -lhtr {}
-changed_files "*.py" | xargs -I{} isort {}
-changed_files "*.py" | xargs -I{} black {}
+changed_files "*.py" | xargs -I{} "$python_with_formatters" -m isort {}
+changed_files "*.py" | xargs -I{} "$python_with_formatters" -m black {}
 changed_files "*.py" | xargs -I{} git add {}
 
 

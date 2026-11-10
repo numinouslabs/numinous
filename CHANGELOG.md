@@ -1,5 +1,11 @@
 # Release Notes
 
+## [4.1.0] - 2026-11-06
+- **Scoring**: every judged statement is priced by how likely it was to happen anyway (its baseline `b`). A correct statement earns `1 − b`, a statement judged not correct costs `b`, each bundle earns its points divided by the square root of its number of statements, and a miner's credits are floored at 0. Obvious statements earn almost nothing; statements judged before baselines existed keep their credits. See [docs/scoring-system.md](docs/scoring-system.md).
+- **Act questions**: rounds can ask about an actor (a state or an armed group) as well as companies. Each question has its own horizon (`horizon_end_at`), and a statement can name an optional `place`. See [docs/miner-setup.md](docs/miner-setup.md).
+- **CLI**: `numi round` shows each question's horizon, `numi validate` documents `place`, and a sealed forecast can now be up to 80 KB.
+- **Validator**: keeps the baseline the backend sends with each judged statement (a new column, added on upgrade). No configuration change: update as usual.
+
 ## [4.0.0] - 2026-10-21
 - **Graph forecasting**: Numinous is now a graph forecasting subnet. Every day it asks questions about companies, and miners answer each question with a bundle of statements about relationships that will appear in the news. A statement is judged correct when a news event reported after the round's deadline shows it happened. Validators no longer run miner agents. See [docs/miner-setup.md](docs/miner-setup.md).
 - **Upgrade (action required for validators)**: run `git pull` **before** `docker compose pull`. The sandbox and gateway flags are removed (`--sandbox.max_concurrent`, `--sandbox.timeout_seconds`, `--backend.gateway_url`, `--validator.sync_hour`), so an old `docker-compose.validator.yaml` command line no longer starts with the new image. The compose file also drops the Docker socket, the sandbox volume, port 8000 and `HOST_WALLET_PATH`.

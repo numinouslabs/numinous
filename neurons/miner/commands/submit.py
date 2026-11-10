@@ -44,7 +44,8 @@ def submit_command(client: MinerClient, question_id: uuid.UUID, forecast_file: T
     the deadline, the backend included), signs it with the hotkey, sends it,
     checks the receipt the backend signs, and saves forecast, sealed bytes and
     receipt under ~/.numinous/receipts/<hotkey>/<round>/<question>.json.
-    One forecast per question: the first one sent counts.
+    One forecast per question: sending again before the deadline replaces it,
+    the last one sent counts.
 
     \b
     Exit codes: 0 sent, 3 no round open, 4 forecast not valid (nothing sent),
