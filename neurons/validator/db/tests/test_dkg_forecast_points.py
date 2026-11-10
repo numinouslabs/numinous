@@ -9,7 +9,7 @@ from neurons.validator.db.dkg_operations import DkgDatabaseOperations
 from neurons.validator.models.dkg import (
     DkgForecastHashModel,
     DkgForecastModel,
-    DkgForecastRightsModel,
+    DkgForecastPointsModel,
     DkgMinerModel,
     DkgQuestionModel,
     DkgRoundModel,
@@ -30,6 +30,15 @@ class Right(NamedTuple):
     position: int
     event_id: str
     judged_at: datetime = JUDGED
+    baseline: float | None = None
+
+
+class Wrong(NamedTuple):
+    position: int
+    baseline: float | None
+    judged_at: datetime = JUDGED
+    reason: str = "NOT_REPORTED"
+    event_id: str | None = None
 
 
 async def add_forecast(
@@ -40,6 +49,7 @@ async def add_forecast(
     rights: list[Right],
     received_at: datetime = RECEIVED,
     failed_check: str | None = None,
+    wrongs: tuple[Wrong, ...] = (),
 ) -> None:
     miner_uid, miner_hotkey = miner
     await dkg_operations.save_forecast_hashes(
@@ -60,7 +70,6 @@ async def add_forecast(
             for position in range(statements)
         ],
     }
-    right_at = {right.position: right for right in rights}
     await dkg_operations.save_forecasts(
         [
             DkgForecastModel(
@@ -77,26 +86,44 @@ async def add_forecast(
                 miner_uid=miner_uid,
                 miner_hotkey=miner_hotkey,
                 question_id=question_id,
-                statement_position=position,
-                outcome=position in right_at,
-                reason="judged",
-                event_id=right_at[position].event_id if position in right_at else None,
+                statement_position=right.position,
+                outcome=True,
+                reason="REPORTED",
+                event_id=right.event_id,
                 reported_at=None,
-                judged_at=right_at[position].judged_at if position in right_at else JUDGED,
+                judged_at=right.judged_at,
+                baseline=right.baseline,
             )
-            for position in range(statements)
+            for right in rights
+        ]
+        + [
+            DkgStatementResultModel(
+                miner_uid=miner_uid,
+                miner_hotkey=miner_hotkey,
+                question_id=question_id,
+                statement_position=wrong.position,
+                outcome=False,
+                reason=wrong.reason,
+                event_id=wrong.event_id,
+                reported_at=None,
+                judged_at=wrong.judged_at,
+                baseline=wrong.baseline,
+            )
+            for wrong in wrongs
         ],
     )
 
 
-def counted(miner: tuple[int, str], rights: int, statements: int) -> tuple[int, str, int, int]:
-    return (*miner, rights, statements)
+def counted(miner: tuple[int, str], points: float, statements: int) -> tuple[int, str, float, int]:
+    return (*miner, pytest.approx(points), statements)
 
 
-async def forecast_rights(dkg_operations: DkgDatabaseOperations) -> list[tuple[int, str, int, int]]:
+async def forecast_points(
+    dkg_operations: DkgDatabaseOperations,
+) -> list[tuple[int, str, float, int]]:
     return sorted(
-        (forecast.miner_uid, forecast.miner_hotkey, forecast.rights, forecast.statements)
-        for forecast in await dkg_operations.get_forecast_rights(
+        (forecast.miner_uid, forecast.miner_hotkey, forecast.points, forecast.statements)
+        for forecast in await dkg_operations.get_forecast_points(
             judged_after=WINDOW_START, judged_before=MOMENT
         )
     )
@@ -132,7 +159,7 @@ class TestCurrentMiners:
         assert await dkg_operations.get_current_miners() == []
 
 
-class TestForecastRights:
+class TestForecastPoints:
     @pytest.fixture
     async def dkg_operations(self, db_client: DatabaseClient) -> DkgDatabaseOperations:
         dkg_operations = DkgDatabaseOperations(db_client=db_client)
@@ -162,19 +189,19 @@ class TestForecastRights:
     ):
         await add_forecast(dkg_operations, MINER, "question-1", 3, [Right(0, "event-1")])
 
-        assert await forecast_rights(dkg_operations) == [counted(MINER, 1, 3)]
-        assert await dkg_operations.get_forecast_rights(
+        assert await forecast_points(dkg_operations) == [counted(MINER, 1, 3)]
+        assert await dkg_operations.get_forecast_points(
             judged_after=WINDOW_START, judged_before=MOMENT
         ) == [
-            DkgForecastRightsModel(miner_uid=1, miner_hotkey="5MinerHotkey", rights=1, statements=3)
+            DkgForecastPointsModel(miner_uid=1, miner_hotkey="5MinerHotkey", points=1, statements=3)
         ]
 
-    async def test_a_forecast_with_nothing_right_is_left_out(
+    async def test_a_forecast_with_nothing_judged_is_left_out(
         self, dkg_operations: DkgDatabaseOperations
     ):
         await add_forecast(dkg_operations, MINER, "question-1", 2, [])
 
-        assert await forecast_rights(dkg_operations) == []
+        assert await forecast_points(dkg_operations) == []
 
     async def test_rights_through_different_events_all_count(
         self, dkg_operations: DkgDatabaseOperations
@@ -183,7 +210,7 @@ class TestForecastRights:
             dkg_operations, MINER, "question-1", 3, [Right(0, "event-1"), Right(2, "event-2")]
         )
 
-        assert await forecast_rights(dkg_operations) == [counted(MINER, 2, 3)]
+        assert await forecast_points(dkg_operations) == [counted(MINER, 2, 3)]
 
     async def test_the_same_event_twice_in_a_forecast_counts_once_and_leaves_the_statements(
         self, dkg_operations: DkgDatabaseOperations
@@ -192,7 +219,7 @@ class TestForecastRights:
             dkg_operations, MINER, "question-1", 3, [Right(0, "event-1"), Right(1, "event-1")]
         )
 
-        assert await forecast_rights(dkg_operations) == [counted(MINER, 1, 2)]
+        assert await forecast_points(dkg_operations) == [counted(MINER, 1, 2)]
 
     async def test_the_same_event_in_another_question_counts_in_the_forecast_received_first(
         self, dkg_operations: DkgDatabaseOperations
@@ -209,7 +236,7 @@ class TestForecastRights:
             received_at=RECEIVED + timedelta(hours=1),
         )
 
-        assert await forecast_rights(dkg_operations) == [
+        assert await forecast_points(dkg_operations) == [
             counted(MINER, 1, 1),
             counted(MINER, 1, 2),
         ]
@@ -229,7 +256,7 @@ class TestForecastRights:
             received_at=RECEIVED + timedelta(days=1),
         )
 
-        assert await forecast_rights(dkg_operations) == [counted(MINER, 1, 1)]
+        assert await forecast_points(dkg_operations) == [counted(MINER, 1, 1)]
 
     async def test_the_time_received_decides_not_the_question(
         self, dkg_operations: DkgDatabaseOperations
@@ -246,7 +273,7 @@ class TestForecastRights:
             dkg_operations, MINER, "question-2", 2, [Right(0, "event-1")], received_at=RECEIVED
         )
 
-        assert await forecast_rights(dkg_operations) == [counted(MINER, 1, 2)]
+        assert await forecast_points(dkg_operations) == [counted(MINER, 1, 2)]
 
     async def test_forecasts_received_at_the_same_time_go_by_question(
         self, dkg_operations: DkgDatabaseOperations
@@ -254,7 +281,7 @@ class TestForecastRights:
         await add_forecast(dkg_operations, MINER, "question-2", 1, [Right(0, "event-1")])
         await add_forecast(dkg_operations, MINER, "question-1", 2, [Right(0, "event-1")])
 
-        assert await forecast_rights(dkg_operations) == [counted(MINER, 1, 2)]
+        assert await forecast_points(dkg_operations) == [counted(MINER, 1, 2)]
 
     async def test_each_miner_keeps_its_own_right_through_the_same_event(
         self, dkg_operations: DkgDatabaseOperations
@@ -262,7 +289,7 @@ class TestForecastRights:
         await add_forecast(dkg_operations, MINER, "question-1", 1, [Right(0, "event-1")])
         await add_forecast(dkg_operations, OTHER_MINER, "question-1", 2, [Right(0, "event-1")])
 
-        assert await forecast_rights(dkg_operations) == [
+        assert await forecast_points(dkg_operations) == [
             counted(MINER, 1, 1),
             counted(OTHER_MINER, 1, 2),
         ]
@@ -275,7 +302,7 @@ class TestForecastRights:
             dkg_operations, SAME_HOTKEY_REGISTERED_AGAIN, "question-1", 2, [Right(0, "event-1")]
         )
 
-        assert await forecast_rights(dkg_operations) == [
+        assert await forecast_points(dkg_operations) == [
             counted(MINER, 1, 1),
             counted(SAME_HOTKEY_REGISTERED_AGAIN, 1, 2),
         ]
@@ -292,7 +319,7 @@ class TestForecastRights:
             failed_check="the miner signature does not verify",
         )
 
-        assert await forecast_rights(dkg_operations) == []
+        assert await forecast_points(dkg_operations) == []
 
     async def test_a_forecast_that_failed_a_check_does_not_take_the_event_from_a_later_one(
         self, dkg_operations: DkgDatabaseOperations
@@ -315,7 +342,7 @@ class TestForecastRights:
             received_at=RECEIVED + timedelta(hours=1),
         )
 
-        assert await forecast_rights(dkg_operations) == [counted(MINER, 1, 2)]
+        assert await forecast_points(dkg_operations) == [counted(MINER, 1, 2)]
 
     async def test_a_forecast_whose_rights_were_judged_before_the_window_is_left_out(
         self, dkg_operations: DkgDatabaseOperations
@@ -328,7 +355,7 @@ class TestForecastRights:
             [Right(0, "event-1", judged_at=WINDOW_START - timedelta(days=1))],
         )
 
-        assert await forecast_rights(dkg_operations) == []
+        assert await forecast_points(dkg_operations) == []
 
     async def test_a_right_judged_exactly_at_the_window_start_is_left_out(
         self, dkg_operations: DkgDatabaseOperations
@@ -337,7 +364,7 @@ class TestForecastRights:
             dkg_operations, MINER, "question-1", 1, [Right(0, "event-1", judged_at=WINDOW_START)]
         )
 
-        assert await forecast_rights(dkg_operations) == []
+        assert await forecast_points(dkg_operations) == []
 
     async def test_only_the_rights_judged_in_the_window_count_over_every_statement(
         self, dkg_operations: DkgDatabaseOperations
@@ -353,7 +380,7 @@ class TestForecastRights:
             ],
         )
 
-        assert await forecast_rights(dkg_operations) == [counted(MINER, 1, 3)]
+        assert await forecast_points(dkg_operations) == [counted(MINER, 1, 3)]
 
     async def test_a_right_judged_one_second_into_the_window_counts(
         self, dkg_operations: DkgDatabaseOperations
@@ -366,7 +393,7 @@ class TestForecastRights:
             [Right(0, "event-1", judged_at=WINDOW_START + timedelta(seconds=1))],
         )
 
-        assert await forecast_rights(dkg_operations) == [counted(MINER, 1, 1)]
+        assert await forecast_points(dkg_operations) == [counted(MINER, 1, 1)]
 
     async def test_of_two_rights_either_side_of_the_window_start_only_the_inside_one_counts(
         self, dkg_operations: DkgDatabaseOperations
@@ -382,7 +409,7 @@ class TestForecastRights:
             ],
         )
 
-        assert await forecast_rights(dkg_operations) == [counted(MINER, 1, 2)]
+        assert await forecast_points(dkg_operations) == [counted(MINER, 1, 2)]
 
     async def test_every_right_of_a_forecast_in_the_window_counts(
         self, dkg_operations: DkgDatabaseOperations
@@ -398,7 +425,7 @@ class TestForecastRights:
             ],
         )
 
-        assert await forecast_rights(dkg_operations) == [counted(MINER, 2, 2)]
+        assert await forecast_points(dkg_operations) == [counted(MINER, 2, 2)]
 
     async def test_an_event_paid_by_a_right_that_left_the_window_is_not_paid_again(
         self, dkg_operations: DkgDatabaseOperations
@@ -420,7 +447,7 @@ class TestForecastRights:
             received_at=RECEIVED + timedelta(hours=1),
         )
 
-        assert await forecast_rights(dkg_operations) == []
+        assert await forecast_points(dkg_operations) == []
 
     async def test_a_repeat_judged_before_the_window_still_leaves_the_statements(
         self, dkg_operations: DkgDatabaseOperations
@@ -440,7 +467,7 @@ class TestForecastRights:
             received_at=RECEIVED + timedelta(hours=1),
         )
 
-        assert await forecast_rights(dkg_operations) == [
+        assert await forecast_points(dkg_operations) == [
             counted(MINER, 1, 1),
             counted(MINER, 1, 2),
         ]
@@ -461,7 +488,7 @@ class TestForecastRights:
             [Right(0, "event-2", judged_at=WINDOW_START + timedelta(days=1))],
         )
 
-        assert await forecast_rights(dkg_operations) == [counted(MINER, 1, 2)]
+        assert await forecast_points(dkg_operations) == [counted(MINER, 1, 2)]
 
     async def test_a_repeated_event_does_not_keep_a_forecast_in_the_window(
         self, dkg_operations: DkgDatabaseOperations
@@ -481,7 +508,7 @@ class TestForecastRights:
             received_at=RECEIVED + timedelta(hours=1),
         )
 
-        assert await forecast_rights(dkg_operations) == [counted(MINER, 1, 1)]
+        assert await forecast_points(dkg_operations) == [counted(MINER, 1, 1)]
 
     async def test_a_right_judged_after_the_moment_is_left_out(
         self, dkg_operations: DkgDatabaseOperations
@@ -494,7 +521,7 @@ class TestForecastRights:
             [Right(0, "event-1", judged_at=MOMENT + timedelta(minutes=45))],
         )
 
-        assert await forecast_rights(dkg_operations) == []
+        assert await forecast_points(dkg_operations) == []
 
     async def test_a_right_judged_exactly_at_the_moment_is_left_out(
         self, dkg_operations: DkgDatabaseOperations
@@ -503,7 +530,7 @@ class TestForecastRights:
             dkg_operations, MINER, "question-1", 1, [Right(0, "event-1", judged_at=MOMENT)]
         )
 
-        assert await forecast_rights(dkg_operations) == []
+        assert await forecast_points(dkg_operations) == []
 
     async def test_a_right_judged_after_the_moment_does_not_take_its_event_from_an_earlier_one(
         self, dkg_operations: DkgDatabaseOperations
@@ -525,4 +552,195 @@ class TestForecastRights:
             received_at=RECEIVED + timedelta(days=2),
         )
 
-        assert await forecast_rights(dkg_operations) == [counted(MINER, 1, 2)]
+        assert await forecast_points(dkg_operations) == [counted(MINER, 1, 2)]
+
+    async def test_a_right_pays_one_minus_its_baseline(self, dkg_operations: DkgDatabaseOperations):
+        await add_forecast(
+            dkg_operations, MINER, "question-1", 1, [Right(0, "event-1", baseline=0.12)]
+        )
+
+        assert await forecast_points(dkg_operations) == [counted(MINER, 0.88, 1)]
+
+    async def test_a_wrong_costs_its_baseline(self, dkg_operations: DkgDatabaseOperations):
+        await add_forecast(dkg_operations, MINER, "question-1", 1, [], wrongs=(Wrong(0, 0.3),))
+
+        assert await forecast_points(dkg_operations) == [counted(MINER, -0.3, 1)]
+
+    async def test_rights_and_wrongs_add_up_over_every_statement(
+        self, dkg_operations: DkgDatabaseOperations
+    ):
+        await add_forecast(
+            dkg_operations,
+            MINER,
+            "question-1",
+            4,
+            [
+                Right(0, "event-1", baseline=0.4),
+                Right(2, "event-2", baseline=0.1),
+                Right(3, "event-3", baseline=0.95),
+            ],
+            wrongs=(Wrong(1, 0.3),),
+        )
+
+        assert await forecast_points(dkg_operations) == [counted(MINER, 1.25, 4)]
+
+    async def test_a_waiting_statement_stays_in_the_statements(
+        self, dkg_operations: DkgDatabaseOperations
+    ):
+        await add_forecast(
+            dkg_operations, MINER, "question-1", 2, [Right(0, "event-1", baseline=0.2)]
+        )
+
+        assert await forecast_points(dkg_operations) == [counted(MINER, 0.8, 2)]
+
+    async def test_a_void_counts_nothing_and_leaves_the_statements(
+        self, dkg_operations: DkgDatabaseOperations
+    ):
+        await add_forecast(
+            dkg_operations,
+            MINER,
+            "question-1",
+            2,
+            [Right(0, "event-1", baseline=0.2)],
+            wrongs=(Wrong(1, 0.5, reason="VOID"),),
+        )
+
+        assert await forecast_points(dkg_operations) == [counted(MINER, 0.8, 1)]
+
+    async def test_a_forecast_with_only_a_void_is_left_out(
+        self, dkg_operations: DkgDatabaseOperations
+    ):
+        await add_forecast(
+            dkg_operations, MINER, "question-1", 1, [], wrongs=(Wrong(0, 0.4, reason="VOID"),)
+        )
+
+        assert await forecast_points(dkg_operations) == []
+
+    async def test_a_void_through_an_event_does_not_take_it_from_a_later_right(
+        self, dkg_operations: DkgDatabaseOperations
+    ):
+        await add_forecast(
+            dkg_operations,
+            MINER,
+            "question-1",
+            1,
+            [],
+            received_at=RECEIVED,
+            wrongs=(Wrong(0, 0.4, reason="VOID", event_id="event-1"),),
+        )
+        await add_forecast(
+            dkg_operations,
+            MINER,
+            "question-2",
+            1,
+            [Right(0, "event-1", baseline=0.2)],
+            received_at=RECEIVED + timedelta(hours=1),
+        )
+
+        assert await forecast_points(dkg_operations) == [counted(MINER, 0.8, 1)]
+
+    async def test_a_missing_baseline_counts_as_zero(self, dkg_operations: DkgDatabaseOperations):
+        await add_forecast(
+            dkg_operations,
+            MINER,
+            "question-1",
+            2,
+            [Right(0, "event-1")],
+            wrongs=(Wrong(1, None),),
+        )
+
+        assert await forecast_points(dkg_operations) == [counted(MINER, 1, 2)]
+
+    async def test_a_repeat_with_a_baseline_pays_nothing(
+        self, dkg_operations: DkgDatabaseOperations
+    ):
+        await add_forecast(
+            dkg_operations,
+            MINER,
+            "question-1",
+            2,
+            [Right(0, "event-1", baseline=0.1), Right(1, "event-1", baseline=0.1)],
+        )
+
+        assert await forecast_points(dkg_operations) == [counted(MINER, 0.9, 1)]
+
+    async def test_a_wrong_judged_before_the_window_costs_nothing(
+        self, dkg_operations: DkgDatabaseOperations
+    ):
+        await add_forecast(
+            dkg_operations,
+            MINER,
+            "question-1",
+            2,
+            [Right(0, "event-1", baseline=0.2)],
+            wrongs=(Wrong(1, 0.3, judged_at=WINDOW_START - timedelta(days=1)),),
+        )
+
+        assert await forecast_points(dkg_operations) == [counted(MINER, 0.8, 2)]
+
+    async def test_a_wrong_in_the_window_counts_after_its_right_left_it(
+        self, dkg_operations: DkgDatabaseOperations
+    ):
+        await add_forecast(
+            dkg_operations,
+            MINER,
+            "question-1",
+            2,
+            [Right(0, "event-1", judged_at=WINDOW_START - timedelta(days=1), baseline=0.2)],
+            wrongs=(Wrong(1, 0.3),),
+        )
+
+        assert await forecast_points(dkg_operations) == [counted(MINER, -0.3, 2)]
+
+    async def test_a_wrong_judged_at_the_moment_is_left_out(
+        self, dkg_operations: DkgDatabaseOperations
+    ):
+        await add_forecast(
+            dkg_operations, MINER, "question-1", 1, [], wrongs=(Wrong(0, 0.3, judged_at=MOMENT),)
+        )
+
+        assert await forecast_points(dkg_operations) == []
+
+    async def test_an_invalid_forecast_adds_nothing(self, dkg_operations: DkgDatabaseOperations):
+        miner_uid, miner_hotkey = MINER
+        await dkg_operations.save_forecast_hashes(
+            [
+                DkgForecastHashModel(
+                    miner_uid=miner_uid,
+                    miner_hotkey=miner_hotkey,
+                    question_id="question-1",
+                    sealed_sha256="sha256-of-the-invalid-one",
+                    received_at=RECEIVED,
+                )
+            ]
+        )
+        await dkg_operations.save_forecasts(
+            [
+                DkgForecastModel(
+                    miner_uid=miner_uid,
+                    miner_hotkey=miner_hotkey,
+                    question_id="question-1",
+                    opened=None,
+                    invalid_reason="the seal does not open",
+                    failed_check=None,
+                )
+            ],
+            [],
+        )
+        await add_forecast(
+            dkg_operations, MINER, "question-2", 1, [Right(0, "event-1", baseline=0.2)]
+        )
+
+        assert await forecast_points(dkg_operations) == [counted(MINER, 0.8, 1)]
+
+    async def test_ten_statements_with_their_baselines(self, dkg_operations: DkgDatabaseOperations):
+        await add_forecast(
+            dkg_operations,
+            MINER,
+            "question-1",
+            10,
+            [Right(position, f"event-{position}", baseline=0.05) for position in range(3)],
+            wrongs=tuple(Wrong(position, 0.02) for position in range(3, 10)),
+        )
+
+        assert await forecast_points(dkg_operations) == [counted(MINER, 2.71, 10)]

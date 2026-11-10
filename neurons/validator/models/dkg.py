@@ -46,6 +46,7 @@ class DkgStatementResultModel(BaseModel):
     event_id: str | None
     reported_at: datetime | None
     judged_at: datetime
+    baseline: float | None
 
 
 class DkgMinerModel(BaseModel):
@@ -53,10 +54,10 @@ class DkgMinerModel(BaseModel):
     miner_hotkey: str
 
 
-class DkgForecastRightsModel(BaseModel):
+class DkgForecastPointsModel(BaseModel):
     miner_uid: int
     miner_hotkey: str
-    rights: int
+    points: float
     statements: int
 
 

@@ -39,6 +39,7 @@ ROUND = {
             "counterparty_id": None,
             "counterparty": None,
             "relationship": None,
+            "horizon_end_at": "2026-10-14T01:00:00Z",
             "a_field_added_later": "kept",
         }
     ],
@@ -195,6 +196,15 @@ class TestMinerClient:
             current = MinerClient("test", HOTKEY).get_round()
 
         assert current.model_dump(mode="json")["questions"][0]["a_field_added_later"] == "kept"
+
+    def test_each_question_keeps_its_own_horizon(self):
+        url = f"{BACKENDS['test'].url}/api/v3/dkg/questions"
+
+        with patch("neurons.miner.client.httpx.get", return_value=response(200, url, json=ROUND)):
+            current = MinerClient("test", HOTKEY).get_round()
+
+        assert current.questions[0].horizon_end_at == datetime(2026, 10, 14, 1, tzinfo=timezone.utc)
+        assert current.horizon_end_at == datetime(2026, 10, 15, 1, tzinfo=timezone.utc)
 
     def test_no_round_accepting(self):
         url = f"{BACKENDS['test'].url}/api/v3/dkg/questions"
@@ -421,6 +431,20 @@ class TestSubmit:
             "bytes, the limit is 100: shorten the rationales or the sources"
         )
         assert backend.posted == []
+
+    def test_a_forecast_over_forty_kilobytes_once_sealed_is_sent(self, backend: StandInBackend):
+        statement = {
+            "head": "Apple",
+            "relation": "INVESTS_IN",
+            "tail": "T" * 12_000,
+            "probability": 0.1,
+        }
+        forecast = {"version": 2, "statements": [statement] * 4}
+
+        submission = MinerClient("test", HOTKEY).submit(QUESTION_ID, forecast)
+
+        assert 40_960 < len(bytes.fromhex(submission.sealed)) <= 81_920
+        assert len(backend.posted) == 1
 
     def test_a_question_of_another_round_is_not_sent(self, backend: StandInBackend):
         with pytest.raises(NotAQuestionOfTheRound, match=ROUND["id"]):

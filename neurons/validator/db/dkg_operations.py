@@ -7,7 +7,7 @@ from neurons.validator.db.client import DatabaseClient
 from neurons.validator.models.dkg import (
     DkgForecastHashModel,
     DkgForecastModel,
-    DkgForecastRightsModel,
+    DkgForecastPointsModel,
     DkgMinerModel,
     DkgQuestionModel,
     DkgRoundModel,
@@ -290,27 +290,30 @@ class DkgDatabaseOperations:
     async def vacuum_database(self, pages: int):
         await self.__db_client.script(f"PRAGMA incremental_vacuum({pages})")
 
-    async def get_forecast_rights(
+    async def get_forecast_points(
         self, judged_after: datetime, judged_before: datetime
-    ) -> list[DkgForecastRightsModel]:
+    ) -> list[DkgForecastPointsModel]:
         rows = await self.__db_client.many(
             """
-                WITH rights AS (
+                WITH judged AS (
                     SELECT
                         result.miner_uid,
                         result.miner_hotkey,
                         result.question_id,
-                        result.judged_at,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY result.miner_uid, result.miner_hotkey, result.event_id
+                        result.outcome,
+                        result.reason = 'VOID' AS void,
+                        COALESCE(result.baseline, 0) AS baseline,
+                        julianday(result.judged_at) > julianday(:judged_after) AS in_window,
+                        result.outcome = 1 AND ROW_NUMBER() OVER (
+                            PARTITION BY
+                                result.miner_uid, result.miner_hotkey, result.outcome, result.event_id
                             ORDER BY hash.received_at, result.question_id, result.statement_position
-                        ) = 1 AS first_of_its_event
+                        ) > 1 AS repeat
                     FROM dkg_statement_results AS result
                     JOIN dkg_forecast_hashes AS hash
                         USING (miner_uid, miner_hotkey, question_id)
                     WHERE
-                        result.outcome = 1
-                        AND julianday(result.judged_at) < julianday(:judged_before)
+                        julianday(result.judged_at) < julianday(:judged_before)
                         AND NOT EXISTS (
                             SELECT 1 FROM dkg_forecasts AS failed
                             WHERE
@@ -326,19 +329,22 @@ class DkgDatabaseOperations:
                         miner_hotkey,
                         question_id,
                         SUM(
-                            first_of_its_event
-                            AND julianday(judged_at) > julianday(:judged_after)
-                        ) AS rights,
-                        SUM(NOT first_of_its_event) AS repeats
-                    FROM rights
+                            CASE
+                                WHEN NOT in_window OR repeat OR void THEN 0
+                                WHEN outcome = 1 THEN 1 - baseline
+                                ELSE -baseline
+                            END
+                        ) AS points,
+                        SUM(repeat OR void) AS left_out
+                    FROM judged
                     GROUP BY miner_uid, miner_hotkey, question_id
-                    HAVING rights > 0
+                    HAVING SUM(in_window AND NOT repeat AND NOT void) > 0
                 )
                 SELECT
                     counted.miner_uid,
                     counted.miner_hotkey,
-                    counted.rights,
-                    json_array_length(forecast.opened, '$.statements') - counted.repeats
+                    counted.points,
+                    json_array_length(forecast.opened, '$.statements') - counted.left_out
                         AS statements
                 FROM counted
                 JOIN dkg_forecasts AS forecast
@@ -347,7 +353,7 @@ class DkgDatabaseOperations:
             {"judged_after": judged_after.isoformat(), "judged_before": judged_before.isoformat()},
             use_row_factory=True,
         )
-        return [DkgForecastRightsModel(**dict(row)) for row in rows]
+        return [DkgForecastPointsModel(**dict(row)) for row in rows]
 
     async def get_last_scored_at(self) -> datetime | None:
         row = await self.__db_client.one(

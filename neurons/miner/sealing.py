@@ -3,7 +3,7 @@ from datetime import datetime
 from bittensor import timelock
 from bittensor_wallet import Keypair
 
-SEALED_FORECAST_MAX_BYTES = 40_960
+SEALED_FORECAST_MAX_BYTES = 81_920
 
 
 def seal(forecast: str, reveal_round: int) -> bytes:

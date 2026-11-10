@@ -1,7 +1,7 @@
 from datetime import datetime, time, timedelta, timezone
 
 from neurons.validator.db.dkg_operations import DkgDatabaseOperations
-from neurons.validator.models.dkg import DkgForecastRightsModel, DkgScoreModel
+from neurons.validator.models.dkg import DkgForecastPointsModel, DkgScoreModel
 from neurons.validator.scheduler.task import AbstractTask
 from neurons.validator.utils.logger.logger import NuminousLogger
 from neurons.validator.version import __spec_version__ as spec_version
@@ -11,10 +11,10 @@ SCORE_WINDOW = timedelta(days=30)
 STATEMENT_BONUS_EXPONENT = 0.5
 
 
-def _credit(forecast: DkgForecastRightsModel) -> float:
-    share_right = forecast.rights / forecast.statements
+def _credit(forecast: DkgForecastPointsModel) -> float:
+    share = forecast.points / forecast.statements
     bonus = forecast.statements**STATEMENT_BONUS_EXPONENT
-    return share_right * bonus
+    return share * bonus
 
 
 def _last_scoring_moment(now: datetime) -> datetime:
@@ -73,7 +73,7 @@ class ScoreDkgMiners(AbstractTask):
             for miner in await self.dkg_operations.get_current_miners()
         }
 
-        for forecast in await self.dkg_operations.get_forecast_rights(
+        for forecast in await self.dkg_operations.get_forecast_points(
             judged_after=moment - SCORE_WINDOW, judged_before=moment
         ):
             miner = (forecast.miner_uid, forecast.miner_hotkey)
@@ -86,7 +86,7 @@ class ScoreDkgMiners(AbstractTask):
                     miner_uid=uid,
                     miner_hotkey=hotkey,
                     scored_at=moment,
-                    score=score,
+                    score=max(score, 0.0),
                     spec_version=spec_version,
                 )
                 for (uid, hotkey), score in scores.items()

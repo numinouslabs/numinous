@@ -50,6 +50,7 @@ class StatementResult(BaseModel):
     event_id: str | None
     reported_at: datetime | None
     judged_at: datetime
+    baseline: float | None = None
 
 
 class ReleasedForecastResponse(BaseModel):

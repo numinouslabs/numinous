@@ -11,7 +11,7 @@ from neurons.validator.db.dkg_operations import DkgDatabaseOperations
 from neurons.validator.models.dkg import (
     DkgForecastHashModel,
     DkgForecastModel,
-    DkgForecastRightsModel,
+    DkgForecastPointsModel,
     DkgMinerModel,
     DkgQuestionModel,
     DkgRoundModel,
@@ -32,24 +32,35 @@ NOW = datetime(2026, 10, 20, 15, 10, tzinfo=timezone.utc)
 MOMENT = datetime(2026, 10, 20, 15, 0, tzinfo=timezone.utc)
 
 
-def rights_of(miner: DkgMinerModel, rights: int, statements: int) -> DkgForecastRightsModel:
-    return DkgForecastRightsModel(
+def points_of(miner: DkgMinerModel, points: float, statements: int) -> DkgForecastPointsModel:
+    return DkgForecastPointsModel(
         miner_uid=miner.miner_uid,
         miner_hotkey=miner.miner_hotkey,
-        rights=rights,
+        points=points,
         statements=statements,
     )
 
 
 class TestCredit:
     @pytest.mark.parametrize(
-        "rights, statements, credit",
-        [(1, 1, 1.0), (1, 2, 0.7071), (2, 2, 1.4142), (1, 5, 0.4472), (5, 5, 2.2361)],
+        "points, statements, credit",
+        [
+            (1, 1, 1.0),
+            (1, 2, 0.7071),
+            (2, 2, 1.4142),
+            (1, 5, 0.4472),
+            (5, 5, 2.2361),
+            (0.88, 1, 0.88),
+            (1.25, 4, 0.625),
+            (-0.3, 1, -0.3),
+            (-0.3, 2, -0.2121),
+            (0, 3, 0.0),
+        ],
     )
-    def test_share_right_times_the_square_root_bonus(
-        self, rights: int, statements: int, credit: float
+    def test_points_over_the_square_root_of_the_statements(
+        self, points: float, statements: int, credit: float
     ):
-        assert _credit(rights_of(MINER, rights, statements)) == pytest.approx(credit, abs=1e-4)
+        assert _credit(points_of(MINER, points, statements)) == pytest.approx(credit, abs=1e-4)
 
     @pytest.mark.parametrize(
         "exponent, credit",
@@ -60,7 +71,7 @@ class TestCredit:
     ):
         monkeypatch.setattr(score_dkg_miners, "STATEMENT_BONUS_EXPONENT", exponent)
 
-        assert _credit(rights_of(MINER, 1, 5)) == pytest.approx(credit, abs=1e-4)
+        assert _credit(points_of(MINER, 1, 5)) == pytest.approx(credit, abs=1e-4)
 
 
 class TestLastScoringMoment:
@@ -89,7 +100,7 @@ class TestScoreDkgMiners:
         dkg_operations.get_last_scored_at.return_value = MOMENT - timedelta(days=1)
         dkg_operations.get_last_results_pull.return_value = MOMENT + timedelta(minutes=7)
         dkg_operations.get_current_miners.return_value = [MINER, OTHER_MINER, IDLE_MINER]
-        dkg_operations.get_forecast_rights.return_value = []
+        dkg_operations.get_forecast_points.return_value = []
         return dkg_operations
 
     @pytest.fixture
@@ -133,15 +144,15 @@ class TestScoreDkgMiners:
     async def test_scores_every_current_miner_as_of_the_moment(
         self, task: ScoreDkgMiners, dkg_operations: AsyncMock, logger: MagicMock
     ):
-        dkg_operations.get_forecast_rights.return_value = [
-            rights_of(MINER, 1, 1),
-            rights_of(MINER, 1, 5),
-            rights_of(OTHER_MINER, 2, 2),
+        dkg_operations.get_forecast_points.return_value = [
+            points_of(MINER, 1, 1),
+            points_of(MINER, 1, 5),
+            points_of(OTHER_MINER, 2, 2),
         ]
 
         await task.run()
 
-        dkg_operations.get_forecast_rights.assert_awaited_once_with(
+        dkg_operations.get_forecast_points.assert_awaited_once_with(
             judged_after=MOMENT - SCORE_WINDOW, judged_before=MOMENT
         )
         (scores,) = dkg_operations.save_scores.call_args.args
@@ -167,7 +178,7 @@ class TestScoreDkgMiners:
         self, task: ScoreDkgMiners, dkg_operations: AsyncMock, monkeypatch: pytest.MonkeyPatch
     ):
         monkeypatch.setattr(score_dkg_miners, "spec_version", 4021)
-        dkg_operations.get_forecast_rights.return_value = [rights_of(MINER, 1, 1)]
+        dkg_operations.get_forecast_points.return_value = [points_of(MINER, 1, 1)]
 
         await task.run()
 
@@ -183,7 +194,7 @@ class TestScoreDkgMiners:
         await task.run()
 
         dkg_operations.get_last_results_pull.assert_not_awaited()
-        dkg_operations.get_forecast_rights.assert_not_awaited()
+        dkg_operations.get_forecast_points.assert_not_awaited()
         dkg_operations.save_scores.assert_not_awaited()
 
     @freeze_time(NOW)
@@ -212,7 +223,7 @@ class TestScoreDkgMiners:
 
         await task.run()
 
-        dkg_operations.get_forecast_rights.assert_not_awaited()
+        dkg_operations.get_forecast_points.assert_not_awaited()
         dkg_operations.save_scores.assert_not_awaited()
         logger.debug.assert_called_once_with(
             "DKG scoring waits for a results pull after its moment",
@@ -234,11 +245,11 @@ class TestScoreDkgMiners:
         assert {score.scored_at for score in scores} == {MOMENT}
 
     @freeze_time(NOW)
-    async def test_rights_of_a_miner_no_longer_registered_are_ignored(
+    async def test_points_of_a_miner_no_longer_registered_are_ignored(
         self, task: ScoreDkgMiners, dkg_operations: AsyncMock
     ):
         deregistered = DkgMinerModel(miner_uid=MINER.miner_uid, miner_hotkey="5Deregistered")
-        dkg_operations.get_forecast_rights.return_value = [rights_of(deregistered, 1, 1)]
+        dkg_operations.get_forecast_points.return_value = [points_of(deregistered, 1, 1)]
 
         await task.run()
 
@@ -246,12 +257,40 @@ class TestScoreDkgMiners:
         assert (deregistered.miner_uid, deregistered.miner_hotkey) not in scores
         assert set(scores.values()) == {0.0}
 
+    async def test_a_miner_below_zero_is_scored_zero(
+        self, task: ScoreDkgMiners, dkg_operations: AsyncMock
+    ):
+        dkg_operations.get_forecast_points.return_value = [
+            points_of(MINER, -0.3, 1),
+            points_of(OTHER_MINER, 0.88, 1),
+        ]
+
+        await task.score(MOMENT)
+
+        saved = self.saved_scores(dkg_operations)
+        assert saved[(MINER.miner_uid, MINER.miner_hotkey)] == 0.0
+        assert saved[(OTHER_MINER.miner_uid, OTHER_MINER.miner_hotkey)] == pytest.approx(0.88)
+
+    async def test_a_negative_forecast_lowers_the_others_before_the_floor(
+        self, task: ScoreDkgMiners, dkg_operations: AsyncMock
+    ):
+        dkg_operations.get_forecast_points.return_value = [
+            points_of(MINER, 0.88, 1),
+            points_of(MINER, -0.6, 1),
+        ]
+
+        await task.score(MOMENT)
+
+        assert self.saved_scores(dkg_operations)[
+            (MINER.miner_uid, MINER.miner_hotkey)
+        ] == pytest.approx(0.28)
+
     @freeze_time(NOW)
     async def test_no_current_miners_saves_an_empty_run(
         self, task: ScoreDkgMiners, dkg_operations: AsyncMock, logger: MagicMock
     ):
         dkg_operations.get_current_miners.return_value = []
-        dkg_operations.get_forecast_rights.return_value = [rights_of(MINER, 1, 1)]
+        dkg_operations.get_forecast_points.return_value = [points_of(MINER, 1, 1)]
 
         await task.run()
 
@@ -305,6 +344,7 @@ class TestScoreDkgMinersEndToEnd:
                     event_id=rights[position][0] if position in rights else None,
                     reported_at=None,
                     judged_at=rights[position][1] if position in rights else MOMENT,
+                    baseline=None,
                 )
                 for position in range(statements)
             ],
