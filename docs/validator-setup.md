@@ -23,13 +23,13 @@ A validator does not run anyone's code. It reads public data from the Numinous b
 |---|---|---|
 | Sync miners | 5 min | Reads the subnet's current miners (uid and hotkey) from the chain |
 | Pull rounds | 10 min | Stores every closed round, its questions and the hash of every forecast received before the deadline |
-| Pull results | 15 min | Stores every opened forecast with the result of each judged statement, and checks each one against its hash and the miner's signature |
-| Score miners | daily at 15:00 UTC | Computes every miner's credits from the statements judged correct in the last 30 days (see [scoring-system.md](./scoring-system.md)) |
+| Pull results | 15 min | Stores every forecast from the day it opens, with its distributions, the house's and the result of each judged statement. Once every statement of a forecast is judged the whole forecast is released, and the validator checks it against its hash and the miner's signature |
+| Score miners | daily at 15:00 UTC | Computes every miner's credits: each statement's score against the house's, for every forecast whose round closed in the last 60 days. Forecasts sent in the previous format still count by their own rule, for 30 days from the day each statement was judged (see [scoring-system.md](./scoring-system.md)) |
 | Post scores | 5 min | Sends each day's scores to the backend once |
 | Set weights | ~6 min, within the chain's rate limit | Sets weights from the latest scores that are at least an hour old, so every validator switches at 16:00 UTC |
 | Clean up | hourly | Keeps the last 90 days of rounds and everything under them, the same rule on every validator |
 
-A forecast that does not match its hash or its miner's signature is stored with the reason and never counts.
+A forecast that does not match its hash or its miner's signature is stored with the reason and stops counting. Until a forecast is released whole there is nothing to check yet, and it is scored on its distributions.
 
 ---
 
@@ -177,7 +177,7 @@ docker compose -f docker-compose.validator.yaml --env-file .env.validator up -d
 | `Validator started` | Migrations ran and every task is scheduled |
 | `DKG results pulled` | A results pull finished and was recorded |
 | `DKG results waiting for their round, pull not recorded` | Some results arrived before their round was pulled; the next pull catches up |
-| `DKG miners scored` | The daily scores were computed |
+| `DKG miners scored` | The daily scores were computed. The line carries the number of forecasts counted and the sum of their credits, for the previous format (`probability_*`) and the current one (`distribution_*`) |
 | `DKG scores posted` | The daily scores reached the backend |
 | `Weights from DKG scores` / `Weights set successfully.` | Weights were set from the latest scores |
 | `No DKG scores in effect yet, weights not set.` | Normal right after the first start, until the first scores are an hour old |

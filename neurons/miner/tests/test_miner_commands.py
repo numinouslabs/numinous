@@ -33,17 +33,30 @@ from neurons.miner.tests.test_miner_client import (
     MY_FORECAST,
     ROUND,
     SCHEMA,
+    day_one_or_never,
 )
 
 VALID = {
-    "version": 2,
+    "version": 3,
     "statements": [
-        {"head": "Apple", "relation": "INVESTS_IN", "tail": "TSMC", "probability": 0.15}
+        {
+            "head": "Apple",
+            "relation": "INVESTS_IN",
+            "tail": "TSMC",
+            "distribution": day_one_or_never(0.15),
+        }
     ],
 }
 INVALID = {
-    "version": 2,
-    "statements": [{"head": "Apple", "relation": "INVESTS_IN", "tail": "TSMC", "probability": 1.5}],
+    "version": 3,
+    "statements": [
+        {
+            "head": "Apple",
+            "relation": "INVESTS_IN",
+            "tail": "TSMC",
+            "distribution": [1.5] + [0] * 30,
+        }
+    ],
 }
 
 
@@ -176,7 +189,7 @@ class TestValidate:
             "valid": False,
             "errors": [
                 {
-                    "path": "statements/0/probability",
+                    "path": "statements/0/distribution/0",
                     "message": "1.5 is greater than the maximum of 1",
                 }
             ],

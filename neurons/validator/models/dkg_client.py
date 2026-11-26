@@ -58,9 +58,11 @@ class ReleasedForecastResponse(BaseModel):
     miner_hotkey: str
     question_id: str
     deadline_at: datetime
-    sealed: str
-    signature: str
+    sealed: str | None
+    signature: str | None
     opened: dict[str, JsonValue] | None
+    distributions: list[list[float]] | None = None
+    baselines: list[list[float] | None] | None = None
     invalid_reason: str | None
     results: list[StatementResult]
 

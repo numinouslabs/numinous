@@ -18,15 +18,22 @@ def validate_command(client: MinerClient, forecast_file: TextIO) -> None:
     "message"}]} and exits 4.
 
     \b
+    Each statement carries a "distribution" of 31 numbers from 0 to 1: the
+    chance it first appears on day 1, 2, ... 30 after the deadline, then the
+    chance it does not appear within 30 days. They are divided by their total,
+    so they need not add up to 1, but at least one has to be above 0.
+
+    \b
     A statement can carry an optional "place", the town or city where the act
     happens, e.g. {"head": "Israel", "relation": "ATTACKS", "tail": "Lebanon",
-    "place": "Mansouri", "probability": 0.4}. When given, it has to match.
+    "place": "Mansouri", "distribution": [...]}. When given, it has to match.
 
     \b
     Inline, no file:
       numi validate <<'EOF'
-      {"version": 2, "statements": [{"head": "Apple", "relation": "INVESTS_IN",
-       "tail": "TSMC", "probability": 0.15}]}
+      {"version": 3, "statements": [{"head": "Apple", "relation": "INVESTS_IN",
+       "tail": "TSMC", "distribution": [0.15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.85]}]}
       EOF
 
     \b

@@ -14,7 +14,7 @@ class TestSeal:
     def test_the_seal_carries_its_round_and_cannot_be_opened_early(self):
         reveal_round = timelock.current_round() + 1000
 
-        sealed = seal('{"version": 2}', reveal_round)
+        sealed = seal('{"version": 3}', reveal_round)
 
         assert timelock.Timelocked.parse(sealed).reveal_round == reveal_round
         with pytest.raises(timelock.TimelockNotReady):
@@ -22,12 +22,12 @@ class TestSeal:
 
     def test_a_past_round_is_refused(self):
         with pytest.raises(timelock.TimelockError):
-            seal('{"version": 2}', timelock.current_round() - 1)
+            seal('{"version": 3}', timelock.current_round() - 1)
 
 
 class TestSignForecast:
     def test_verifies_over_question_id_and_sealed_bytes(self):
-        sealed = seal('{"version": 2}', timelock.current_round() + 1000)
+        sealed = seal('{"version": 3}', timelock.current_round() + 1000)
 
         signature = sign_forecast(MINER, QUESTION_ID, sealed)
 

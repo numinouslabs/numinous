@@ -61,6 +61,8 @@ def make_opened_forecast(
         miner_hotkey=miner_hotkey,
         question_id=question_id,
         opened='{"version": 2, "statements": []}',
+        distributions=None,
+        baselines=None,
         invalid_reason=None,
         failed_check=failed_check,
     )
@@ -231,6 +233,8 @@ class TestDkgDatabaseOperations:
                     miner_hotkey=MINER,
                     question_id="question-1",
                     opened=None,
+                    distributions=None,
+                    baselines=None,
                     invalid_reason="the seal does not open",
                     failed_check=None,
                 )
@@ -263,12 +267,121 @@ class TestDkgDatabaseOperations:
             miner_hotkey=MINER,
             question_id="question-1",
             opened=opened,
+            distributions=None,
+            baselines=None,
             invalid_reason=invalid_reason,
             failed_check=None,
         )
 
         with pytest.raises(IntegrityError):
             await dkg_operations.save_forecasts([forecast], [])
+
+    async def test_a_forecast_not_sent_whole_yet_is_stored_with_its_distributions(
+        self, dkg_operations: DkgDatabaseOperations, db_client: DatabaseClient, pulled_round: None
+    ):
+        forecast = DkgForecastModel(
+            miner_uid=UID_OF[MINER],
+            miner_hotkey=MINER,
+            question_id="question-1",
+            opened=None,
+            distributions="[[0.5, 0.5]]",
+            baselines="[null]",
+            invalid_reason=None,
+            failed_check=None,
+        )
+
+        await dkg_operations.save_forecasts([forecast], [])
+
+        row = await db_client.one(
+            "SELECT opened, distributions, baselines, invalid_reason FROM dkg_forecasts"
+        )
+        assert tuple(row) == (None, "[[0.5, 0.5]]", "[null]", None)
+
+    async def test_a_forecast_sent_whole_later_keeps_its_distributions(
+        self, dkg_operations: DkgDatabaseOperations, db_client: DatabaseClient, pulled_round: None
+    ):
+        not_whole = DkgForecastModel(
+            miner_uid=UID_OF[MINER],
+            miner_hotkey=MINER,
+            question_id="question-1",
+            opened=None,
+            distributions="[[0.5, 0.5]]",
+            baselines="[[0.1, 0.9]]",
+            invalid_reason=None,
+            failed_check=None,
+        )
+        whole = not_whole.model_copy(update={"opened": '{"version": 3, "statements": [{}]}'})
+
+        await dkg_operations.save_forecasts([not_whole], [])
+        await dkg_operations.save_forecasts([whole], [])
+
+        row = await db_client.one("SELECT opened, distributions, baselines FROM dkg_forecasts")
+        assert tuple(row) == ('{"version": 3, "statements": [{}]}', "[[0.5, 0.5]]", "[[0.1, 0.9]]")
+
+    @pytest.mark.parametrize("failed_check", [None, "the sealed forecast does not match its hash"])
+    async def test_a_forecast_arriving_not_whole_after_whole_keeps_what_it_opened_and_its_check(
+        self,
+        dkg_operations: DkgDatabaseOperations,
+        db_client: DatabaseClient,
+        pulled_round: None,
+        failed_check: str | None,
+    ):
+        not_whole = DkgForecastModel(
+            miner_uid=UID_OF[MINER],
+            miner_hotkey=MINER,
+            question_id="question-1",
+            opened=None,
+            distributions="[[0.5, 0.5]]",
+            baselines="[[0.1, 0.9]]",
+            invalid_reason=None,
+            failed_check=None,
+        )
+        whole = not_whole.model_copy(
+            update={"opened": '{"version": 3, "statements": [{}]}', "failed_check": failed_check}
+        )
+        not_whole_again = not_whole.model_copy(update={"baselines": "[[0.2, 0.8]]"})
+
+        for forecast in (not_whole, whole, not_whole_again):
+            await dkg_operations.save_forecasts([forecast], [])
+
+        row = await db_client.one(
+            "SELECT opened, distributions, baselines, failed_check FROM dkg_forecasts"
+        )
+        assert tuple(row) == (
+            '{"version": 3, "statements": [{}]}',
+            "[[0.5, 0.5]]",
+            "[[0.2, 0.8]]",
+            failed_check,
+        )
+
+    async def test_a_failed_check_is_never_cleared(
+        self, dkg_operations: DkgDatabaseOperations, db_client: DatabaseClient, pulled_round: None
+    ):
+        await dkg_operations.save_forecasts(
+            [
+                make_opened_forecast(
+                    MINER, "question-1", failed_check="the miner signature does not verify"
+                )
+            ],
+            [],
+        )
+        await dkg_operations.save_forecasts([make_opened_forecast(MINER, "question-1")], [])
+
+        row = await db_client.one("SELECT failed_check FROM dkg_forecasts")
+        assert row[0] == "the miner signature does not verify"
+
+    async def test_a_forecast_found_invalid_after_it_opened_is_stored_as_invalid(
+        self, dkg_operations: DkgDatabaseOperations, db_client: DatabaseClient, pulled_round: None
+    ):
+        invalid = make_opened_forecast(MINER, "question-1").model_copy(
+            update={"opened": None, "invalid_reason": "the seal does not open"}
+        )
+
+        await dkg_operations.save_forecasts([make_opened_forecast(MINER, "question-1")], [])
+        await dkg_operations.save_forecasts([invalid], [])
+
+        row = await db_client.one("SELECT opened, invalid_reason FROM dkg_forecasts")
+        assert tuple(row) == (None, "the seal does not open")
 
     async def test_the_same_hotkey_under_another_uid_is_another_forecast(
         self, dkg_operations: DkgDatabaseOperations, db_client: DatabaseClient, pulled_round: None
@@ -508,6 +621,8 @@ class TestDkgDatabaseOperations:
             miner_hotkey=MINER,
             question_id="expired-question-2",
             opened=None,
+            distributions=None,
+            baselines=None,
             invalid_reason="the seal does not open",
             failed_check=None,
         )

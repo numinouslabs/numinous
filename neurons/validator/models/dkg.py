@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Json
 
 
 class DkgRoundModel(BaseModel):
@@ -32,6 +32,8 @@ class DkgForecastModel(BaseModel):
     miner_hotkey: str
     question_id: str
     opened: str | None
+    distributions: str | None
+    baselines: str | None
     invalid_reason: str | None
     failed_check: str | None
 
@@ -59,6 +61,17 @@ class DkgForecastPointsModel(BaseModel):
     miner_hotkey: str
     points: float
     statements: int
+
+
+class DkgDistributionStatementModel(BaseModel):
+    miner_uid: int
+    miner_hotkey: str
+    question_id: str
+    deadline_at: datetime
+    distribution: Json[list[float]]
+    baseline: Json[list[float]] | None
+    appeared_at: datetime | None
+    event_id: str | None
 
 
 class DkgScoreModel(BaseModel):

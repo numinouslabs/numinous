@@ -45,25 +45,38 @@ ROUND = {
     ],
 }
 
+DISTRIBUTION_LENGTH = 31
+
+
+def day_one_or_never(chance_of_day_one: float) -> list[float]:
+    return [chance_of_day_one] + [0] * (DISTRIBUTION_LENGTH - 2) + [1 - chance_of_day_one]
+
+
 SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "required": ["version", "statements"],
     "properties": {
-        "version": {"const": 2},
+        "version": {"const": 3},
         "statements": {
             "type": "array",
             "minItems": 1,
-            "maxItems": 5,
+            "maxItems": 10,
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["head", "relation", "tail", "probability"],
+                "required": ["head", "relation", "tail", "distribution"],
                 "properties": {
                     "head": {"type": "string"},
                     "relation": {"type": "string"},
                     "tail": {"type": "string"},
-                    "probability": {"type": "number", "minimum": 0, "maximum": 1},
+                    "distribution": {
+                        "type": "array",
+                        "minItems": DISTRIBUTION_LENGTH,
+                        "maxItems": DISTRIBUTION_LENGTH,
+                        "items": {"type": "number", "minimum": 0, "maximum": 1},
+                        "contains": {"exclusiveMinimum": 0},
+                    },
                 },
             },
         },
@@ -80,11 +93,26 @@ MY_FORECAST = {
     "sealed_sha256": "c9d56c84b41dd8d250773e07b6a0dd1259b68f07b7f0328235c01b614a04c099",
     "state": "opened",
     "opened": {
-        "version": 2,
+        "version": 3,
         "statements": [
-            {"head": "Apple", "relation": "INVESTS_IN", "tail": "TSMC", "probability": 0.1},
-            {"head": "Apple", "relation": "ACQUIRES", "tail": "TSMC", "probability": 0.01},
-            {"head": "Apple", "relation": "PARTNERS_WITH", "tail": "TSMC", "probability": 0.4},
+            {
+                "head": "Apple",
+                "relation": "INVESTS_IN",
+                "tail": "TSMC",
+                "distribution": day_one_or_never(0.1),
+            },
+            {
+                "head": "Apple",
+                "relation": "ACQUIRES",
+                "tail": "TSMC",
+                "distribution": day_one_or_never(0.01),
+            },
+            {
+                "head": "Apple",
+                "relation": "PARTNERS_WITH",
+                "tail": "TSMC",
+                "distribution": day_one_or_never(0.4),
+            },
         ],
     },
     "invalid_reason": None,
@@ -126,9 +154,14 @@ def response(status: int, url: str, **content) -> httpx.Response:
 class TestForecastErrors:
     def test_a_valid_forecast_has_none(self):
         forecast = {
-            "version": 2,
+            "version": 3,
             "statements": [
-                {"head": "Apple", "relation": "INVESTS_IN", "tail": "TSMC", "probability": 0.15}
+                {
+                    "head": "Apple",
+                    "relation": "INVESTS_IN",
+                    "tail": "TSMC",
+                    "distribution": day_one_or_never(0.15),
+                }
             ],
         }
 
@@ -136,13 +169,13 @@ class TestForecastErrors:
 
     def test_each_error_points_at_its_field(self):
         forecast = {
-            "version": 2,
+            "version": 3,
             "statements": [
                 {
                     "head": "Apple",
                     "relation": "ACQUIRES",
                     "tail": "TSMC",
-                    "probability": 1.5,
+                    "distribution": [1.5] + [0] * 30,
                     "confidence": "high",
                 }
             ],
@@ -154,12 +187,69 @@ class TestForecastErrors:
                 message="Additional properties are not allowed ('confidence' was unexpected)",
             ),
             ForecastError(
-                path="statements/0/probability", message="1.5 is greater than the maximum of 1"
+                path="statements/0/distribution/0", message="1.5 is greater than the maximum of 1"
             ),
         ]
 
+    @pytest.mark.parametrize(
+        "distribution, message",
+        [
+            ([0] * 31, "does not contain items matching the given schema"),
+            (day_one_or_never(0.15)[:30], "is too short"),
+            (day_one_or_never(0.15) + [0], "is too long"),
+        ],
+    )
+    def test_a_distribution_has_31_numbers_and_one_above_zero(
+        self, distribution: list[float], message: str
+    ):
+        forecast = {
+            "version": 3,
+            "statements": [
+                {
+                    "head": "Apple",
+                    "relation": "INVESTS_IN",
+                    "tail": "TSMC",
+                    "distribution": distribution,
+                }
+            ],
+        }
+
+        (error,) = forecast_errors(forecast, SCHEMA)
+
+        assert error.path == "statements/0/distribution"
+        assert error.message.endswith(message)
+
+    def test_a_distribution_need_not_add_up_to_one(self):
+        forecast = {
+            "version": 3,
+            "statements": [
+                {
+                    "head": "Apple",
+                    "relation": "INVESTS_IN",
+                    "tail": "TSMC",
+                    "distribution": [1] * 31,
+                }
+            ],
+        }
+
+        assert forecast_errors(forecast, SCHEMA) == []
+
+    def test_a_forecast_with_one_probability_is_refused(self):
+        forecast = {
+            "version": 2,
+            "statements": [
+                {"head": "Apple", "relation": "INVESTS_IN", "tail": "TSMC", "probability": 0.15}
+            ],
+        }
+
+        assert [error.path for error in forecast_errors(forecast, SCHEMA)] == [
+            "statements/0",
+            "statements/0",
+            "version",
+        ]
+
     def test_an_error_on_the_whole_forecast(self):
-        assert forecast_errors({"version": 2}, SCHEMA) == [
+        assert forecast_errors({"version": 3}, SCHEMA) == [
             ForecastError(path="(forecast)", message="'statements' is a required property")
         ]
 
@@ -313,9 +403,14 @@ class TestGetMyForecasts:
 
 QUESTION_ID = ROUND["questions"][0]["id"]
 FORECAST = {
-    "version": 2,
+    "version": 3,
     "statements": [
-        {"head": "Apple", "relation": "INVESTS_IN", "tail": "TSMC", "probability": 0.15}
+        {
+            "head": "Apple",
+            "relation": "INVESTS_IN",
+            "tail": "TSMC",
+            "distribution": day_one_or_never(0.15),
+        }
     ],
 }
 RECEIPT_KEY = Keypair.create_from_seed("0x" + "07" * 32)
@@ -403,8 +498,15 @@ class TestSubmit:
 
     def test_seals_compact_utf8(self, backend: StandInBackend):
         forecast = {
-            "version": 2,
-            "statements": [{"head": "苹果", "relation": "投资", "tail": "台积电", "probability": 0.2}],
+            "version": 3,
+            "statements": [
+                {
+                    "head": "苹果",
+                    "relation": "投资",
+                    "tail": "台积电",
+                    "distribution": day_one_or_never(0.2),
+                }
+            ],
         }
 
         with patch("neurons.miner.client.seal", wraps=seal) as sealing:
@@ -416,7 +518,7 @@ class TestSubmit:
 
     def test_an_invalid_forecast_is_not_sent(self, backend: StandInBackend):
         with pytest.raises(ForecastNotValid) as error:
-            MinerClient("test", HOTKEY).submit(QUESTION_ID, {"version": 2, "statements": []})
+            MinerClient("test", HOTKEY).submit(QUESTION_ID, {"version": 3, "statements": []})
 
         assert error.value.errors[0].path == "statements"
         assert backend.posted == []
@@ -432,18 +534,18 @@ class TestSubmit:
         )
         assert backend.posted == []
 
-    def test_a_forecast_over_forty_kilobytes_once_sealed_is_sent(self, backend: StandInBackend):
+    def test_a_forecast_over_eighty_kilobytes_once_sealed_is_sent(self, backend: StandInBackend):
         statement = {
             "head": "Apple",
             "relation": "INVESTS_IN",
             "tail": "T" * 12_000,
-            "probability": 0.1,
+            "distribution": day_one_or_never(0.1),
         }
-        forecast = {"version": 2, "statements": [statement] * 4}
+        forecast = {"version": 3, "statements": [statement] * 7}
 
         submission = MinerClient("test", HOTKEY).submit(QUESTION_ID, forecast)
 
-        assert 40_960 < len(bytes.fromhex(submission.sealed)) <= 81_920
+        assert 81_920 < len(bytes.fromhex(submission.sealed)) <= 98_304
         assert len(backend.posted) == 1
 
     def test_a_question_of_another_round_is_not_sent(self, backend: StandInBackend):

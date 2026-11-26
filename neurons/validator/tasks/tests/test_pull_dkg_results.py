@@ -41,6 +41,17 @@ OPENED = {
 }
 
 
+DISTRIBUTIONS = [[0.2] + [0.0] * 29 + [0.8], [0.0] * 30 + [1.0]]
+BASELINES = [[0.1] + [0.0] * 29 + [0.9], None]
+NOT_SENT_WHOLE_YET = {
+    "sealed": None,
+    "signature": None,
+    "opened": None,
+    "distributions": DISTRIBUTIONS,
+    "baselines": BASELINES,
+}
+
+
 def sealed_bytes(question_id: str) -> bytes:
     return f"sealed forecast for {question_id}".encode()
 
@@ -253,6 +264,105 @@ class TestPullDkgResults:
 
         row = await db_client.one("SELECT failed_check FROM dkg_forecasts")
         assert row[0] == failed_check
+
+    async def test_a_forecast_not_sent_whole_yet_is_stored_with_its_distributions_unchecked(
+        self, task: PullDkgResults, dkg_client: AsyncMock, db_client: DatabaseClient
+    ):
+        released = make_released(MINER, "question-1", OPENED, [make_result(0, True)]).model_copy(
+            update=NOT_SENT_WHOLE_YET
+        )
+        dkg_client.get_results.return_value = ResultsPage(forecasts=[released], next_offset=None)
+
+        await task.run()
+
+        row = await db_client.one(
+            "SELECT opened, distributions, baselines, invalid_reason, failed_check FROM dkg_forecasts"
+        )
+        assert tuple(row) == (None, json.dumps(DISTRIBUTIONS), json.dumps(BASELINES), None, None)
+        results = await db_client.many("SELECT statement_position FROM dkg_statement_results")
+        assert [tuple(result) for result in results] == [(0,)]
+
+    @pytest.mark.parametrize(
+        "tampered, failed_check",
+        [({}, None), ({"sealed": sealed_bytes("question-2").hex()}, HASH_DOES_NOT_MATCH)],
+    )
+    async def test_a_forecast_is_checked_once_it_is_sent_whole(
+        self,
+        task: PullDkgResults,
+        dkg_client: AsyncMock,
+        db_client: DatabaseClient,
+        frozen_now: FrozenDateTimeFactory,
+        tampered: dict,
+        failed_check: str | None,
+    ):
+        whole = make_released(
+            MINER, "question-1", OPENED, [make_result(0, True), make_result(1, False)]
+        ).model_copy(update={"distributions": DISTRIBUTIONS, "baselines": BASELINES} | tampered)
+        not_whole_yet = whole.model_copy(update=NOT_SENT_WHOLE_YET | {"results": []})
+
+        for released in (not_whole_yet, whole):
+            dkg_client.get_results.return_value = ResultsPage(
+                forecasts=[released], next_offset=None
+            )
+            await task.run()
+            frozen_now.tick(timedelta(minutes=15))
+
+        row = await db_client.one(
+            "SELECT opened, distributions, baselines, failed_check FROM dkg_forecasts"
+        )
+        assert tuple(row) == (
+            json.dumps(OPENED),
+            json.dumps(DISTRIBUTIONS),
+            json.dumps(BASELINES),
+            failed_check,
+        )
+
+    @pytest.mark.parametrize(
+        "tampered, failed_check",
+        [({}, None), ({"sealed": sealed_bytes("question-2").hex()}, HASH_DOES_NOT_MATCH)],
+    )
+    async def test_a_forecast_arriving_not_whole_after_whole_keeps_what_it_opened_and_its_check(
+        self,
+        task: PullDkgResults,
+        dkg_client: AsyncMock,
+        db_client: DatabaseClient,
+        frozen_now: FrozenDateTimeFactory,
+        tampered: dict,
+        failed_check: str | None,
+    ):
+        whole = make_released(
+            MINER, "question-1", OPENED, [make_result(0, True), make_result(1, False)]
+        ).model_copy(update={"distributions": DISTRIBUTIONS, "baselines": BASELINES} | tampered)
+        not_whole = whole.model_copy(
+            update=NOT_SENT_WHOLE_YET | {"results": [make_result(0, True)]}
+        )
+
+        for released in (not_whole, whole, not_whole):
+            dkg_client.get_results.return_value = ResultsPage(
+                forecasts=[released], next_offset=None
+            )
+            await task.run()
+            frozen_now.tick(timedelta(minutes=15))
+
+        row = await db_client.one(
+            "SELECT opened, distributions, baselines, failed_check FROM dkg_forecasts"
+        )
+        assert tuple(row) == (
+            json.dumps(OPENED),
+            json.dumps(DISTRIBUTIONS),
+            json.dumps(BASELINES),
+            failed_check,
+        )
+        results = await db_client.many("SELECT statement_position FROM dkg_statement_results")
+        assert len(results) == 2
+
+    def test_a_response_without_the_new_fields_still_parses(self):
+        released = make_released(MINER, "question-1", OPENED, [])
+        wire = released.model_dump(mode="json", exclude={"distributions", "baselines"})
+
+        parsed = ReleasedForecastResponse.model_validate(wire)
+
+        assert (parsed.distributions, parsed.baselines) == (None, None)
 
     async def test_a_forecast_without_its_hash_holds_the_cursor(
         self,
