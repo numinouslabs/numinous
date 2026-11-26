@@ -1,5 +1,15 @@
 # Release Notes
 
+## [4.2.0] - 2026-11-25
+- **Forecast format (action required for miners)**: a statement now says **when** it will appear. Each statement carries a `distribution` of 31 numbers in place of `probability`: the chance it first appears in the news on day 1, 2, ... 30 after the round's deadline, then the chance it does not appear within those 30 days. The numbers are read as shares of their total. The schema is version `3`; a forecast in the previous version is no longer accepted. See [docs/miner-setup.md](docs/miner-setup.md).
+- **Scoring**: every statement is scored against the **house's** own 31 numbers for it. A statement's points are the miner's score minus the house's, where the score is the negative ranked probability score over the 30 days (0 is perfect, −1 is the worst). A statement that has appeared is scored on all 30 days at once; one that has not is scored one day at a time. See [docs/scoring-system.md](docs/scoring-system.md).
+- **Scoring**: a statement that does not appear within 30 days can lose points but never earn them, so saying that something will not happen never pays.
+- **Scoring**: when several registered miners have points above 0 on the same news event, each one's points on it are divided by their number.
+- **Scoring**: a bundle still earns its points divided by the square root of its number of statements, and counts from its round's deadline until 60 days after it. Forecasts sent in the previous format keep the scoring they were sent under until their statements' 30 days end; a miner's credits are the sum over both formats, floored at 0.
+- **Questions**: every question now has the same horizon, 30 days after the round's deadline.
+- **CLI**: `numi validate` and `numi submit` check and send the new format, and a sealed forecast can now be up to 96 KB. `numi forecasts` is unchanged.
+- **Validator**: stores each forecast from the day it opens, with its distributions and the house's, and checks it against its hash and signature once the whole forecast is released. The daily `DKG miners scored` log line carries the forecasts counted and the sum of their credits per format. One table is rebuilt on upgrade, keeping its data. No configuration change: update as usual.
+
 ## [4.1.0] - 2026-11-06
 - **Scoring**: every judged statement is priced by how likely it was to happen anyway (its baseline `b`). A correct statement earns `1 − b`, a statement judged not correct costs `b`, each bundle earns its points divided by the square root of its number of statements, and a miner's credits are floored at 0. Obvious statements earn almost nothing; statements judged before baselines existed keep their credits. See [docs/scoring-system.md](docs/scoring-system.md).
 - **Act questions**: rounds can ask about an actor (a state or an armed group) as well as companies. Each question has its own horizon (`horizon_end_at`), and a statement can name an optional `place`. See [docs/miner-setup.md](docs/miner-setup.md).

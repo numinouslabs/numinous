@@ -17,6 +17,9 @@ SIGNATURE_DOES_NOT_VERIFY = "the miner signature does not verify"
 
 
 def _failed_check(released: ReleasedForecastResponse, sealed_sha256: str) -> str | None:
+    if released.sealed is None or released.signature is None:
+        return None
+
     sealed = bytes.fromhex(released.sealed)
     if hashlib.sha256(sealed).hexdigest() != sealed_sha256:
         return HASH_DOES_NOT_MATCH
@@ -40,6 +43,8 @@ def _forecast_model(released: ReleasedForecastResponse, sealed_sha256: str) -> D
         miner_hotkey=released.miner_hotkey,
         question_id=released.question_id,
         opened=json.dumps(released.opened) if released.opened else None,
+        distributions=json.dumps(released.distributions) if released.distributions else None,
+        baselines=json.dumps(released.baselines) if released.baselines else None,
         invalid_reason=released.invalid_reason,
         failed_check=_failed_check(released, sealed_sha256),
     )

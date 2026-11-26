@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from neurons.validator.db.client import DatabaseClient
 from neurons.validator.models.dkg import (
+    DkgDistributionStatementModel,
     DkgForecastHashModel,
     DkgForecastModel,
     DkgForecastPointsModel,
@@ -16,6 +17,38 @@ from neurons.validator.models.dkg import (
 )
 
 DKG_HISTORY = timedelta(days=90)
+
+_JUDGED = """
+    SELECT
+        result.miner_uid,
+        result.miner_hotkey,
+        result.question_id,
+        result.statement_position,
+        result.outcome,
+        result.event_id,
+        result.reported_at,
+        result.judged_at,
+        result.reason = 'VOID' AS void,
+        COALESCE(result.baseline, 0) AS baseline,
+        result.outcome = 1 AND ROW_NUMBER() OVER (
+            PARTITION BY
+                result.miner_uid, result.miner_hotkey, result.outcome, result.event_id
+            ORDER BY hash.received_at, result.question_id, result.statement_position
+        ) > 1 AS repeat
+    FROM dkg_statement_results AS result
+    JOIN dkg_forecast_hashes AS hash
+        USING (miner_uid, miner_hotkey, question_id)
+    WHERE
+        julianday(result.judged_at) < julianday(:judged_before)
+        AND NOT EXISTS (
+            SELECT 1 FROM dkg_forecasts AS failed
+            WHERE
+                failed.miner_uid = result.miner_uid
+                AND failed.miner_hotkey = result.miner_hotkey
+                AND failed.question_id = result.question_id
+                AND failed.failed_check IS NOT NULL
+        )
+"""
 
 _EXPIRED_QUESTIONS = """
     SELECT question_id FROM dkg_questions
@@ -142,6 +175,20 @@ def _insert_overwriting_repeats(table: str, model: type[BaseModel], key: list[st
     )
 
 
+_SAVE_FORECAST = f"""
+    {_insert("dkg_forecasts", DkgForecastModel)}
+    ON CONFLICT (miner_uid, miner_hotkey, question_id) DO UPDATE SET
+        opened = CASE
+            WHEN excluded.invalid_reason IS NULL THEN COALESCE(excluded.opened, opened)
+        END,
+        distributions = excluded.distributions,
+        baselines = excluded.baselines,
+        invalid_reason = excluded.invalid_reason,
+        failed_check = COALESCE(excluded.failed_check, failed_check),
+        updated_at = CURRENT_TIMESTAMP
+"""
+
+
 class DkgDatabaseOperations:
     __db_client: DatabaseClient
 
@@ -203,12 +250,7 @@ class DkgDatabaseOperations:
     async def save_forecasts(
         self, forecasts: list[DkgForecastModel], results: list[DkgStatementResultModel]
     ) -> None:
-        await self.__db_client.insert_many(
-            _insert_overwriting_repeats(
-                "dkg_forecasts", DkgForecastModel, ["miner_uid", "miner_hotkey", "question_id"]
-            ),
-            _rows(forecasts),
-        )
+        await self.__db_client.insert_many(_SAVE_FORECAST, _rows(forecasts))
         await self.__db_client.insert_many(
             _insert_overwriting_repeats(
                 "dkg_statement_results",
@@ -294,34 +336,11 @@ class DkgDatabaseOperations:
         self, judged_after: datetime, judged_before: datetime
     ) -> list[DkgForecastPointsModel]:
         rows = await self.__db_client.many(
-            """
-                WITH judged AS (
-                    SELECT
-                        result.miner_uid,
-                        result.miner_hotkey,
-                        result.question_id,
-                        result.outcome,
-                        result.reason = 'VOID' AS void,
-                        COALESCE(result.baseline, 0) AS baseline,
-                        julianday(result.judged_at) > julianday(:judged_after) AS in_window,
-                        result.outcome = 1 AND ROW_NUMBER() OVER (
-                            PARTITION BY
-                                result.miner_uid, result.miner_hotkey, result.outcome, result.event_id
-                            ORDER BY hash.received_at, result.question_id, result.statement_position
-                        ) > 1 AS repeat
-                    FROM dkg_statement_results AS result
-                    JOIN dkg_forecast_hashes AS hash
-                        USING (miner_uid, miner_hotkey, question_id)
-                    WHERE
-                        julianday(result.judged_at) < julianday(:judged_before)
-                        AND NOT EXISTS (
-                            SELECT 1 FROM dkg_forecasts AS failed
-                            WHERE
-                                failed.miner_uid = result.miner_uid
-                                AND failed.miner_hotkey = result.miner_hotkey
-                                AND failed.question_id = result.question_id
-                                AND failed.failed_check IS NOT NULL
-                        )
+            f"""
+                WITH judged AS ({_JUDGED}),
+                in_or_out_of_window AS (
+                    SELECT *, julianday(judged_at) > julianday(:judged_after) AS in_window
+                    FROM judged
                 ),
                 counted AS (
                     SELECT
@@ -336,7 +355,7 @@ class DkgDatabaseOperations:
                             END
                         ) AS points,
                         SUM(repeat OR void) AS left_out
-                    FROM judged
+                    FROM in_or_out_of_window
                     GROUP BY miner_uid, miner_hotkey, question_id
                     HAVING SUM(in_window AND NOT repeat AND NOT void) > 0
                 )
@@ -349,11 +368,49 @@ class DkgDatabaseOperations:
                 FROM counted
                 JOIN dkg_forecasts AS forecast
                     USING (miner_uid, miner_hotkey, question_id)
+                WHERE forecast.distributions IS NULL
             """,
             {"judged_after": judged_after.isoformat(), "judged_before": judged_before.isoformat()},
             use_row_factory=True,
         )
         return [DkgForecastPointsModel(**dict(row)) for row in rows]
+
+    async def get_distribution_statements(
+        self, deadline_after: datetime, moment: datetime
+    ) -> list[DkgDistributionStatementModel]:
+        rows = await self.__db_client.many(
+            f"""
+                WITH judged AS ({_JUDGED})
+                SELECT
+                    forecast.miner_uid,
+                    forecast.miner_hotkey,
+                    forecast.question_id,
+                    closed_round.deadline_at,
+                    statement.value AS distribution,
+                    json_extract(forecast.baselines, '$[' || statement.key || ']') AS baseline,
+                    CASE WHEN judged.outcome = 1 THEN judged.reported_at END AS appeared_at,
+                    CASE WHEN judged.outcome = 1 THEN judged.event_id END AS event_id
+                FROM dkg_forecasts AS forecast
+                JOIN dkg_questions AS question
+                    ON question.question_id = forecast.question_id
+                JOIN dkg_rounds AS closed_round
+                    ON closed_round.round_id = question.round_id
+                JOIN json_each(forecast.distributions) AS statement
+                LEFT JOIN judged
+                    ON judged.miner_uid = forecast.miner_uid
+                    AND judged.miner_hotkey = forecast.miner_hotkey
+                    AND judged.question_id = forecast.question_id
+                    AND judged.statement_position = statement.key
+                WHERE
+                    forecast.failed_check IS NULL
+                    AND julianday(closed_round.deadline_at) > julianday(:deadline_after)
+                    AND julianday(closed_round.deadline_at) < julianday(:judged_before)
+                    AND NOT COALESCE(judged.void OR judged.repeat, 0)
+            """,
+            {"deadline_after": deadline_after.isoformat(), "judged_before": moment.isoformat()},
+            use_row_factory=True,
+        )
+        return [DkgDistributionStatementModel(**dict(row)) for row in rows]
 
     async def get_last_scored_at(self) -> datetime | None:
         row = await self.__db_client.one(

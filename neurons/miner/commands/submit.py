@@ -55,8 +55,9 @@ def submit_command(client: MinerClient, question_id: uuid.UUID, forecast_file: T
     \b
     Inline, no file:
       numi submit --question 1d3ffd76-b934-4741-931c-582e53a47751 <<'EOF'
-      {"version": 2, "statements": [{"head": "Apple", "relation": "INVESTS_IN",
-       "tail": "TSMC", "probability": 0.15}]}
+      {"version": 3, "statements": [{"head": "Apple", "relation": "INVESTS_IN",
+       "tail": "TSMC", "distribution": [0.15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.85]}]}
       EOF
     """
     forecast = read_forecast(forecast_file)

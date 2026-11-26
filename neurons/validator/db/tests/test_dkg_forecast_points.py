@@ -77,6 +77,8 @@ async def add_forecast(
                 miner_hotkey=miner_hotkey,
                 question_id=question_id,
                 opened=json.dumps(opened),
+                distributions=None,
+                baselines=None,
                 invalid_reason=None,
                 failed_check=failed_check,
             )
@@ -721,6 +723,8 @@ class TestForecastPoints:
                     miner_hotkey=miner_hotkey,
                     question_id="question-1",
                     opened=None,
+                    distributions=None,
+                    baselines=None,
                     invalid_reason="the seal does not open",
                     failed_check=None,
                 )
